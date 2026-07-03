@@ -9,6 +9,7 @@ const port = process.env.PORT || 3000;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const WebSocket = require('ws');
+global.WebSocket = WebSocket; // ⭐️ 强制让 Node 18 认领这个 WebSocket 包
 const supabase = createClient(supabaseUrl, supabaseKey, { transport: WebSocket });
 
 app.get('/', (req, res) => {
