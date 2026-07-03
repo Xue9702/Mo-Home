@@ -1,22 +1,18 @@
 const express = require('express');
-// 1. 引入 Supabase 的依赖包
+// ⭐️ 第一步：先引入 ws 并挂载到全局（一定要在引入 Supabase 之前！）
+const WebSocket = require('ws');
+global.WebSocket = WebSocket;
+
+// ⭐️ 第二步：然后再引入 Supabase
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 2. 利用 Zeabur 环境变量创建 Supabase 客户端
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const WebSocket = require('ws');
-global.WebSocket = WebSocket; // ⭐️ 强制让 Node 18 认领这个 WebSocket 包
-const supabase = createClient(supabaseUrl, supabaseKey, { transport: WebSocket });
-
-app.get('/', (req, res) => {
-  res.send('你好, Mo-Home');
-});
-
-// 3. 测试 Supabase 连接的路由（注意这里是 /test-db，和浏览器一致）
+// 这里不需要再传 { transport: WebSocket } 了，因为上面已经挂载到全局
+const supabase = createClient(supabaseUrl, supabaseKey);
 app.get('/test-db', async (req, res) => {
   try {
     // 尝试查询 settings 表的第一条数据
