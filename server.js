@@ -8,7 +8,8 @@ const port = process.env.PORT || 3000;
 // 2. 利用 Zeabur 环境变量创建 Supabase 客户端
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const WebSocket = require('ws');
+const supabase = createClient(supabaseUrl, supabaseKey, { transport: WebSocket });
 
 app.get('/', (req, res) => {
   res.send('你好, Mo-Home');
