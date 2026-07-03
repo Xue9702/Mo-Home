@@ -1,9 +1,9 @@
-const express = require('express');
-// ⭐️ 第一步：先引入 ws 并挂载到全局（一定要在引入 Supabase 之前！）
+// 1. 引入 ws 并绑定到全局对象
 const WebSocket = require('ws');
-global.WebSocket = WebSocket;
+globalThis.WebSocket = WebSocket; // 用 globalThis 更保险
 
-// ⭐️ 第二步：然后再引入 Supabase
+// 2. 引入 Express 和 Supabase
+const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -11,8 +11,8 @@ const port = process.env.PORT || 3000;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-// 这里不需要再传 { transport: WebSocket } 了，因为上面已经挂载到全局
-const supabase = createClient(supabaseUrl, supabaseKey);
+// 3. 明确把 WebSocket 当做参数传过去
+const supabase = createClient(supabaseUrl, supabaseKey, { transport: WebSocket });
 app.get('/test-db', async (req, res) => {
   try {
     // 尝试查询 settings 表的第一条数据
