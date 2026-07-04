@@ -14,35 +14,24 @@ app.get('/', (req, res) => {
 
 // 测试数据库连接 - 用 REST API 方式
 app.get('/test-db', (req, res) => {
-  const path = '/rest/v1/settings?select=*&limit=1';
-  const options = {
-    hostname: supabaseUrl.replace('https://', '').replace('.supabase.co', ''),
-    path: path,
+  // 直接从环境变量读取完整的 Supabase URL
+  const baseUrl = process.env.SUPABASE_URL;
+  // 构造完整的请求路径
+  const fullUrl = `${baseUrl}/rest/v1/settings?select=*&limit=1`;
+
+  // 使用 fetch（Node 18+ 原生支持）发送 GET 请求
+  fetch(fullUrl, {
     method: 'GET',
     headers: {
-      'apikey': supabaseKey,
-      'Authorization': `Bearer ${supabaseKey}`
+      'apikey': process.env.SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY}`
     }
-  };
-
-  const request = https.get(options, (response) => {
-    let data = '';
-    response.on('data', (chunk) => { data += chunk; });
-    response.on('end', () => {
-      try {
-        const parsed = JSON.parse(data);
-        res.json({ success: true, data: parsed });
-      } catch (err) {
-        res.status(500).json({ error: '解析响应失败' });
-      }
-    });
-  });
-
-  request.on('error', (err) => {
+  })
+  .then(response => response.json())
+  .then(data => {
+    res.json({ success: true, data });
+  })
+  .catch(err => {
     res.status(500).json({ error: err.message });
   });
-});
-
-app.listen(port, () => {
-  console.log(`服务已启动，访问端口: ${port}`);
 });
