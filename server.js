@@ -1,34 +1,46 @@
-// 1. 引入 ws 并绑定到全局对象
-const WebSocket = require('ws');
-globalThis.WebSocket = WebSocket; // 用 globalThis 更保险
-
-// 2. 引入 Express 和 Supabase
 const express = require('express');
-const { createClient } = require('@supabase/supabase-js');
+const https = require('https');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
-// 3. 明确把 WebSocket 当做参数传过去
-const supabase = createClient(supabaseUrl, supabaseKey, { transport: WebSocket });
-app.get('/test-db', async (req, res) => {
-  try {
-    // 尝试查询 settings 表的第一条数据
-    const { data, error } = await supabase
-      .from('settings')
-      .select('*')
-      .limit(1);
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
+// 根路由
+app.get('/', (req, res) => {
+  res.send('你好，Mo-Home 正在运行');
+});
+
+// 测试数据库连接 - 用 REST API 方式
+app.get('/test-db', (req, res) => {
+  const path = '/rest/v1/settings?select=*&limit=1';
+  const options = {
+    hostname: supabaseUrl.replace('https://', '').replace('.supabase.co', ''),
+    path: path,
+    method: 'GET',
+    headers: {
+      'apikey': supabaseKey,
+      'Authorization': `Bearer ${supabaseKey}`
     }
-    // 成功的话，把数据返回给浏览器
-    res.json({ success: true, data: data });
-  } catch (err) {
+  };
+
+  const request = https.get(options, (response) => {
+    let data = '';
+    response.on('data', (chunk) => { data += chunk; });
+    response.on('end', () => {
+      try {
+        const parsed = JSON.parse(data);
+        res.json({ success: true, data: parsed });
+      } catch (err) {
+        res.status(500).json({ error: '解析响应失败' });
+      }
+    });
+  });
+
+  request.on('error', (err) => {
     res.status(500).json({ error: err.message });
-  }
+  });
 });
 
 app.listen(port, () => {
