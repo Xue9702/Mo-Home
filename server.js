@@ -5,7 +5,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const baseUrl = process.env.SUPABASE_URL_V2;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_ANON_KEY_V2;
 
 // 根路由
 app.get('/', (req, res) => {
