@@ -4,7 +4,7 @@ const https = require('https');
 const app = express();
 const port = process.env.PORT || 3000;
 
-const supabaseUrl = process.env.SUPABASE_URL;
+const baseUrl = process.env.SUPABASE_URL_V2;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
 // 根路由
