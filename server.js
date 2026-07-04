@@ -1,10 +1,8 @@
 const express = require('express');
-const https = require('https');
-
 const app = express();
-const port = process.env.PORT || 3000;
 
-const baseUrl = process.env.SUPABASE_URL_V2;
+// 读取新命名的环境变量（注意这里确保名字和 Vercel 里的完全一致）
+const supabaseUrl = process.env.SUPABASE_URL_V2;
 const supabaseKey = process.env.SUPABASE_ANON_KEY_V2;
 
 // 根路由
@@ -13,25 +11,25 @@ app.get('/', (req, res) => {
 });
 
 // 测试数据库连接 - 用 REST API 方式
-app.get('/test-db', (req, res) => {
-  // 直接从环境变量读取完整的 Supabase URL
-  const baseUrl = process.env.SUPABASE_URL;
-  // 构造完整的请求路径
-  const fullUrl = `${baseUrl}/rest/v1/settings?select=*&limit=1`;
+app.get('/test-db', async (req, res) => {
+  // 直接用上面定义好的 V2 变量
+  const fullUrl = `${supabaseUrl}/rest/v1/settings?select=*&limit=1`;
 
-  // 使用 fetch（Node 18+ 原生支持）发送 GET 请求
-  fetch(fullUrl, {
-    method: 'GET',
-    headers: {
-      'apikey': process.env.SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${process.env.SUPABASE_ANON_KEY}`
-    }
-  })
-  .then(response => response.json())
-  .then(data => {
+  try {
+    const response = await fetch(fullUrl, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      }
+    });
+
+    const data = await response.json();
     res.json({ success: true, data });
-  })
-  .catch(err => {
+  } catch (err) {
     res.status(500).json({ error: err.message });
-  });
+  }
 });
+
+// 【极其关键的一步！】Vercel 必须有这个导出，不能用 app.listen
+module.exports = app;
