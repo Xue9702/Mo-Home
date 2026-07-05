@@ -63,17 +63,28 @@ app.get('/test-fetch', async (req, res) => {
       data: data,
       url: url.replace(baseUrl, '***') // 隐藏真实URL
     });
-  } catch (err) {
-    res.status(500).json({
-      error: err.message,
-      type: err.name,
-      diagnostics: {
-        url: baseUrl ? baseUrl.substring(0, 30) + '...' : '未设置',
-        hasKey: !!supabaseKey,
-        errorType: err.constructor.name
-      }
-    });
-  }
+} catch (err) {
+  console.error('=== test-db 错误详细信息 ===');
+  console.error('错误类型:', err.name);
+  console.error('错误信息:', err.message);
+  console.error('错误堆栈:', err.stack);
+  console.error('===========================');
+  res.status(500).json({
+    error: err.message,
+    type: err.name,
+    diagnostics: {
+      url: url,
+      hasUrl: !!process.env.SUPABASE_URL_V2,
+      hasKey: !!process.env.SUPABASE_ANON_KEY_V2
+    }
+  });
+}app.get('/env-test', (req, res) => {
+  res.json({
+    hasUrl: !!process.env.SUPABASE_URL_V2,
+    hasKey: !!process.env.SUPABASE_ANON_KEY_V2,
+    urlPrefix: process.env.SUPABASE_URL_V2?.substring(0, 30)
+  });
+});
 });
 // 这就是 Vercel 需要的导出
 module.exports = app;

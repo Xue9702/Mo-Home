@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "server.js": {
+      "runtime": "nodejs22.x",
+      "flags": "--dns-result-order=ipv4first"
+    }
+  }
+}
