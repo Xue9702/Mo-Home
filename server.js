@@ -33,6 +33,47 @@ app.get('/test-db', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+app.get('/test-fetch', async (req, res) => {
+  const baseUrl = process.env.SUPABASE_URL_V2;
+  const supabaseKey = process.env.SUPABASE_ANON_KEY_V2;
 
+  // 先返回诊断信息，看看环境变量是否被读取
+  if (!baseUrl || !supabaseKey) {
+    return res.status(500).json({
+      error: '环境变量未读取',
+      hasUrl: !!baseUrl,
+      hasKey: !!supabaseKey,
+      urlValue: baseUrl ? '已设置' : '未设置'
+    });
+  }
+
+  try {
+    const url = `${baseUrl}/rest/v1/settings?select=*&limit=1`;
+    const response = await fetch(url, {
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      }
+    });
+
+    const data = await response.json();
+    res.json({
+      success: true,
+      status: response.status,
+      data: data,
+      url: url.replace(baseUrl, '***') // 隐藏真实URL
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message,
+      type: err.name,
+      diagnostics: {
+        url: baseUrl ? baseUrl.substring(0, 30) + '...' : '未设置',
+        hasKey: !!supabaseKey,
+        errorType: err.constructor.name
+      }
+    });
+  }
+});
 // 这就是 Vercel 需要的导出
 module.exports = app;
