@@ -64,15 +64,26 @@ app.get('/test-db', async (req, res) => {
       body: JSON.stringify(testMessage)
     });
 
+let data = null;
 const text = await response.text();
-let data;
-try {
-  data = JSON.parse(text);
-} catch (parseErr) {
-  return res.status(500).json({
-    error: '响应不是有效的JSON',
-    raw: text.substring(0, 200) // 只显示前200个字符，便于查看
-  });
+
+if (text && text.length > 0) {
+  try {
+    data = JSON.parse(text);
+  } catch (parseErr) {
+    // 如果解析失败，但状态码是成功，则视为写入成功
+    if (response.ok) {
+      return res.json({
+        success: true,
+        message: '写入成功（返回内容非JSON）',
+        raw: text.substring(0, 200)
+      });
+    }
+    return res.status(500).json({
+      error: '响应不是有效的JSON',
+      raw: text.substring(0, 200)
+    });
+  }
 }
 
     if (!response.ok) {
