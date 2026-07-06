@@ -64,7 +64,16 @@ app.get('/test-db', async (req, res) => {
       body: JSON.stringify(testMessage)
     });
 
-    const data = await response.json();
+const text = await response.text();
+let data;
+try {
+  data = JSON.parse(text);
+} catch (parseErr) {
+  return res.status(500).json({
+    error: '响应不是有效的JSON',
+    raw: text.substring(0, 200) // 只显示前200个字符，便于查看
+  });
+}
 
     if (!response.ok) {
       return res.status(response.status).json({
