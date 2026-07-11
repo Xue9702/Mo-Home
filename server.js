@@ -30,14 +30,21 @@ function parseSSEResponse(text) {
 async function initOmbreSession() {
   if (!OMBRE_BRAIN_URL) return false;
   try {
-    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-      jsonrpc: "2.0",
-      method: "initialize",
-      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
-      id: ++ombreCallId
-    }, {
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }
-    });
+   const token = process.env.MCP_ACCESS_TOKEN; // 读取钥匙
+const headers = {
+  'Content-Type': 'application/json',
+  'Accept': 'application/json, text/event-stream'
+};
+if (token) {
+  headers['Authorization'] = 'Bearer ' + token; // 把钥匙带进请求头里
+}
+
+const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+  jsonrpc: "2.0",
+  method: "initialize",
+  params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
+  id: ++ombreCallId
+}, { headers: headers });
 
     // 提取 Session ID
     const parsed = parseSSEResponse(response.data);
