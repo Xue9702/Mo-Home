@@ -57,7 +57,7 @@ async function initOmbreSession() {
   }
 }
 
-// ⭐️ 调用工具时，必须带上刚才抓到的 Session ID！
+// ⭐️ 终极精简版：去掉干扰的 Token，强制固定 ID 为 1！
 async function callOmbreTool(toolName, args = {}) {
   if (!OMBRE_BRAIN_URL) return null;
   try {
@@ -70,12 +70,13 @@ async function callOmbreTool(toolName, args = {}) {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
-      id: ++ombreCallId
+      id: 1 // ⭐️ 关键：把 id 固定为 1，和握手的 ID 保持一致！
     }, {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
-        'Mcp-Session-Id': ombreSessionId // ⭐️ 必须带上这个 ID！
+        'Mcp-Session-Id': ombreSessionId 
+        // ⭐️ 关键：完全去掉了 Authorization 头，不给它任何干扰的机会！
       }
     });
 
