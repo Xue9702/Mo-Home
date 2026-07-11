@@ -66,11 +66,11 @@ async function callOmbreTool(toolName, args = {}) {
       if (!ok) return null;
     }
 
-    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+      const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
-      id: 1 // ⭐️ 关键：把 id 固定为 1，和握手的 ID 保持一致！
+      id: ++ombreCallId // ✅ 关键修复：给每次请求一个独一无二的 ID！
     }, {
       headers: {
         'Content-Type': 'application/json',
