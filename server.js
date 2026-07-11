@@ -14,7 +14,7 @@ const supabase = createClient(baseUrl, supabaseKey);
 const OMBRE_BRAIN_URL = process.env.OMBRE_BRAIN_URL;
 let isInitialized = false;
 
-// 极简握手：只打招呼，不问 Session ID，不带验证头
+// 极简打招呼：不需要任何 Session ID
 async function initOmbreSession() {
   if (isInitialized) return true;
   if (!OMBRE_BRAIN_URL) return false;
@@ -36,23 +36,17 @@ async function initOmbreSession() {
   }
 }
 
-// 直接调用工具：不带 Mcp-Session-Id，不带复杂解析
+// 极简工具调用：去掉了 Mcp-Session-Id 头！
 async function callOmbreTool(toolName, args = {}) {
   if (!OMBRE_BRAIN_URL) return null;
   try {
-    // ⭐️ 我们直接硬编码一个虚拟的 Session ID，骗过 Ombre Brain 的检查！
-    const fakeSessionId = 'my-ombre-session-9702';
-
     const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
       id: 1
     }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Mcp-Session-Id': fakeSessionId // ⭐️ 加上这一行，它就会乖乖开门！
-      }
+      headers: { 'Content-Type': 'application/json' }
     });
 
     const data = response.data;
