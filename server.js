@@ -49,7 +49,10 @@ async function initOmbreSession() {
       transformResponse: [(data) => data] // 👈 加上这一行！这是拿回纯文本的关键！
     });
 
-    const parsed = parseSSEResponse(response.data);
+      const parsed = parseSSEResponse(response.data);
+    
+    // 🔍 加上这一行，我们把 Ombre Brain 返回的原始数据打印到日志里！
+    console.log('🔍 MCP 初始化原始响应:', JSON.stringify(parsed, null, 2));
     
     // 💡 重点修复一：必须把 sessionId 存下来！
     if (parsed?.result) {
