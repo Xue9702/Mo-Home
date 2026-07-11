@@ -43,18 +43,28 @@ async function initOmbreSession() {
     const parsed = parseSSEResponse(response.data);
     
     // ✅ 只要拿到了返回的 id，就视为握手成功！
-    if (parsed && parsed.id) {
-      ombreSessionId = String(parsed.id); 
-      console.log('✅ Ombre Brain MCP 初始化握手成功！捕获到的 Session ID:', ombreSessionId);
-      return true; // ⭐️ 直接返回成功，不再发送任何通知，避开 404！
-    }
+       if (parsed && parsed.id) {
+      ombreSessionId = 'my-ombre-session-9702'; // ⭐️ 不要用 parsed.id，直接给固定字符串！
+      console.log('✅ Ombre Brain MCP 初始化握手成功！强制设置 Session ID:', ombreSessionId);
 
-    console.error('❌ 初始化失败，未收到有效返回结果');
-    return false;
-  } catch (err) {
-    console.error('❌ MCP 会话初始化失败:', err.message);
-    return false;
-  }
+      // ⭐️ 加回通知，用 try-catch 包裹，如果 404 也直接忽略！
+      try {
+        await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+          jsonrpc: "2.0",
+          method: "notifications/initialized"
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'Mcp-Session-Id': ombreSessionId
+          }
+        });
+        console.log('✅ Ombre Brain 通知发送成功！');
+      } catch (notifyErr) {
+        console.log('👉 通知返回错误（不影响后续使用）:', notifyErr.message);
+      }
+      return true;
+    }
 }
 
 // ⭐️ 终极精简版：去掉干扰的 Token，强制固定 ID 为 1！
@@ -66,18 +76,18 @@ async function callOmbreTool(toolName, args = {}) {
       if (!ok) return null;
     }
 
-      const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+         const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
-      id: ++ombreCallId // ✅ 关键修复：给每次请求一个独一无二的 ID！
+      id: ++ombreCallId
     }, {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
-        'Mcp-Session-Id': ombreSessionId 
-        // ⭐️ 关键：完全去掉了 Authorization 头，不给它任何干扰的机会！
-      }
+        'Mcp-Session-Id': ombreSessionId
+      },
+      transformResponse: [(data) => data] // ✅ 必须加上这一行！
     });
 
     const data = response.data;
