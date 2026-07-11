@@ -98,8 +98,10 @@ async function callOmbreTool(toolName, args = {}) {
         .join('\n');
     }
     return parsed ? JSON.stringify(parsed) : null;
-  } catch (err) {
+    } catch (err) {
     console.error(`❌ MCP 工具 ${toolName} 调用失败:`, err.message);
+    // 把 Ombre Brain 返回的具体报错体打印出来！
+    console.error('➡️ 详细报错:', err.response?.data || '没有收到错误响应体');
     return null;
   }
 }
@@ -123,7 +125,8 @@ app.get('/test-ombre', async (req, res) => {
   if (!OMBRE_BRAIN_URL) {
     return res.status(500).json({ error: '环境变量 OMBRE_BRAIN_URL 未配置' });
   }
-  const result = await callOmbreTool('breath', { query: '你好' });
+  // 尝试用 'text' 作为参数名
+  const result = await callOmbreTool('breath', { text: '你好' });
   res.json({ connected: !!result, result });
 });
 
