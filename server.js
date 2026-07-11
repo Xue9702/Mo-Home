@@ -89,7 +89,16 @@ async function callOmbreTool(toolName, args = {}) {
     }
     return data ? JSON.stringify(data) : null;
   } catch (err) {
+    // 打印基础报错
     console.error(`❌ MCP 工具 ${toolName} 调用失败:`, err.message);
+    
+    // ⭐️ 重点：加上下面这几行，把 Ombre Brain 返回的拒收原因打印出来！
+    if (err.response) {
+      console.error('👉 错误状态码:', err.response.status);
+      console.error('👉 详细的错误体（破案关键）:', err.response.data);
+    } else {
+      console.error('👉 没有收到任何响应体');
+    }
     return null;
   }
 }
