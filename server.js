@@ -12,42 +12,48 @@ const supabase = createClient(baseUrl, supabaseKey);
 
 // ================== Ombre Brain (MCP) 配置 ==================
 const OMBRE_BRAIN_URL = process.env.OMBRE_BRAIN_URL;
-let ombreSessionId = null; // 其实已经不需要这个了，留着防报错
-let ombreCallId = 0;
+let isInitialized = false;
 
-// 解析 MCP 返回的 SSE 数据
-function parseSSEResponse(text) {
-  const lines = text.split('\n');
-  for (const line of lines) {
-    if (line.startsWith('data: ')) {
-      try { return JSON.parse(line.substring(6)); } catch (e) { /* ignore */ }
-    }
+// 极简握手：只打招呼，不问 Session ID，不带验证头
+async function initOmbreSession() {
+  if (isInitialized) return true;
+  if (!OMBRE_BRAIN_URL) return false;
+  try {
+    await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
+      id: 1
+    }, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    console.log('✅ Ombre Brain 已成功打过招呼！');
+    isInitialized = true;
+    return true;
+  } catch (err) {
+    console.error('❌ 打招呼失败:', err.message);
+    return false;
   }
-  try { return JSON.parse(text); } catch (e) { return null; }
 }
 
-// 替换掉原来的 initOmbreSession 和 callOmbreTool
-
-// 直接发送请求，不带任何会话状态
+// 直接调用工具：不带 Mcp-Session-Id，不带复杂解析
 async function callOmbreTool(toolName, args = {}) {
   if (!OMBRE_BRAIN_URL) return null;
   try {
-    // 构造标准的 JSON-RPC 2.0 请求
-    const payload = {
+    // 确保已经打过招呼
+    const ok = await initOmbreSession();
+    if (!ok) return null;
+
+    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
       id: 1
-    };
-
-    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream'
-      }
+    }, {
+      headers: { 'Content-Type': 'application/json' }
     });
 
-    // 直接解析返回的内容
+    // 因为不再需要处理 SSE 流，直接用 response.data 即可
     const data = response.data;
     if (data?.result?.content) {
       return data.result.content
