@@ -39,12 +39,15 @@ async function initOmbreSession() {
       headers['Authorization'] = 'Bearer ' + token;
     }
 
-    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+        const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
       method: "initialize",
       params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
       id: ++ombreCallId
-    }, { headers: headers });
+    }, {
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      transformResponse: [(data) => data] // 👈 加上这一行！这是拿回纯文本的关键！
+    });
 
     const parsed = parseSSEResponse(response.data);
     
@@ -54,14 +57,16 @@ async function initOmbreSession() {
       console.log('✅ Ombre Brain MCP 初始化握手成功！Session ID:', ombreSessionId);
 
       // 💡 重点修复二：按协议发送 notifications/initialized 通知（不带 Session 头）
-      await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-        jsonrpc: "2.0",
-        method: "notifications/initialized"
-      }, {
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+             await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+          jsonrpc: "2.0",
+          method: "notifications/initialized"
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'Mcp-Session-Id': ombreSessionId
+          }
+        });
 
       return true;
     }
