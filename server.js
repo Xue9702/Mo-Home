@@ -26,7 +26,7 @@ function parseSSEResponse(text) {
   try { return JSON.parse(text); } catch (e) { return null; }
 }
 
-// ⭐️ 极简版握手：握完手直接承认成功，跳过多余的通知！
+// ⭐️ 完全闭合、防报错版握手函数
 async function initOmbreSession() {
   if (!OMBRE_BRAIN_URL) return false;
   try {
@@ -37,17 +37,17 @@ async function initOmbreSession() {
       id: ++ombreCallId
     }, {
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-      transformResponse: [(data) => data] 
+      transformResponse: [(data) => data]
     });
 
     const parsed = parseSSEResponse(response.data);
     
-    // ✅ 只要拿到了返回的 id，就视为握手成功！
-       if (parsed && parsed.id) {
-      ombreSessionId = 'my-ombre-session-9702'; // ⭐️ 不要用 parsed.id，直接给固定字符串！
+    if (parsed && parsed.id) {
+      // 关键：我们不再依赖 parsed.id，直接写死一个固定的“暗号”
+      ombreSessionId = 'my-ombre-session-9702'; 
       console.log('✅ Ombre Brain MCP 初始化握手成功！强制设置 Session ID:', ombreSessionId);
 
-      // ⭐️ 加回通知，用 try-catch 包裹，如果 404 也直接忽略！
+      // 尝试发送通知，如果报 404 直接忽略，不影响后续使用
       try {
         await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
           jsonrpc: "2.0",
@@ -59,15 +59,19 @@ async function initOmbreSession() {
             'Mcp-Session-Id': ombreSessionId
           }
         });
-        console.log('✅ Ombre Brain 通知发送成功！');
       } catch (notifyErr) {
-        console.log('👉 通知返回错误（不影响后续使用）:', notifyErr.message);
+        // 忽略错误
       }
       return true;
     }
+    return false;
+  } catch (err) {
+    console.error('❌ MCP 会话初始化失败:', err.message);
+    return false;
+  }
 }
 
-// ⭐️ 终极精简版：去掉干扰的 Token，强制固定 ID 为 1！
+// ⭐️ 工具调用函数（补全了 transformResponse 配置）
 async function callOmbreTool(toolName, args = {}) {
   if (!OMBRE_BRAIN_URL) return null;
   try {
@@ -76,7 +80,7 @@ async function callOmbreTool(toolName, args = {}) {
       if (!ok) return null;
     }
 
-         const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
@@ -87,7 +91,7 @@ async function callOmbreTool(toolName, args = {}) {
         'Accept': 'application/json, text/event-stream',
         'Mcp-Session-Id': ombreSessionId
       },
-      transformResponse: [(data) => data] // ✅ 必须加上这一行！
+      transformResponse: [(data) => data] // ⭐️ 必须加上这一行！
     });
 
     const data = response.data;
@@ -99,16 +103,7 @@ async function callOmbreTool(toolName, args = {}) {
     }
     return data ? JSON.stringify(data) : null;
   } catch (err) {
-    // 打印基础报错
     console.error(`❌ MCP 工具 ${toolName} 调用失败:`, err.message);
-    
-    // ⭐️ 重点：加上下面这几行，把 Ombre Brain 返回的拒收原因打印出来！
-    if (err.response) {
-      console.error('👉 错误状态码:', err.response.status);
-      console.error('👉 详细的错误体（破案关键）:', err.response.data);
-    } else {
-      console.error('👉 没有收到任何响应体');
-    }
     return null;
   }
 }
