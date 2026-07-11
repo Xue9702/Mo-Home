@@ -26,106 +26,38 @@ function parseSSEResponse(text) {
   try { return JSON.parse(text); } catch (e) { return null; }
 }
 
-// ⭐️ 修复后的 MCP 握手函数！
-async function initOmbreSession() {
-  if (!OMBRE_BRAIN_URL) return false;
-  try {
-    const token = process.env.MCP_ACCESS_TOKEN;
-    const headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream'
-    };
-    if (token) {
-      headers['Authorization'] = 'Bearer ' + token;
-    }
+// 替换掉原来的 initOmbreSession 和 callOmbreTool
 
-        const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-      jsonrpc: "2.0",
-      method: "initialize",
-      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
-      id: ++ombreCallId
-    }, {
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-      transformResponse: [(data) => data] // 👈 加上这一行！这是拿回纯文本的关键！
-    });
-
-      const parsed = parseSSEResponse(response.data);
-    
-    // 🔍 加上这一行，我们把 Ombre Brain 返回的原始数据打印到日志里！
-    console.log('🔍 MCP 初始化原始响应:', JSON.stringify(parsed, null, 2));
-    
-    // 💡 重点修复一：必须把 sessionId 存下来！
-    if (parsed?.result) {
-      ombreSessionId = parsed.result.sessionId;
-      console.log('✅ Ombre Brain MCP 初始化握手成功！Session ID:', ombreSessionId);
-
-      // 💡 重点修复二：按协议发送 notifications/initialized 通知（不带 Session 头）
-             await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-          jsonrpc: "2.0",
-          method: "notifications/initialized"
-        }, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            'Mcp-Session-Id': ombreSessionId
-          }
-        });
-
-      return true;
-    }
-
-    console.error('❌ 初始化失败，未收到有效结果:', parsed);
-    return false;
-  } catch (err) {
-    console.error('❌ MCP 会话初始化失败:', err.message);
-    if (err.response) {
-      console.error('错误状态码:', err.response.status);
-      console.error('错误响应详情:', err.response.data);
-    }
-    return false;
-  }
-}
-
-// ⭐️ 修复后的工具调用函数（加入必不可少的 Mcp-Session-Id 头）
+// 直接发送请求，不带任何会话状态
 async function callOmbreTool(toolName, args = {}) {
   if (!OMBRE_BRAIN_URL) return null;
   try {
-    if (!ombreSessionId) {
-      const ok = await initOmbreSession();
-      if (!ok) return null;
-    }
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream'
-    };
-    
-    // 💡 重点修复三：在真正的工具调用时，必须携带这个 ID 头！
-    if (ombreSessionId) {
-      headers['Mcp-Session-Id'] = ombreSessionId;
-    }
-
-    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+    // 构造标准的 JSON-RPC 2.0 请求
+    const payload = {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
-      id: ++ombreCallId
-    }, {
-      headers: headers,
-      transformResponse: [(data) => data]
+      id: 1
+    };
+
+    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream'
+      }
     });
 
-    const parsed = parseSSEResponse(response.data);
-    if (parsed?.result?.content) {
-      return parsed.result.content
+    // 直接解析返回的内容
+    const data = response.data;
+    if (data?.result?.content) {
+      return data.result.content
         .filter(c => c.type === 'text')
         .map(c => c.text)
         .join('\n');
     }
-    return parsed ? JSON.stringify(parsed) : null;
+    return data ? JSON.stringify(data) : null;
   } catch (err) {
     console.error(`❌ MCP 工具 ${toolName} 调用失败:`, err.message);
-    console.error('➡️ 详细报错:', err.response?.data || '没有收到错误响应体');
     return null;
   }
 }
