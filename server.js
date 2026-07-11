@@ -1,6 +1,6 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
-const axios = require('axios'); // 🆕 新增：用于跟 Ombre Brain 通信
+const axios = require('axios');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -10,9 +10,9 @@ const baseUrl = process.env.SUPABASE_URL_V2;
 const supabaseKey = process.env.SUPABASE_ANON_KEY_V2;
 const supabase = createClient(baseUrl, supabaseKey);
 
-// ================== 🆕 新增：Ombre Brain (MCP) 配置 ==================
+// ================== Ombre Brain (MCP) 配置 ==================
 const OMBRE_BRAIN_URL = process.env.OMBRE_BRAIN_URL;
-let ombreSessionId = null;
+let ombreSessionId = null; // 其实已经不需要这个了，留着防报错
 let ombreCallId = 0;
 
 // 解析 MCP 返回的 SSE 数据
@@ -26,56 +26,47 @@ function parseSSEResponse(text) {
   try { return JSON.parse(text); } catch (e) { return null; }
 }
 
-// 初始化 MCP 会话（握手）
+// ⭐️ 修复后的 MCP 握手函数！
 async function initOmbreSession() {
   if (!OMBRE_BRAIN_URL) return false;
   try {
-   const token = process.env.MCP_ACCESS_TOKEN; // 读取钥匙
-const headers = {
-  'Content-Type': 'application/json',
-  'Accept': 'application/json, text/event-stream'
-};
-if (token) {
-  headers['Authorization'] = 'Bearer ' + token; // 把钥匙带进请求头里
-}
-
-const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-  jsonrpc: "2.0",
-  method: "initialize",
-  params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
-  id: ++ombreCallId
-}, { headers: headers });
-
-    // 提取 Session ID
-    const parsed = parseSSEResponse(response.data);
-    if (parsed?.result?.sessionId) {
-      ombreSessionId = parsed.result.sessionId;
+    const token = process.env.MCP_ACCESS_TOKEN;
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream'
+    };
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
     }
 
-    // 发送握手成功通知
-    if (ombreSessionId) {
-      await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-        jsonrpc: "2.0",
-        method: "notifications/initialized"
-      }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json, text/event-stream',
-          'Mcp-Session-Id': ombreSessionId
-        }
-      });
-      console.log('✅ Ombre Brain MCP 会话已建立！');
+    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
+      id: ++ombreCallId
+    }, { headers: headers });
+
+    const parsed = parseSSEResponse(response.data);
+    
+    // 💡 重点修复：只要收到了 `result`，就说明握手成功了！
+    if (parsed?.result) {
+      console.log('✅ Ombre Brain MCP 初始化握手成功！');
       return true;
     }
+
+    console.error('❌ 初始化失败，未收到有效结果:', parsed);
     return false;
   } catch (err) {
     console.error('❌ MCP 会话初始化失败:', err.message);
-    ombreSessionId = null;
+    if (err.response) {
+      console.error('错误状态码:', err.response.status);
+      console.error('错误响应详情:', err.response.data);
+    }
     return false;
   }
 }
 
-// 统一工具调用函数
+// ⭐️ 修复后的工具调用函数（去掉了多余的 sessionId 依赖）
 async function callOmbreTool(toolName, args = {}) {
   if (!OMBRE_BRAIN_URL) return null;
   try {
@@ -84,18 +75,19 @@ async function callOmbreTool(toolName, args = {}) {
       if (!ok) return null;
     }
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream'
+    };
+
     const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
       method: "tools/call",
       params: { name: toolName, arguments: args },
       id: ++ombreCallId
     }, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream',
-        'Mcp-Session-Id': ombreSessionId
-      },
-      transformResponse: [(data) => data] // 阻止自动解析 JSON
+      headers: headers,
+      transformResponse: [(data) => data]
     });
 
     const parsed = parseSSEResponse(response.data);
@@ -117,7 +109,6 @@ app.get('/', (req, res) => {
   res.send('你好, Mo-Home 正在运行');
 });
 
-// 原测试路由保持不变
 app.get('/test-db', async (req, res) => {
   try {
     const { data, error } = await supabase.from('settings').select('*').limit(1);
@@ -128,7 +119,6 @@ app.get('/test-db', async (req, res) => {
   }
 });
 
-// 🆕 新增：测试 Ombre Brain 连接的路由
 app.get('/test-ombre', async (req, res) => {
   if (!OMBRE_BRAIN_URL) {
     return res.status(500).json({ error: '环境变量 OMBRE_BRAIN_URL 未配置' });
