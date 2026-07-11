@@ -48,9 +48,21 @@ async function initOmbreSession() {
 
     const parsed = parseSSEResponse(response.data);
     
-    // 💡 重点修复：只要收到了 `result`，就说明握手成功了！
+    // 💡 重点修复一：必须把 sessionId 存下来！
     if (parsed?.result) {
-      console.log('✅ Ombre Brain MCP 初始化握手成功！');
+      ombreSessionId = parsed.result.sessionId;
+      console.log('✅ Ombre Brain MCP 初始化握手成功！Session ID:', ombreSessionId);
+
+      // 💡 重点修复二：按协议发送 notifications/initialized 通知（不带 Session 头）
+      await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+        jsonrpc: "2.0",
+        method: "notifications/initialized"
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
       return true;
     }
 
@@ -66,7 +78,7 @@ async function initOmbreSession() {
   }
 }
 
-// ⭐️ 修复后的工具调用函数（去掉了多余的 sessionId 依赖）
+// ⭐️ 修复后的工具调用函数（加入必不可少的 Mcp-Session-Id 头）
 async function callOmbreTool(toolName, args = {}) {
   if (!OMBRE_BRAIN_URL) return null;
   try {
@@ -79,6 +91,11 @@ async function callOmbreTool(toolName, args = {}) {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream'
     };
+    
+    // 💡 重点修复三：在真正的工具调用时，必须携带这个 ID 头！
+    if (ombreSessionId) {
+      headers['Mcp-Session-Id'] = ombreSessionId;
+    }
 
     const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
@@ -98,9 +115,8 @@ async function callOmbreTool(toolName, args = {}) {
         .join('\n');
     }
     return parsed ? JSON.stringify(parsed) : null;
-    } catch (err) {
+  } catch (err) {
     console.error(`❌ MCP 工具 ${toolName} 调用失败:`, err.message);
-    // 把 Ombre Brain 返回的具体报错体打印出来！
     console.error('➡️ 详细报错:', err.response?.data || '没有收到错误响应体');
     return null;
   }
