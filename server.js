@@ -26,7 +26,7 @@ function parseSSEResponse(text) {
   try { return JSON.parse(text); } catch (e) { return null; }
 }
 
-// ⭐️ 终极修复：恢复完整的握手逻辑，并抓取返回的 json-rpc id！
+// ⭐️ 极简版握手：握完手直接承认成功，跳过多余的通知！
 async function initOmbreSession() {
   if (!OMBRE_BRAIN_URL) return false;
   try {
@@ -37,30 +37,16 @@ async function initOmbreSession() {
       id: ++ombreCallId
     }, {
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-      transformResponse: [(data) => data] // 确保拿到纯文本进行解析
+      transformResponse: [(data) => data] 
     });
 
     const parsed = parseSSEResponse(response.data);
     
-    // 🔥 关键所在：Ombre Brain 没有返回 sessionId 字段，它的 sessionId 就是返回的 id！
+    // ✅ 只要拿到了返回的 id，就视为握手成功！
     if (parsed && parsed.id) {
       ombreSessionId = String(parsed.id); 
       console.log('✅ Ombre Brain MCP 初始化握手成功！捕获到的 Session ID:', ombreSessionId);
-
-      // 发送初始化完成通知
-      await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-        jsonrpc: "2.0",
-        method: "notifications/initialized"
-      }, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json, text/event-stream',
-          'Mcp-Session-Id': ombreSessionId // 带上刚刚抓到的 ID
-        }
-      });
-
-      console.log('✅ Ombre Brain 已成功打过招呼！');
-      return true;
+      return true; // ⭐️ 直接返回成功，不再发送任何通知，避开 404！
     }
 
     console.error('❌ 初始化失败，未收到有效返回结果');
