@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mo-Home</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: #f5f5f5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* 顶栏 */
+    .header {
+      background-color: #ffffff;
+      padding: 16px 20px 12px;
+      text-align: center;
+      font-size: 18px;
+      font-weight: 500;
+      color: #333;
+      border-bottom: 1px solid #e9e9e9;
+      flex-shrink: 0;
+      letter-spacing: 0.5px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    /* 消息列表容器 */
+    .message-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 16px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background-color: #f5f5f5;
+    }
+
+    /* 消息气泡容器，区分左右 */
+    .message {
+      display: flex;
+      flex-direction: column;
+      max-width: 75%;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    /* 气泡本身 */
+    .bubble {
+      padding: 10px 14px;
+      border-radius: 18px;
+      font-size: 15px;
+      line-height: 1.6;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+      background-color: #ffffff;
+      color: #1e1e1e;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      border: 1px solid #e9e9e9;
+    }
+
+    .message.user .bubble {
+      background-color: #d0e6ff;
+      border-color: #b8d4f0;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.assistant .bubble {
+      background-color: #ffffff;
+      border-bottom-left-radius: 4px;
+    }
+
+    /* 思考内容（折叠） */
+    .thinking-toggle {
+      font-size: 12px;
+      color: #999;
+      cursor: pointer;
+      margin-top: 4px;
+      user-select: none;
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background-color: #f0f0f0;
+      transition: background-color 0.15s;
+    }
+
+    .thinking-toggle:hover {
+      background-color: #e5e5e5;
+    }
+
+    .thinking-content {
+      font-size: 13px;
+      color: #666;
+      background-color: #f8f8f8;
+      padding: 8px 12px;
+      border-radius: 10px;
+      margin-top: 4px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      display: none;
+      border-left: 3px solid #ccc;
+    }
+
+    .thinking-content.open {
+      display: block;
+    }
+
+    .timestamp {
+      font-size: 11px;
+      color: #b0b0b0;
+      margin-top: 4px;
+      padding: 0 4px;
+    }
+
+    /* 底部输入区 */
+    .input-area {
+      flex-shrink: 0;
+      background-color: #ffffff;
+      padding: 12px 16px 14px;
+      border-top: 1px solid #e9e9e9;
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      box-shadow: 0 -1px 3px rgba(0,0,0,0.02);
+      backdrop-filter: blur(2px);
+    }
+
+    .input-area textarea {
+      flex: 1;
+      border: 1px solid #ddd;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-size: 15px;
+      font-family: inherit;
+      resize: none;
+      outline: none;
+      transition: border-color 0.15s;
+      min-height: 44px;
+      max-height: 120px;
+      line-height: 1.5;
+      background-color: #fafafa;
+    }
+
+    .input-area textarea:focus {
+      border-color: #a0c4ff;
+      background-color: #ffffff;
+    }
+
+    .input-area button {
+      background-color: #1e90ff;
+      color: #fff;
+      border: none;
+      border-radius: 24px;
+      padding: 10px 22px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 0.15s;
+      white-space: nowrap;
+      height: 44px;
+      flex-shrink: 0;
+    }
+
+    .input-area button:hover {
+      background-color: #0077e6;
+    }
+
+    .input-area button:active {
+      background-color: #0066cc;
+    }
+
+    .input-area button:disabled {
+      background-color: #b0b0b0;
+      cursor: not-allowed;
+    }
+
+    /* 加载指示器 */
+    .typing-indicator {
+      font-size: 14px;
+      color: #999;
+      padding: 6px 0 4px 4px;
+      display: flex;
+      gap: 2px;
+      align-items: center;
+    }
+
+    .typing-indicator span {
+      animation: pulse 1.2s infinite;
+    }
+
+    .typing-indicator span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .typing-indicator span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes pulse {
+      0%, 60%, 100% { opacity: 0.3; }
+      30% { opacity: 1; }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* 滚动条美化 */
+    .message-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .message-list::-webkit-scrollbar-track {
+      background: #f0f0f0;
+    }
+
+    .message-list::-webkit-scrollbar-thumb {
+      background: #d0d0d0;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">💗 Mo-Home · 与默</div>
+
+  <div class="message-list" id="messageList">
+    <!-- 消息由 JavaScript 动态渲染 -->
+  </div>
+
+  <div class="input-area" id="inputArea">
+    <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
+    <button id="sendBtn">发送</button>
+  </div>
+
+  <script>
+    (function() {
+      const messageList = document.getElementById('messageList');
+      const userInput = document.getElementById('userInput');
+      const sendBtn = document.getElementById('sendBtn');
+
+      // ---------- 状态 ----------
+      let isLoading = false;
+
+      // ---------- 工具函数 ----------
+      function formatTime() {
+        const now = new Date();
+        const h = String(now.getHours()).padStart(2, '0');
+        const m = String(now.getMinutes()).padStart(2, '0');
+        return h + ':' + m;
+      }
+
+      // 渲染思考内容（支持折叠）
+      function createThinkingElement(thinkingText) {
+        if (!thinkingText || thinkingText.trim() === '') return null;
+
+        const wrapper = document.createElement('div');
+        wrapper.style.marginTop = '6px';
+
+        const toggle = document.createElement('span');
+        toggle.className = 'thinking-toggle';
+        toggle.textContent = '💭 思考';
+        wrapper.appendChild(toggle);
+
+        const content = document.createElement('div');
+        content.className = 'thinking-content';
+        content.textContent = thinkingText.trim();
+        wrapper.appendChild(content);
+
+        toggle.addEventListener('click', function(e) {
+          e.stopPropagation();
+          content.classList.toggle('open');
+          toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考';
+        });
+
+        return wrapper;
+      }
+
+      // 添加消息到界面
+      function addMessage(role, content, thinking = null, timestamp = null) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message ' + role;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = content;
+        msgDiv.appendChild(bubble);
+
+        // 如果有思考内容，添加折叠区域
+        if (thinking) {
+          const thinkingEl = createThinkingElement(thinking);
+          if (thinkingEl) {
+            msgDiv.appendChild(thinkingEl);
+          }
+        }
+
+        // 时间戳
+        const ts = document.createElement('div');
+        ts.className = 'timestamp';
+        ts.textContent = timestamp || formatTime();
+        msgDiv.appendChild(ts);
+
+        messageList.appendChild(msgDiv);
+        messageList.scrollTop = messageList.scrollHeight;
+      }
+
+      // 显示加载状态
+      function showTyping() {
+        const div = document.createElement('div');
+        div.className = 'message assistant';
+        div.id = 'typingIndicator';
+
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.style.backgroundColor = '#f0f0f0';
+        bubble.style.color = '#888';
+
+        const indicator = document.createElement('div');
+        indicator.className = 'typing-indicator';
+        indicator.innerHTML = '<span>●</span><span>●</span><span>●</span>';
+        bubble.appendChild(indicator);
+        div.appendChild(bubble);
+
+        messageList.appendChild(div);
+        messageList.scrollTop = messageList.scrollHeight;
+      }
+
+      function removeTyping() {
+        const el = document.getElementById('typingIndicator');
+        if (el) el.remove();
+      }
+
+      // ---------- 发送消息 ----------
+      async function sendMessage() {
+        const text = userInput.value.trim();
+        if (!text || isLoading) return;
+
+        // 清空输入框，调整高度
+        userInput.value = '';
+        userInput.style.height = 'auto';
+
+        // 显示用户消息
+        addMessage('user', text, null, formatTime());
+
+        isLoading = true;
+        sendBtn.disabled = true;
+        showTyping();
+
+        try {
+          // 调用 Render 后端
+          // 注意：这里假设你的后端地址是相对路径 /api/chat
+          // 如果部署在 Render，会自动匹配当前域名
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ message: text }),
+          });
+
+          removeTyping();
+
+          if (!response.ok) {
+            const errText = await response.text();
+            addMessage('assistant', '❌ 请求失败：' + errText, null, formatTime());
+            isLoading = false;
+            sendBtn.disabled = false;
+            return;
+          }
+
+          const data = await response.json();
+
+          // 假设后端返回 { reply, thinking }
+          const reply = data.reply || '（没有收到回复）';
+          const thinking = data.thinking || null;
+
+          addMessage('assistant', reply, thinking, formatTime());
+
+        } catch (err) {
+          removeTyping();
+          addMessage('assistant', '❌ 网络错误：' + err.message, null, formatTime());
+        } finally {
+          isLoading = false;
+          sendBtn.disabled = false;
+          userInput.focus();
+        }
+      }
+
+      // ---------- 事件绑定 ----------
+      sendBtn.addEventListener('click', sendMessage);
+
+      userInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // 自动调整输入框高度
+      userInput.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+      });
+
+      // 初始聚焦
+      userInput.focus();
+
+      // 欢迎消息
+      addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
+
+      console.log('💗 Mo-Home 前端已加载');
+    })();
+  </script>
+</body>
+</html>

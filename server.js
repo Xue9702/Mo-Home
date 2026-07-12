@@ -118,7 +118,7 @@ async function callOmbreTool(toolName, args = {}) {
 // ================== MCP 配置结束 ==================
 
 app.get('/', (req, res) => {
-  res.send('你好, Mo-Home 正在运行');
+  res.sendFile(__dirname + '/chat.html');
 });
 
 app.get('/test-db', async (req, res) => {
