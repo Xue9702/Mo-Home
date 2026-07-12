@@ -634,6 +634,16 @@
             }, 3000);
         }
     }
+    // 注册 Service Worker（PWA 支持）
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js')
+        .then(function(reg) {
+            console.log('✅ Service Worker 注册成功'); 
+        })
+        .catch(function(err) {
+            console.log('❌ Service Worker 注册失败:', err);
+        });
+    }
 
     console.log('💗 Mo-Home 已加载（带锁版）');
   })();
