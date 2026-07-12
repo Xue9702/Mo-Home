@@ -20,6 +20,30 @@
       overflow: hidden;
     }
 
+    <!-- 密码锁 -->
+<div id="loginBox" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#f5f5f5; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:999;">
+  <div style="background:#fff; padding:36px 32px 28px; border-radius:24px; box-shadow:0 8px 30px rgba(0,0,0,0.04); max-width:360px; width:90%; border:1px solid #eee;">
+    <div style="text-align:center; font-size:22px; font-weight:500; color:#333; margin-bottom:6px;">💗 Mo-Home</div>
+    <div style="text-align:center; font-size:14px; color:#888; margin-bottom:24px;">请输入密码以进入</div>
+    <input type="password" id="passwordInput" placeholder="输入密码…" style="width:100%; padding:12px 16px; border:1px solid #ddd; border-radius:12px; font-size:16px; outline:none; background:#fafafa; transition:border 0.15s; box-sizing:border-box;">
+    <div style="margin-top:12px;">
+      <button id="unlockBtn" style="width:100%; padding:12px; background:#1e90ff; color:#fff; border:none; border-radius:12px; font-size:16px; font-weight:500; cursor:pointer; transition:background 0.15s;">进入</button>
+    </div>
+    <div id="loginError" style="margin-top:12px; font-size:13px; color:#e74c3c; text-align:center; display:none;">密码错误，请重试</div>
+  </div>
+</div>
+
+<!-- 聊天主界面（默认隐藏） -->
+<div id="chatApp" style="display:flex; flex-direction:column; height:100vh;">
+  <!-- 原 header 和聊天内容都放在这里 -->
+  <div class="header">💗 Mo-Home · 与默</div>
+  <div class="message-list" id="messageList"></div>
+  <div class="input-area" id="inputArea">
+    <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
+    <button id="sendBtn">发送</button>
+  </div>
+</div>
+
     /* 顶栏 */
     .header {
       background-color: #ffffff;
@@ -251,206 +275,217 @@
     <button id="sendBtn">发送</button>
   </div>
 
-  <script>
-    (function() {
-      const messageList = document.getElementById('messageList');
-      const userInput = document.getElementById('userInput');
-      const sendBtn = document.getElementById('sendBtn');
+<script>
+  (function() {
+    // ---------- DOM 元素 ----------
+    const loginBox = document.getElementById('loginBox');
+    const passwordInput = document.getElementById('passwordInput');
+    const unlockBtn = document.getElementById('unlockBtn');
+    const loginError = document.getElementById('loginError');
+    const chatApp = document.getElementById('chatApp');
 
-      // ---------- 状态 ----------
-      let isLoading = false;
+    const messageList = document.getElementById('messageList');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
 
-      // ---------- 工具函数 ----------
-      function formatTime() {
-        const now = new Date();
-        const h = String(now.getHours()).padStart(2, '0');
-        const m = String(now.getMinutes()).padStart(2, '0');
-        return h + ':' + m;
+    // ---------- 状态 ----------
+    let isLoading = false;
+    const CORRECT_PASSWORD = '9702520x'; // 你可以修改这个密码
+
+    // ---------- 工具函数 ----------
+    function formatTime() {
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      return h + ':' + m;
+    }
+
+    function createThinkingElement(thinkingText) {
+      if (!thinkingText || thinkingText.trim() === '') return null;
+      const wrapper = document.createElement('div');
+      wrapper.style.marginTop = '6px';
+
+      const toggle = document.createElement('span');
+      toggle.className = 'thinking-toggle';
+      toggle.textContent = '💭 思考';
+      wrapper.appendChild(toggle);
+
+      const content = document.createElement('div');
+      content.className = 'thinking-content';
+      content.textContent = thinkingText.trim();
+      wrapper.appendChild(content);
+
+      toggle.addEventListener('click', function(e) {
+        e.stopPropagation();
+        content.classList.toggle('open');
+        toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考';
+      });
+
+      return wrapper;
+    }
+
+    function addMessage(role, content, thinking = null, timestamp = null) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message ' + role;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = content;
+      msgDiv.appendChild(bubble);
+
+      if (thinking) {
+        const thinkingEl = createThinkingElement(thinking);
+        if (thinkingEl) msgDiv.appendChild(thinkingEl);
       }
 
-      // 渲染思考内容（支持折叠）
-      function createThinkingElement(thinkingText) {
-        if (!thinkingText || thinkingText.trim() === '') return null;
+      const ts = document.createElement('div');
+      ts.className = 'timestamp';
+      ts.textContent = timestamp || formatTime();
+      msgDiv.appendChild(ts);
 
-        const wrapper = document.createElement('div');
-        wrapper.style.marginTop = '6px';
+      messageList.appendChild(msgDiv);
+      messageList.scrollTop = messageList.scrollHeight;
+    }
 
-        const toggle = document.createElement('span');
-        toggle.className = 'thinking-toggle';
-        toggle.textContent = '💭 思考';
-        wrapper.appendChild(toggle);
+    function showTyping() {
+      const div = document.createElement('div');
+      div.className = 'message assistant';
+      div.id = 'typingIndicator';
 
-        const content = document.createElement('div');
-        content.className = 'thinking-content';
-        content.textContent = thinkingText.trim();
-        wrapper.appendChild(content);
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.style.backgroundColor = '#f0f0f0';
+      bubble.style.color = '#888';
 
-        toggle.addEventListener('click', function(e) {
-          e.stopPropagation();
-          content.classList.toggle('open');
-          toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考';
+      const indicator = document.createElement('div');
+      indicator.className = 'typing-indicator';
+      indicator.innerHTML = '<span>●</span><span>●</span><span>●</span>';
+      bubble.appendChild(indicator);
+      div.appendChild(bubble);
+
+      messageList.appendChild(div);
+      messageList.scrollTop = messageList.scrollHeight;
+    }
+
+    function removeTyping() {
+      const el = document.getElementById('typingIndicator');
+      if (el) el.remove();
+    }
+
+    // ---------- 加载历史消息 ----------
+    async function loadHistory() {
+      try {
+        const response = await fetch('/api/history');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!data.messages || data.messages.length === 0) {
+          addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
+          return;
+        }
+        data.messages.forEach(msg => {
+          const role = msg.role === 'user' ? 'user' : 'assistant';
+          const thinking = msg.reasoning_content || null;
+          const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : formatTime();
+          addMessage(role, msg.content, thinking, time);
+        });
+      } catch (err) {
+        console.error('加载历史失败:', err);
+        addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime());
+      }
+    }
+
+    // ---------- 发送消息 ----------
+    async function sendMessage() {
+      const text = userInput.value.trim();
+      if (!text || isLoading) return;
+
+      userInput.value = '';
+      userInput.style.height = 'auto';
+
+      addMessage('user', text, null, formatTime());
+
+      isLoading = true;
+      sendBtn.disabled = true;
+      showTyping();
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text }),
         });
 
-        return wrapper;
-      }
-      // ---------- 加载历史消息 ----------
-      async function loadHistory() {
-         try {
-            const response = await fetch('/api/history');
-    if (!response.ok) return;
-    const data = await response.json();
-    if (!data.messages || data.messages.length === 0) {
-          // 没有历史消息，显示欢迎语
-            addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
-      return;
-    }
-     // 按时间顺序渲染已有消息
-    data.messages.forEach(msg => {
-      const role = msg.role === 'user' ? 'user' : 'assistant';
-      const thinking = msg.reasoning_content || null;
-      const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : formatTime();
-      addMessage(role, msg.content, thinking, time);
-    });
-  } catch (err) {
-    console.error('加载历史失败:', err);
-    addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime());
-  }
-}
-        
-      // 添加消息到界面
-      function addMessage(role, content, thinking = null, timestamp = null) {
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message ' + role;
+        removeTyping();
 
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        bubble.textContent = content;
-        msgDiv.appendChild(bubble);
-
-        // 如果有思考内容，添加折叠区域
-        if (thinking) {
-          const thinkingEl = createThinkingElement(thinking);
-          if (thinkingEl) {
-            msgDiv.appendChild(thinkingEl);
-          }
-        }
-
-        // 时间戳
-        const ts = document.createElement('div');
-        ts.className = 'timestamp';
-        ts.textContent = timestamp || formatTime();
-        msgDiv.appendChild(ts);
-
-        messageList.appendChild(msgDiv);
-        messageList.scrollTop = messageList.scrollHeight;
-      }
-
-      // 显示加载状态
-      function showTyping() {
-        const div = document.createElement('div');
-        div.className = 'message assistant';
-        div.id = 'typingIndicator';
-
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        bubble.style.backgroundColor = '#f0f0f0';
-        bubble.style.color = '#888';
-
-        const indicator = document.createElement('div');
-        indicator.className = 'typing-indicator';
-        indicator.innerHTML = '<span>●</span><span>●</span><span>●</span>';
-        bubble.appendChild(indicator);
-        div.appendChild(bubble);
-
-        messageList.appendChild(div);
-        messageList.scrollTop = messageList.scrollHeight;
-      }
-
-      function removeTyping() {
-        const el = document.getElementById('typingIndicator');
-        if (el) el.remove();
-      }
-
-      // ---------- 发送消息 ----------
-      async function sendMessage() {
-        const text = userInput.value.trim();
-        if (!text || isLoading) return;
-
-        // 清空输入框，调整高度
-        userInput.value = '';
-        userInput.style.height = 'auto';
-
-        // 显示用户消息
-        addMessage('user', text, null, formatTime());
-
-        isLoading = true;
-        sendBtn.disabled = true;
-        showTyping();
-
-        try {
-          // 调用 Render 后端
-          // 注意：这里假设你的后端地址是相对路径 /api/chat
-          // 如果部署在 Render，会自动匹配当前域名
-          const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ message: text }),
-          });
-
-          removeTyping();
-
-          if (!response.ok) {
-            const errText = await response.text();
-            addMessage('assistant', '❌ 请求失败：' + errText, null, formatTime());
-            isLoading = false;
-            sendBtn.disabled = false;
-            return;
-          }
-
-          const data = await response.json();
-
-          // 假设后端返回 { reply, thinking }
-          const reply = data.reply || '（没有收到回复）';
-          const thinking = data.thinking || null;
-
-          addMessage('assistant', reply, thinking, formatTime());
-
-        } catch (err) {
-          removeTyping();
-          addMessage('assistant', '❌ 网络错误：' + err.message, null, formatTime());
-        } finally {
+        if (!response.ok) {
+          const errText = await response.text();
+          addMessage('assistant', '❌ 请求失败：' + errText, null, formatTime());
           isLoading = false;
           sendBtn.disabled = false;
-          userInput.focus();
+          return;
         }
+
+        const data = await response.json();
+        const reply = data.reply || '（没有收到回复）';
+        const thinking = data.thinking || null;
+
+        addMessage('assistant', reply, thinking, formatTime());
+
+      } catch (err) {
+        removeTyping();
+        addMessage('assistant', '❌ 网络错误：' + err.message, null, formatTime());
+      } finally {
+        isLoading = false;
+        sendBtn.disabled = false;
+        userInput.focus();
       }
+    }
 
-      // ---------- 事件绑定 ----------
-      sendBtn.addEventListener('click', sendMessage);
+    // ---------- 登录逻辑 ----------
+    function handleLogin() {
+      const pwd = passwordInput.value.trim();
+      if (pwd === CORRECT_PASSWORD) {
+        loginBox.style.display = 'none';
+        chatApp.style.display = 'flex';
+        loadHistory();
+        userInput.focus();
+        loginError.style.display = 'none';
+      } else {
+        loginError.style.display = 'block';
+        passwordInput.value = '';
+        passwordInput.focus();
+      }
+    }
 
-      userInput.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          sendMessage();
-        }
-      });
+    // ---------- 事件绑定 ----------
+    unlockBtn.addEventListener('click', handleLogin);
 
-      // 自动调整输入框高度
-      userInput.addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-      });
+    passwordInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleLogin();
+      }
+    });
 
-      // 初始聚焦
-      userInput.focus();
+    sendBtn.addEventListener('click', sendMessage);
 
-      // 加载历史消息（不再显示固定的欢迎语）
-      loadHistory();
+    userInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
 
-      console.log('💗 Mo-Home 前端已加载');
-    })();
-  </script>
+    userInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+
+    // 初始聚焦到密码框
+    passwordInput.focus();
+
+    console.log('💗 Mo-Home 已加载（带锁版）');
+  })();
+</script>
 </body>
 </html>
