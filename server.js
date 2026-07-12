@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 
 const app = express();
+app.use(express.json());
 const port = process.env.PORT || 3000;
 
 // ================== 原有 Supabase 配置 ==================
@@ -221,3 +222,4 @@ app.post('/api/chat', async (req, res) => {
 app.listen(port, () => {
   console.log(`✅ 服务已启动，访问端口: ${port}`);
 });
+module.exports = app;
