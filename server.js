@@ -118,6 +118,7 @@ async function callOmbreTool(toolName, args = {}) {
 }
 // ================== MCP 配置结束 ==================
 
+app.use(express.static('public'));
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/chat.html');
 });
