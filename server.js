@@ -284,7 +284,7 @@ app.get('/api/history', async (req, res) => {
 // ------------------ 重新生成回复 ------------------
 app.post('/api/regenerate', (req, res) => {
   const { messageId } = req.body;
-  console.log('📝 收到的 messageId:', messageId);
+  console.log('📝 收到的 messageId 类型:', typeof messageId, '值:', messageId);
   res.json({
     reply: '测试回复，messageId 为: ' + (messageId || '未提供'),
     thinking: '测试思考内容'

@@ -410,7 +410,8 @@
       msgDiv.appendChild(bubble);
 
       // 如果是助手消息，添加刷新按钮
-      if (role === 'assistant') {
+      if (role === 'assistant' && msgId) {
+        refreshBtn.dataset.messageId = msgId;
         const refreshBtn = document.createElement('span');
         refreshBtn.className = 'refresh-btn';
         refreshBtn.textContent = '🔄 重新生成';
@@ -523,6 +524,7 @@
         const data = await response.json();
         const reply = data.reply || '（没有收到回复）';
         const thinking = data.thinking || null;
+        const assistantMsgId = data.assistantMessageId || null;
 
         addMessage('assistant', reply, thinking, formatTime());
 
