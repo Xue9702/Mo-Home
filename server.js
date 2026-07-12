@@ -283,8 +283,12 @@ app.get('/api/history', async (req, res) => {
 
 // ------------------ 重新生成回复 ------------------
 app.post('/api/regenerate', (req, res) => {
-  console.log('✅ /api/regenerate 被调用了');
-  res.json({ reply: '测试回复', thinking: '测试思考内容' });
+  const { messageId } = req.body;
+  console.log('📝 收到的 messageId:', messageId);
+  res.json({
+    reply: '测试回复，messageId 为: ' + (messageId || '未提供'),
+    thinking: '测试思考内容'
+  });
 });
 
 // 启动服务
