@@ -521,6 +521,7 @@
         }
 
         const data = await response.json();
+        console.log('🔍 后端返回的完整数据:', data);
         const reply = data.reply || '（没有收到回复）';
         const thinking = data.thinking || null;
         const assistantMsgId = data.assistantMessageId || null;
