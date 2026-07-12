@@ -211,6 +211,7 @@ app.post('/api/chat', async (req, res) => {
           { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。' },
           { role: 'user', content: message }
         ],
+        reasoning_effort: 'medium', 
         temperature: 0.7,
         max_tokens: 2048
       })
