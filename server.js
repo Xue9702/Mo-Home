@@ -282,13 +282,101 @@ app.get('/api/history', async (req, res) => {
 });
 
 // ------------------ 重新生成回复 ------------------
-app.post('/api/regenerate', (req, res) => {
+app.post('/api/regenerate', async (req, res) => {
   const { messageId } = req.body;
-  console.log('📝 收到的 messageId 类型:', typeof messageId, '值:', messageId);
-  res.json({
-    reply: '测试回复，messageId 为: ' + (messageId || '未提供'),
-    thinking: '测试思考内容'
-  });
+  console.log('📝 收到重新生成请求，messageId:', messageId, '类型:', typeof messageId);
+
+  if (!messageId) {
+    return res.status(400).json({ error: '缺少消息ID' });
+  }
+
+  try {
+    // 1. 先查出这条消息所属的 session_id 和原始用户消息
+    const { data: targetMsg, error: findError } = await supabase
+      .from('messages')
+      .select('session_id, content, role')
+      .eq('id', messageId)
+      .single();
+
+    if (findError || !targetMsg) {
+      console.error('❌ 查找消息失败:', findError);
+      return res.status(404).json({ error: '未找到原始消息' });
+    }
+
+    // 只有助手消息才能被重新生成，并且需要找到对应的用户消息
+    if (targetMsg.role !== 'assistant') {
+      return res.status(400).json({ error: '只能重新生成助手消息' });
+    }
+
+    // 查找这条助手消息之前的用户消息
+    const { data: userMsg, error: userError } = await supabase
+      .from('messages')
+      .select('content')
+      .eq('session_id', targetMsg.session_id)
+      .eq('role', 'user')
+      .lt('id', messageId)  // 找比这条消息更早的用户消息
+      .order('id', { ascending: false })
+      .limit(1);
+
+    if (userError || !userMsg || userMsg.length === 0) {
+      console.error('❌ 找不到对应的用户消息:', userError);
+      return res.status(404).json({ error: '找不到对应的用户消息' });
+    }
+
+    const userContent = userMsg[0].content;
+    console.log('✅ 找到对应的用户消息:', userContent);
+
+    // 2. 调用 DeepSeek API
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。' },
+          { role: 'user', content: userContent }
+        ],
+        reasoning_effort: 'medium',
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('❌ DeepSeek API 错误:', data);
+      return res.status(500).json({ error: 'AI 服务暂时不可用' });
+    }
+
+    const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
+    const thinking = data.choices?.[0]?.message?.reasoning_content || null;
+
+    // 3. 更新数据库中的回复
+    const { error: updateError } = await supabase
+      .from('messages')
+      .update({
+        content: reply,
+        reasoning_content: thinking,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', messageId);
+
+    if (updateError) {
+      console.error('❌ 更新消息失败:', updateError);
+      return res.status(500).json({ error: '更新消息失败' });
+    }
+
+    console.log('✅ 消息更新成功，messageId:', messageId);
+    res.json({ reply, thinking, messageId });
+
+  } catch (err) {
+    console.error('❌ 重新生成错误:', err.message);
+    res.status(500).json({ error: '处理请求时出错' });
+  }
 });
 
 // 启动服务
