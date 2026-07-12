@@ -294,6 +294,30 @@
         return wrapper;
       }
 
+      // ---------- 加载历史消息 ----------
+async function loadHistory() {
+  try {
+    const response = await fetch('/api/history');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!data.messages || data.messages.length === 0) {
+      // 没有历史消息，显示欢迎语
+      addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
+      return;
+    }
+    // 按时间顺序渲染已有消息
+    data.messages.forEach(msg => {
+      const role = msg.role === 'user' ? 'user' : 'assistant';
+      const thinking = msg.reasoning_content || null;
+      const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : formatTime();
+      addMessage(role, msg.content, thinking, time);
+    });
+  } catch (err) {
+    console.error('加载历史失败:', err);
+    addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime());
+  }
+}
+
       // 添加消息到界面
       function addMessage(role, content, thinking = null, timestamp = null) {
         const msgDiv = document.createElement('div');
