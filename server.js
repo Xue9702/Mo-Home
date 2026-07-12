@@ -47,7 +47,7 @@ async function initOmbreSession() {
     const parsed = parseSSEResponse(response.data);
     
     // 从解析后的响应中读取服务端返回的 session id
-    let sessionId = parsed?.id || response.headers['mcp-session-id'];
+    let sessionId = response.headers['mcp-session-id'] || parsed?.id;
 
     if (sessionId) {
       // 保存服务端返回的动态 Session ID
