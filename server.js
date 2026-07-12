@@ -259,7 +259,30 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// ------------------ 获取历史消息 ------------------
+app.get('/api/history', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('session_id', 1)
+      .eq('visible', true)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('读取历史消息失败:', error);
+      return res.status(500).json({ error: '读取历史消息失败' });
+    }
+
+    res.json({ messages: data });
+  } catch (err) {
+    console.error('历史接口错误:', err.message);
+    res.status(500).json({ error: '读取历史消息时出错' });
+  }
+});
+
 // ------------------ 重新生成回复 ------------------
+console.log('✅ /api/regenerate 路由已注册');
 app.post('/api/regenerate', async (req, res) => {
   const { messageId } = req.body;
 
@@ -333,28 +356,6 @@ app.post('/api/regenerate', async (req, res) => {
   } catch (err) {
     console.error('重新生成错误:', err.message);
     res.status(500).json({ error: '处理请求时出错' });
-  }
-});
-
-// ------------------ 获取历史消息 ------------------
-app.get('/api/history', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('session_id', 1)
-      .eq('visible', true)
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      console.error('读取历史消息失败:', error);
-      return res.status(500).json({ error: '读取历史消息失败' });
-    }
-
-    res.json({ messages: data });
-  } catch (err) {
-    console.error('历史接口错误:', err.message);
-    res.status(500).json({ error: '读取历史消息时出错' });
   }
 });
 
