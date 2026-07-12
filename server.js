@@ -167,7 +167,7 @@ app.get('/env-test', (req, res) => {
   });
 });
 
-// ------------------ 对话接口 ------------------
+// ------------------ 对话接口（带 Supabase 存储） ------------------
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
 
@@ -175,13 +175,30 @@ app.post('/api/chat', async (req, res) => {
     return res.status(400).json({ error: '消息不能为空' });
   }
 
-  // 检查 DeepSeek API Key 是否配置
   if (!process.env.DEEPSEEK_API_KEY) {
-    return res.status(500).json({ error: 'DeepSeek API Key 未配置，请在 Render 环境变量中添加 DEEPSEEK_API_KEY' });
+    return res.status(500).json({ error: 'DeepSeek API Key 未配置' });
   }
 
   try {
-    // 调用 DeepSeek API
+    // 1. 保存用户消息到 Supabase
+    const userMessage = {
+      session_id: 1, // 暂时固定为 1，后续可扩展多会话
+      role: 'user',
+      content: message,
+      visible: true,
+      created_at: new Date().toISOString()
+    };
+
+    const { data: userData, error: userError } = await supabase
+      .from('messages')
+      .insert([userMessage])
+      .select();
+
+    if (userError) {
+      console.error('保存用户消息失败:', userError);
+    }
+
+    // 2. 调用 DeepSeek API
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -207,14 +224,58 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
-
-    // 简单模拟思考内容
     const thinking = `正在回应“${message}”……`;
 
-    res.json({ reply, thinking });
+    // 3. 保存助手回复到 Supabase
+    const assistantMessage = {
+      session_id: 1,
+      role: 'assistant',
+      content: reply,
+      visible: true,
+      created_at: new Date().toISOString()
+    };
+
+    const { data: assistantData, error: assistantError } = await supabase
+      .from('messages')
+      .insert([assistantMessage])
+      .select();
+
+    if (assistantError) {
+      console.error('保存助手消息失败:', assistantError);
+    }
+
+    res.json({
+      reply,
+      thinking,
+      userMessageId: userData?.[0]?.id || null,
+      assistantMessageId: assistantData?.[0]?.id || null
+    });
+
   } catch (err) {
     console.error('对话接口错误:', err.message);
     res.status(500).json({ error: '处理请求时出错' });
+  }
+});
+
+// ------------------ 获取历史消息 ------------------
+app.get('/api/history', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('session_id', 1)
+      .eq('visible', true)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('读取历史消息失败:', error);
+      return res.status(500).json({ error: '读取历史消息失败' });
+    }
+
+    res.json({ messages: data });
+  } catch (err) {
+    console.error('历史接口错误:', err.message);
+    res.status(500).json({ error: '读取历史消息时出错' });
   }
 });
 
