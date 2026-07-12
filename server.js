@@ -27,52 +27,37 @@ function parseSSEResponse(text) {
 }
 
 // ⭐️ 完全闭合、防报错版握手函数
-async function initOmbreSession() {
-  if (!OMBRE_BRAIN_URL) return false;
+const parsed = parseSSEResponse(response.data);
+
+// 从解析后的响应中读取服务端返回的 session id
+// 如果 parsed 里有 id，就用它；如果不存在，就尝试从 response.headers 里找
+// 这里暂时用最简单的方式：直接尝试从 parsed 中提取
+let sessionId = parsed?.id || response.headers['mcp-session-id'];
+
+if (sessionId) {
+  // 保存服务端返回的动态 Session ID
+  ombreSessionId = sessionId;
+  console.log('✅ Ombre Brain MCP 初始化握手成功！Session ID:', ombreSessionId);
+
+  // 发送 initialized 通知
   try {
-    const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+    await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
       jsonrpc: "2.0",
-      method: "initialize",
-      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
-      id: ++ombreCallId
+      method: "notifications/initialized"
     }, {
       headers: {
-  'Content-Type': 'application/json',
-  'Accept': 'application/json, text/event-stream',
-  'X-User-Name': '雪',
-  'X-User-Pass': process.env.OMBRE_PASSWORD || '9702520x'
-      },
-      transformResponse: [(data) => data]
-    });
-    const parsed = parseSSEResponse(response.data);
-    
-    if (parsed && parsed.id) {
-      // 关键：我们不再依赖 parsed.id，直接写死一个固定的“暗号”
-      ombreSessionId = 'my-ombre-session-9702'; 
-      console.log('✅ Ombre Brain MCP 初始化握手成功！强制设置 Session ID:', ombreSessionId);
-
-      // 尝试发送通知，如果报 404 直接忽略，不影响后续使用
-      try {
-        await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
-          jsonrpc: "2.0",
-          method: "notifications/initialized"
-        }, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            'Mcp-Session-Id': ombreSessionId
-          }
-        });
-      } catch (notifyErr) {
-        // 忽略错误
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Mcp-Session-Id': ombreSessionId
       }
-      return true;
-    }
-    return false;
-  } catch (err) {
-    console.error('❌ MCP 会话初始化失败:', err.message);
-    return false;
+    });
+  } catch (notifyErr) {
+    // 忽略错误
   }
+  return true;
+} else {
+  console.error('❌ 握手响应中未找到 session id');
+  return false;
 }
 
 // ⭐️ 工具调用函数（补全了 transformResponse 配置）
