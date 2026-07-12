@@ -401,34 +401,33 @@
     }
 
     function addMessage(role, content, thinking = null, timestamp = null, msgId = null) {
-      const msgDiv = document.createElement('div');
-      msgDiv.className = 'message ' + role;
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message ' + role;
 
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      bubble.textContent = content;
-      msgDiv.appendChild(bubble);
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = content;
+        msgDiv.appendChild(bubble);
 
-      // 如果是助手消息，添加刷新按钮
-      if (role === 'assistant' && msgId) {
-        refreshBtn.dataset.messageId = msgId;
-        const refreshBtn = document.createElement('span');
-        refreshBtn.className = 'refresh-btn';
-        refreshBtn.textContent = '🔄 重新生成';
-         // 如果传入了 msgId 就使用它，否则用临时值
-        refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
-        refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
-        refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
-        refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
-
-        refreshBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            handleRegenerate(this, msgDiv);
+        // 如果是助手消息，添加刷新按钮 
+        if (role === 'assistant') {
+            const refreshBtn = document.createElement('span');
+            refreshBtn.className = 'refresh-btn';
+            refreshBtn.textContent = '🔄 重新生成';
+            refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
+            refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
+            refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
+            refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
+    
+            refreshBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                handleRegenerate(this, msgDiv);
             });
-
-            msgDiv.appendChild(refreshBtn);    
+    
+            msgDiv.appendChild(refreshBtn);
         }
 
+        // 思考内容
         if (thinking) {
             const thinkingEl = createThinkingElement(thinking);
             if (thinkingEl) msgDiv.appendChild(thinkingEl);
@@ -441,7 +440,7 @@
 
         messageList.appendChild(msgDiv);
         messageList.scrollTop = messageList.scrollHeight;
-    }
+}
 
     function showTyping() {
       const div = document.createElement('div');
@@ -526,7 +525,7 @@
         const thinking = data.thinking || null;
         const assistantMsgId = data.assistantMessageId || null;
 
-        addMessage('assistant', reply, thinking, formatTime());
+        addMessage('assistant', reply, thinking, formatTime(), assistantMsgId);
 
       } catch (err) {
         removeTyping();
