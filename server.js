@@ -281,16 +281,97 @@ app.get('/api/history', async (req, res) => {
   }
 });
 
-// ------------------ 重新生成回复（优化版） ------------------
-console.log('✅ /api/regenerate 路由已注册');
-app.post('/api/regenerate', (req, res) => {
-  console.log('✅ /api/regenerate 被调用了，接收到的数据:', req.body);
+// ------------------ 重新生成回复 ------------------
+app.post('/api/regenerate', async (req, res) => {
   const { messageId } = req.body;
-  console.log('📝 收到的 messageId:', messageId);
-  res.json({
-    reply: '测试回复，messageId 为: ' + (messageId || '未提供'),
-    thinking: '测试思考内容'
-  });
+  console.log('📝 收到重新生成请求，messageId:', messageId);
+
+  if (!messageId) {
+    return res.status(400).json({ error: '缺少消息ID' });
+  }
+
+  try {
+    // 1. 根据消息ID查找原始的用户消息
+    console.log('🔍 正在查找消息ID:', messageId);
+    const { data: originalMsg, error: findError } = await supabase
+      .from('messages')
+      .select('session_id, content')
+      .eq('id', messageId)
+      .single();
+
+    if (findError) {
+      console.error('❌ 查找消息失败:', findError);
+      return res.status(404).json({ error: '未找到原始消息' });
+    }
+
+    if (!originalMsg) {
+      console.log('❌ 未找到原始消息，messageId:', messageId);
+      return res.status(404).json({ error: '未找到原始消息' });
+    }
+
+    console.log('✅ 找到原始消息:', originalMsg);
+
+    // 2. 重新调用 DeepSeek API
+    console.log('🔄 正在调用 DeepSeek API...');
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。' },
+          { role: 'user', content: originalMsg.content }
+        ],
+        reasoning_effort: 'medium',
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('❌ DeepSeek API 错误:', data);
+      return res.status(500).json({ error: 'AI 服务暂时不可用' });
+    }
+
+    console.log('✅ DeepSeek API 返回成功');
+
+    const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
+    const thinking = data.choices?.[0]?.message?.reasoning_content || null;
+
+    console.log('📝 新回复长度:', reply.length);
+
+    // 3. 更新数据库中的回复
+    const { error: updateError } = await supabase
+      .from('messages')
+      .update({
+        content: reply,
+        reasoning_content: thinking,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', messageId);
+
+    if (updateError) {
+      console.error('❌ 更新消息失败:', updateError);
+      return res.status(500).json({ error: '更新消息失败' });
+    }
+
+    console.log('✅ 消息更新成功，messageId:', messageId);
+
+    res.json({
+      reply,
+      thinking,
+      messageId
+    });
+
+  } catch (err) {
+    console.error('❌ 重新生成错误:', err.message);
+    res.status(500).json({ error: '处理请求时出错' });
+  }
 });
 
 // 启动服务
