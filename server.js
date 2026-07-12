@@ -224,13 +224,14 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
-    const thinking = `正在回应“${message}”……`;
+    const thinking = data.choices?.[0]?.message?.reasoning_content || null;
 
     // 3. 保存助手回复到 Supabase
     const assistantMessage = {
       session_id: 1,
       role: 'assistant',
       content: reply,
+      reasoning_content: thinking,
       visible: true,
       created_at: new Date().toISOString()
     };
