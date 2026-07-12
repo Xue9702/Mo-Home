@@ -166,6 +166,57 @@ app.get('/env-test', (req, res) => {
   });
 });
 
+// ------------------ 对话接口 ------------------
+app.post('/api/chat', async (req, res) => {
+  const { message } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ error: '消息不能为空' });
+  }
+
+  // 检查 DeepSeek API Key 是否配置
+  if (!process.env.DEEPSEEK_API_KEY) {
+    return res.status(500).json({ error: 'DeepSeek API Key 未配置，请在 Render 环境变量中添加 DEEPSEEK_API_KEY' });
+  }
+
+  try {
+    // 调用 DeepSeek API
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。' },
+          { role: 'user', content: message }
+        ],
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('DeepSeek API 错误:', data);
+      return res.status(500).json({ error: 'AI 服务暂时不可用' });
+    }
+
+    const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
+
+    // 简单模拟思考内容
+    const thinking = `正在回应“${message}”……`;
+
+    res.json({ reply, thinking });
+  } catch (err) {
+    console.error('对话接口错误:', err.message);
+    res.status(500).json({ error: '处理请求时出错' });
+  }
+});
+
 // 启动服务
 app.listen(port, () => {
   console.log(`✅ 服务已启动，访问端口: ${port}`);
