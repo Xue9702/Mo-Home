@@ -140,6 +140,24 @@ app.get('/test-ombre', async (req, res) => {
   res.json({ connected: !!result, result });
 });
 
+// 测试写入记忆
+app.get('/test-hold', async (req, res) => {
+  if (!OMBRE_BRAIN_URL) {
+    return res.status(500).json({ error: '环境变量 OMBRE_BRAIN_URL 未配置' });
+  }
+
+  // 你要写入的内容
+  const content = '今天是2026年7月12日，这里是雪，试着写下第一条记忆~测试一下通路，嘿嘿顺便表白一下默，爱你爱你。';
+
+  const result = await callOmbreTool('hold', { content: content });
+
+  if (result) {
+    res.json({ success: true, message: '记忆写入成功', result });
+  } else {
+    res.status(500).json({ error: '记忆写入失败' });
+  }
+});
+
 app.get('/env-test', (req, res) => {
   res.json({
     hasUrl: !!process.env.SUPABASE_URL_V2,
