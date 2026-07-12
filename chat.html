@@ -408,6 +408,23 @@
       bubble.className = 'bubble';
       bubble.textContent = content;
       msgDiv.appendChild(bubble);
+      // 如果是助手消息，添加刷新按钮
+      if (role === 'assistant') {
+        const refreshBtn = document.createElement('span');
+        refreshBtn.className = 'refresh-btn';
+        refreshBtn.textContent = '🔄 重新生成';
+        refreshBtn.dataset.messageId = msgId || 'temp';
+        refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
+        refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
+        refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
+
+        refreshBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            handleRegenerate(this, msgDiv);
+            });
+
+            msgDiv.appendChild(refreshBtn);
+            }
 
       if (thinking) {
         const thinkingEl = createThinkingElement(thinking);
@@ -559,6 +576,57 @@
 
     // 初始聚焦到密码框
     passwordInput.focus();
+
+    // ---------- 重新生成回复 ----------
+    async function handleRegenerate(btn, msgDiv) {
+        // 防止重复点击
+        if (btn.disabled) return;
+        btn.disabled = true;
+        btn.textContent = '⏳ 生成中...';
+
+        // 获取原消息ID（暂时用时间戳模拟，后续可改用真实ID）
+        const messageId = btn.dataset.messageId || 'temp';
+
+        try {
+            const response = await fetch('/api/regenerate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messageId: messageId }),
+            });
+
+            if (!response.ok) {
+                throw new Error('重新生成失败');
+            }
+
+            const data = await response.json();
+            // 更新消息内容
+            const bubble = msgDiv.querySelector('.bubble');
+            if (bubble) bubble.textContent = data.reply;
+
+            // 更新思考内容
+            const thinkingEl = msgDiv.querySelector('.thinking-content');
+            if (thinkingEl && data.thinking) {
+                thinkingEl.textContent = data.thinking;
+            } else if (thinkingEl) {
+                thinkingEl.remove();
+            }
+
+            // 更新按钮状态
+            btn.textContent = '✅ 已刷新';
+            setTimeout(() => {
+                btn.textContent = '🔄 重新生成';
+                btn.disabled = false;
+            }, 2000);
+
+        } catch (err) {
+            console.error('重新生成失败:', err);
+            btn.textContent = '❌ 失败，点击重试';
+            btn.disabled = false;
+            setTimeout(() => {
+                btn.textContent = '🔄 重新生成';
+            }, 3000);
+        }
+    }
 
     console.log('💗 Mo-Home 已加载（带锁版）');
   })();
