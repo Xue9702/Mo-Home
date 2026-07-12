@@ -36,10 +36,13 @@ async function initOmbreSession() {
       params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
       id: ++ombreCallId
     }, {
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Accept': 'application/json, text/event-stream',
+        'X-User-Name': '雪'
+      },
       transformResponse: [(data) => data]
     });
-
     const parsed = parseSSEResponse(response.data);
     
     if (parsed && parsed.id) {
