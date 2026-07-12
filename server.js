@@ -136,7 +136,7 @@ app.get('/test-ombre', async (req, res) => {
     return res.status(500).json({ error: '环境变量 OMBRE_BRAIN_URL 未配置' });
   }
   // 尝试用 'text' 作为参数名
-  const result = await callOmbreTool('tools', {});
+  const result = await callOmbreTool('breath', { text: '测试' });
   res.json({ connected: !!result, result });
 });
 
