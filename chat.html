@@ -447,8 +447,8 @@ async function loadHistory() {
       // 初始聚焦
       userInput.focus();
 
-      // 欢迎消息
-      addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
+      // 加载历史消息（不再显示固定的欢迎语）
+      loadHistory();
 
       console.log('💗 Mo-Home 前端已加载');
     })();
