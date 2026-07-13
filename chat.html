@@ -503,7 +503,7 @@
       }
     }
 
- // ---------- 发送消息（流式响应） ----------
+    // ---------- 发送消息（流式响应） ----------
     async function sendMessage() {
       const text = userInput.value.trim();
       if (!text || isLoading) return;
@@ -511,13 +511,11 @@
       userInput.value = '';
       userInput.style.height = 'auto';
 
-      // 添加用户消息
       addMessage('user', text, null, formatTime());
 
       isLoading = true;
       sendBtn.disabled = true;
 
-      // 创建助手消息占位
       const tempId = 'temp-' + Date.now();
       const msgDiv = document.createElement('div');
       msgDiv.className = 'message assistant';
@@ -528,7 +526,6 @@
       bubble.textContent = '';
       msgDiv.appendChild(bubble);
 
-      // 思考内容容器
       const thinkingContainer = document.createElement('div');
       thinkingContainer.className = 'thinking-content';
       thinkingContainer.style.display = 'block';
@@ -543,7 +540,6 @@
       messageList.appendChild(msgDiv);
       messageList.scrollTop = messageList.scrollHeight;
 
-      // 准备存储完整内容
       let fullReply = '';
       let fullThinking = '';
       let assistantMessageId = null;
@@ -584,7 +580,6 @@
               if (json.thinking) {
                 fullThinking += json.thinking;
                 thinkingContainer.textContent = fullThinking;
-                // 自动滚动到底部
                 messageList.scrollTop = messageList.scrollHeight;
               }
 
@@ -596,14 +591,14 @@
 
               if (json.done) {
                 assistantMessageId = json.assistantMessageId;
-                // 更新消息ID，以便后续刷新功能
+                // 更新消息ID
                 const refreshBtn = msgDiv.querySelector('.refresh-btn');
                 if (refreshBtn) {
                   refreshBtn.dataset.messageId = assistantMessageId || tempId;
                 }
-                // 如果有思考内容，添加折叠功能
+
+                // 处理思考内容折叠
                 if (fullThinking) {
-                  // 把思考内容移到上方，并添加折叠按钮
                   const thinkingWrapper = document.createElement('div');
                   thinkingWrapper.style.marginTop = '6px';
 
@@ -625,14 +620,12 @@
                     toggle.textContent = isOpen ? '💭 思考' : '💭 收起';
                   });
 
-                  // 替换原有的 thinkingContainer
                   msgDiv.replaceChild(thinkingWrapper, thinkingContainer);
                 } else {
-                  // 如果没有思考内容，直接移除占位
                   thinkingContainer.remove();
                 }
 
-                // 添加刷新按钮（仅对最新消息）
+                // 添加刷新按钮（仅最新消息）
                 const allMsgs = messageList.querySelectorAll('.message.assistant');
                 if (allMsgs.length > 0) {
                   const lastMsg = allMsgs[allMsgs.length - 1];
@@ -640,20 +633,20 @@
                   if (oldRefresh) oldRefresh.remove();
                 }
 
-                const refreshBtn = document.createElement('span');
-                refreshBtn.className = 'refresh-btn';
-                refreshBtn.textContent = '🔄 重新生成';
-                refreshBtn.dataset.messageId = assistantMessageId || tempId;
-                refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
-                refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
-                refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
+                const refreshButton = document.createElement('span');
+                refreshButton.className = 'refresh-btn';
+                refreshButton.textContent = '🔄 重新生成';
+                refreshButton.dataset.messageId = assistantMessageId || tempId;
+                refreshButton.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
+                refreshButton.onmouseover = () => refreshButton.style.background = '#e5e5e5';
+                refreshButton.onmouseout = () => refreshButton.style.background = '#f0f0f0';
 
-                refreshBtn.addEventListener('click', function (e) {
+                refreshButton.addEventListener('click', function (e) {
                   e.stopPropagation();
                   handleRegenerate(this, msgDiv);
                 });
 
-                msgDiv.appendChild(refreshBtn);
+                msgDiv.appendChild(refreshButton);
               }
 
               if (json.error) {
@@ -665,10 +658,8 @@
           }
         }
 
-        // 如果没有收到 done 信号，但有内容，手动完成
         if (fullReply && !assistantMessageId) {
           console.warn('流式响应未收到 done 信号，但已收到内容');
-          // 尝试保存消息到数据库... 这里可以加一个后备逻辑
         }
 
       } catch (err) {
@@ -678,7 +669,6 @@
         isLoading = false;
         sendBtn.disabled = false;
         userInput.focus();
-        // 移除临时ID标记
         msgDiv.id = '';
       }
     }
