@@ -423,7 +423,7 @@
               oldRefreshBtn.remove();
             }
           }
-          
+
           // 2. 为当前消息创建刷新按钮
             const refreshBtn = document.createElement('span');
             refreshBtn.className = 'refresh-btn';
@@ -495,7 +495,7 @@
           const role = msg.role === 'user' ? 'user' : 'assistant';
           const thinking = msg.reasoning_content || null;
           const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : formatTime();
-          addMessage(role, msg.content, thinking, time);
+          addMessage(role, msg.content, thinking, time, msg.id);
         });
       } catch (err) {
         console.error('加载历史失败:', err);
