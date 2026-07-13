@@ -311,6 +311,8 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
+    console.log('📊 流式读取完成，fullReply 长度:', fullReply.length, 'fullThinking 长度:', fullThinking.length);
+    
     // 检查是否收到了完整的回复
     if (!fullReply) {
       console.error('未收到有效回复，完整响应体可能为空');
