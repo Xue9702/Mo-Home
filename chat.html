@@ -633,6 +633,32 @@
                   if (oldRefresh) oldRefresh.remove();
                 }
 
+                // 只在当前消息是最后一条助手消息时，才添加刷新按钮
+                const allAssistantMessages = messageList.querySelectorAll('.message.assistant');
+                const isLatest = allAssistantMessages.length === 0 || msgDiv === allAssistantMessages[allAssistantMessages.length - 1];
+
+                if (isLatest) {
+                  // 移除之前所有助手消息的刷新按钮
+                  allAssistantMessages.forEach(msg => {
+                    const btn = msg.querySelector('.refresh-btn');
+                    if (btn) btn.remove();
+                  });
+
+                  // 创建并添加新的刷新按钮
+                  const refreshButton = document.createElement('span');
+                  refreshButton.className = 'refresh-btn';
+                  refreshButton.textContent = '🔄 重新生成';
+                  refreshButton.dataset.messageId = assistantMessageId || tempId;
+                  refreshButton.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
+                  refreshButton.onmouseover = () => refreshButton.style.background = '#e5e5e5';
+                  refreshButton.onmouseout = () => refreshButton.style.background = '#f0f0f0';
+                  refreshButton.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    handleRegenerate(this, msgDiv);
+                  });
+                  msgDiv.appendChild(refreshButton);
+                }
+
                 const refreshButton = document.createElement('span');
                 refreshButton.className = 'refresh-btn';
                 refreshButton.textContent = '🔄 重新生成';
