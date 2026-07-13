@@ -186,7 +186,7 @@ app.post('/api/chat', async (req, res) => {
     .from('messages')
     .select('role, content')
     .eq('session_id', 1)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(50); // 25轮对话 = 50条消息（用户+助手）
 
     console.log('📜 加载的历史消息数量:', history?.length || 0);
@@ -196,7 +196,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // 构建历史消息列表
-    const historyMessages = history ? history.map(msg => ({
+    const historyMessages = history ? history.reverse().map(msg => ({
       role: msg.role,
       content: msg.content
     })) : [];
