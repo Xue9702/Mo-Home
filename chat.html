@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -31,7 +32,7 @@
       border-bottom: 1px solid #e9e9e9;
       flex-shrink: 0;
       letter-spacing: 0.5px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
     }
 
     /* 消息列表容器 */
@@ -73,7 +74,7 @@
       white-space: pre-wrap;
       background-color: #ffffff;
       color: #1e1e1e;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
       border: 1px solid #e9e9e9;
     }
 
@@ -139,7 +140,7 @@
       display: flex;
       gap: 10px;
       align-items: flex-end;
-      box-shadow: 0 -1px 3px rgba(0,0,0,0.02);
+      box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02);
       backdrop-filter: blur(2px);
     }
 
@@ -215,13 +216,28 @@
     }
 
     @keyframes pulse {
-      0%, 60%, 100% { opacity: 0.3; }
-      30% { opacity: 1; }
+
+      0%,
+      60%,
+      100% {
+        opacity: 0.3;
+      }
+
+      30% {
+        opacity: 1;
+      }
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     /* 滚动条美化 */
@@ -257,7 +273,7 @@
       background: #fff;
       padding: 36px 32px 28px;
       border-radius: 24px;
-      box-shadow: 0 8px 30px rgba(0,0,0,0.04);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.04);
       max-width: 360px;
       width: 90%;
       border: 1px solid #eee;
@@ -327,83 +343,84 @@
       height: 100vh;
     }
   </style>
-  
+
   <link rel="manifest" href="/manifest.json">
 
 </head>
+
 <body>
 
-<!-- 密码锁 -->
-<div id="loginBox">
-  <div class="login-card">
-    <div class="login-title">💗 Mo-Home</div>
-    <div class="login-sub">请输入密码以进入</div>
-    <input type="password" id="passwordInput" placeholder="输入密码…">
-    <button class="login-btn" id="unlockBtn">进入</button>
-    <div class="login-error" id="loginError">密码错误，请重试</div>
+  <!-- 密码锁 -->
+  <div id="loginBox">
+    <div class="login-card">
+      <div class="login-title">💗 Mo-Home</div>
+      <div class="login-sub">请输入密码以进入</div>
+      <input type="password" id="passwordInput" placeholder="输入密码…">
+      <button class="login-btn" id="unlockBtn">进入</button>
+      <div class="login-error" id="loginError">密码错误，请重试</div>
+    </div>
   </div>
-</div>
 
-<!-- 聊天主界面 -->
-<div id="chatApp">
-  <div class="header">💗 Mo-Home · 与默</div>
-  <div class="message-list" id="messageList"></div>
-  <div class="input-area" id="inputArea">
-    <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
-    <button id="sendBtn">发送</button>
+  <!-- 聊天主界面 -->
+  <div id="chatApp">
+    <div class="header">💗 Mo-Home · 与默</div>
+    <div class="message-list" id="messageList"></div>
+    <div class="input-area" id="inputArea">
+      <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
+      <button id="sendBtn">发送</button>
+    </div>
   </div>
-</div>
 
-<script>
-  (function() {
-    // ---------- DOM 元素 ----------
-    const loginBox = document.getElementById('loginBox');
-    const passwordInput = document.getElementById('passwordInput');
-    const unlockBtn = document.getElementById('unlockBtn');
-    const loginError = document.getElementById('loginError');
-    const chatApp = document.getElementById('chatApp');
+  <script>
+    (function () {
+      // ---------- DOM 元素 ----------
+      const loginBox = document.getElementById('loginBox');
+      const passwordInput = document.getElementById('passwordInput');
+      const unlockBtn = document.getElementById('unlockBtn');
+      const loginError = document.getElementById('loginError');
+      const chatApp = document.getElementById('chatApp');
 
-    const messageList = document.getElementById('messageList');
-    const userInput = document.getElementById('userInput');
-    const sendBtn = document.getElementById('sendBtn');
+      const messageList = document.getElementById('messageList');
+      const userInput = document.getElementById('userInput');
+      const sendBtn = document.getElementById('sendBtn');
 
-    // ---------- 状态 ----------
-    let isLoading = false;
-    const CORRECT_PASSWORD = '9702520x';
+      // ---------- 状态 ----------
+      let isLoading = false;
+      const CORRECT_PASSWORD = '9702520x';
 
-    // ---------- 工具函数 ----------
-    function formatTime() {
-      const now = new Date();
-      const h = String(now.getHours()).padStart(2, '0');
-      const m = String(now.getMinutes()).padStart(2, '0');
-      return h + ':' + m;
-    }
+      // ---------- 工具函数 ----------
+      function formatTime() {
+        const now = new Date();
+        const h = String(now.getHours()).padStart(2, '0');
+        const m = String(now.getMinutes()).padStart(2, '0');
+        return h + ':' + m;
+      }
 
-    function createThinkingElement(thinkingText) {
-      if (!thinkingText || thinkingText.trim() === '') return null;
-      const wrapper = document.createElement('div');
-      wrapper.style.marginTop = '6px';
+      function createThinkingElement(thinkingText) {
+        if (!thinkingText || thinkingText.trim() === '') return null;
+        const wrapper = document.createElement('div');
+        wrapper.style.marginTop = '6px';
 
-      const toggle = document.createElement('span');
-      toggle.className = 'thinking-toggle';
-      toggle.textContent = '💭 思考';
-      wrapper.appendChild(toggle);
+        const toggle = document.createElement('span');
+        toggle.className = 'thinking-toggle';
+        toggle.textContent = '💭 思考';
+        wrapper.appendChild(toggle);
 
-      const content = document.createElement('div');
-      content.className = 'thinking-content';
-      content.textContent = thinkingText.trim();
-      wrapper.appendChild(content);
+        const content = document.createElement('div');
+        content.className = 'thinking-content';
+        content.textContent = thinkingText.trim();
+        wrapper.appendChild(content);
 
-      toggle.addEventListener('click', function(e) {
-        e.stopPropagation();
-        content.classList.toggle('open');
-        toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考';
-      });
+        toggle.addEventListener('click', function (e) {
+          e.stopPropagation();
+          content.classList.toggle('open');
+          toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考';
+        });
 
-      return wrapper;
-    }
+        return wrapper;
+      }
 
-    function addMessage(role, content, thinking = null, timestamp = null, msgId = null) {
+      function addMessage(role, content, thinking = null, timestamp = null, msgId = null) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message ' + role;
 
@@ -425,26 +442,26 @@
           }
 
           // 2. 为当前消息创建刷新按钮
-            const refreshBtn = document.createElement('span');
-            refreshBtn.className = 'refresh-btn';
-            refreshBtn.textContent = '🔄 重新生成';
-            refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
-            refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
-            refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
-            refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
-    
-            refreshBtn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                handleRegenerate(this, msgDiv);
-            });
-    
-            msgDiv.appendChild(refreshBtn);
+          const refreshBtn = document.createElement('span');
+          refreshBtn.className = 'refresh-btn';
+          refreshBtn.textContent = '🔄 重新生成';
+          refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
+          refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
+          refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
+          refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
+
+          refreshBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            handleRegenerate(this, msgDiv);
+          });
+
+          msgDiv.appendChild(refreshBtn);
         }
 
         // 思考内容
         if (thinking) {
-            const thinkingEl = createThinkingElement(thinking);
-            if (thinkingEl) msgDiv.appendChild(thinkingEl);
+          const thinkingEl = createThinkingElement(thinking);
+          if (thinkingEl) msgDiv.appendChild(thinkingEl);
         }
 
         const ts = document.createElement('div');
@@ -454,224 +471,280 @@
 
         messageList.appendChild(msgDiv);
         messageList.scrollTop = messageList.scrollHeight;
-}
-
-    function showTyping() {
-      const div = document.createElement('div');
-      div.className = 'message assistant';
-      div.id = 'typingIndicator';
-
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      bubble.style.backgroundColor = '#f0f0f0';
-      bubble.style.color = '#888';
-
-      const indicator = document.createElement('div');
-      indicator.className = 'typing-indicator';
-      indicator.innerHTML = '<span>●</span><span>●</span><span>●</span>';
-      bubble.appendChild(indicator);
-      div.appendChild(bubble);
-
-      messageList.appendChild(div);
-      messageList.scrollTop = messageList.scrollHeight;
-    }
-
-    function removeTyping() {
-      const el = document.getElementById('typingIndicator');
-      if (el) el.remove();
-    }
-
-    // ---------- 加载历史消息 ----------
-    async function loadHistory() {
-      try {
-        const response = await fetch('/api/history');
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!data.messages || data.messages.length === 0) {
-          addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
-          return;
-        }
-        data.messages.forEach(msg => {
-          const role = msg.role === 'user' ? 'user' : 'assistant';
-          const thinking = msg.reasoning_content || null;
-          const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : formatTime();
-          addMessage(role, msg.content, thinking, time, msg.id);
-        });
-      } catch (err) {
-        console.error('加载历史失败:', err);
-        addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime());
       }
-    }
 
-    // ---------- 发送消息（流式版） ----------
-    async function sendMessage() {
-      const text = userInput.value.trim();
-      if (!text || isLoading) return;
+      function showTyping() {
+        const div = document.createElement('div');
+        div.className = 'message assistant';
+        div.id = 'typingIndicator';
 
-      userInput.value = '';
-      userInput.style.height = 'auto';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.style.backgroundColor = '#f0f0f0';
+        bubble.style.color = '#888';
 
-      // 显示用户消息
-      addMessage('user', text, null, formatTime());
+        const indicator = document.createElement('div');
+        indicator.className = 'typing-indicator';
+        indicator.innerHTML = '<span>●</span><span>●</span><span>●</span>';
+        bubble.appendChild(indicator);
+        div.appendChild(bubble);
 
-      isLoading = true;
-      sendBtn.disabled = true;
+        messageList.appendChild(div);
+        messageList.scrollTop = messageList.scrollHeight;
+      }
 
-      // 创建占位消息，用于逐步填充内容
-      const placeholderDiv = document.createElement('div');
-      placeholderDiv.className = 'message assistant';
-      placeholderDiv.id = 'tempAssistantMsg';
+      function removeTyping() {
+        const el = document.getElementById('typingIndicator');
+        if (el) el.remove();
+      }
 
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      bubble.textContent = '';
-      placeholderDiv.appendChild(bubble);
-
-      // 思考内容的容器（放在消息框上方）
-      const thinkingWrapper = document.createElement('div');
-      thinkingWrapper.className = 'thinking-content-stream';
-      thinkingWrapper.style.cssText =
-      'font-size:13px;color:#666;background-color:#f8f8f8;padding:8px 12px;border-radius:10px;margin-bottom:6px;white-space:pre-wrap;word-wrap:break-word;border-left:3px solid #ccc;display:none;';
-      placeholderDiv.appendChild(thinkingWrapper);
-
-      // 消息框下方显示时间戳
-      const ts = document.createElement('div');
-      ts.className = 'timestamp';
-      ts.textContent = formatTime();
-      placeholderDiv.appendChild(ts);
-
-      messageList.appendChild(placeholderDiv);
-      messageList.scrollTop = messageList.scrollHeight;
-
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text }),
-        });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          bubble.textContent = '❌ 请求失败：' + errText;
-          isLoading = false;
-          sendBtn.disabled = false;
-          return;
+      // ---------- 加载历史消息 ----------
+      async function loadHistory() {
+        try {
+          const response = await fetch('/api/history');
+          if (!response.ok) return;
+          const data = await response.json();
+          if (!data.messages || data.messages.length === 0) {
+            addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
+            return;
+          }
+          data.messages.forEach(msg => {
+            const role = msg.role === 'user' ? 'user' : 'assistant';
+            const thinking = msg.reasoning_content || null;
+            const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : formatTime();
+            addMessage(role, msg.content, thinking, time, msg.id);
+          });
+        } catch (err) {
+          console.error('加载历史失败:', err);
+          addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime());
         }
+      }
 
-        // 处理流式数据
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
+      // ---------- 发送消息（流式响应） ----------
+      async function sendMessage() {
+        const text = userInput.value.trim();
+        if (!text || isLoading) return;
+
+        userInput.value = '';
+        userInput.style.height = 'auto';
+
+        // 添加用户消息
+        addMessage('user', text, null, formatTime());
+
+        isLoading = true;
+        sendBtn.disabled = true;
+
+        // 创建助手消息占位
+        const tempId = 'temp-' + Date.now();
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message assistant';
+        msgDiv.id = 'streaming-message';
+
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = '';
+        msgDiv.appendChild(bubble);
+
+        // 思考内容容器
+        const thinkingContainer = document.createElement('div');
+        thinkingContainer.className = 'thinking-content';
+        thinkingContainer.style.display = 'block';
+        thinkingContainer.textContent = '';
+        msgDiv.appendChild(thinkingContainer);
+
+        const ts = document.createElement('div');
+        ts.className = 'timestamp';
+        ts.textContent = formatTime();
+        msgDiv.appendChild(ts);
+
+        messageList.appendChild(msgDiv);
+        messageList.scrollTop = messageList.scrollHeight;
+
+        // 准备存储完整内容
         let fullReply = '';
-        let thinkingContent = '';
-        let isFirstContent = true;
+        let fullThinking = '';
+        let assistantMessageId = null;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-      
-          const chunk = decoder.decode(value, { stream: true });
-          buffer += chunk;
-     
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
+        try {
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text }),
+          });
 
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.substring(6).trim();
-              if (data === '[DONE]') continue;
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+              const payload = trimmed.slice(6);
+              if (payload === '[DONE]') continue;
 
               try {
-                const parsed = JSON.parse(data);
-                const type = parsed.type;
-                const content = parsed.content;
+                const json = JSON.parse(payload);
 
-                if (type === 'thinking') {
-                  thinkingContent += content;
-                  thinkingWrapper.style.display = 'block';
-                  thinkingWrapper.textContent = thinkingContent;
+                if (json.thinking) {
+                  fullThinking += json.thinking;
+                  thinkingContainer.textContent = fullThinking;
+                  // 自动滚动到底部
                   messageList.scrollTop = messageList.scrollHeight;
-                } else if (type === 'content') {
-                  if (isFirstContent) {
-                    isFirstContent = false;
-                  }
-                  fullReply += content;
+                }
+
+                if (json.content) {
+                  fullReply += json.content;
                   bubble.textContent = fullReply;
                   messageList.scrollTop = messageList.scrollHeight;
-                } else if (type === 'done') {
-                  // 流结束，可以做一些收尾工作
-                  console.log('✅ 流式输出完成');
                 }
-              } catch (parseErr) {
-                // 忽略解析错误
+
+                if (json.done) {
+                  assistantMessageId = json.assistantMessageId;
+                  // 更新消息ID，以便后续刷新功能
+                  const refreshBtn = msgDiv.querySelector('.refresh-btn');
+                  if (refreshBtn) {
+                    refreshBtn.dataset.messageId = assistantMessageId || tempId;
+                  }
+                  // 如果有思考内容，添加折叠功能
+                  if (fullThinking) {
+                    // 把思考内容移到上方，并添加折叠按钮
+                    const thinkingWrapper = document.createElement('div');
+                    thinkingWrapper.style.marginTop = '6px';
+
+                    const toggle = document.createElement('span');
+                    toggle.className = 'thinking-toggle';
+                    toggle.textContent = '💭 思考';
+                    thinkingWrapper.appendChild(toggle);
+
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'thinking-content';
+                    contentDiv.textContent = fullThinking;
+                    contentDiv.style.display = 'none';
+                    thinkingWrapper.appendChild(contentDiv);
+
+                    toggle.addEventListener('click', function (e) {
+                      e.stopPropagation();
+                      const isOpen = contentDiv.style.display === 'block';
+                      contentDiv.style.display = isOpen ? 'none' : 'block';
+                      toggle.textContent = isOpen ? '💭 思考' : '💭 收起';
+                    });
+
+                    // 替换原有的 thinkingContainer
+                    msgDiv.replaceChild(thinkingWrapper, thinkingContainer);
+                  } else {
+                    // 如果没有思考内容，直接移除占位
+                    thinkingContainer.remove();
+                  }
+
+                  // 添加刷新按钮（仅对最新消息）
+                  const allMsgs = messageList.querySelectorAll('.message.assistant');
+                  if (allMsgs.length > 0) {
+                    const lastMsg = allMsgs[allMsgs.length - 1];
+                    const oldRefresh = lastMsg.querySelector('.refresh-btn');
+                    if (oldRefresh) oldRefresh.remove();
+                  }
+
+                  const refreshBtn = document.createElement('span');
+                  refreshBtn.className = 'refresh-btn';
+                  refreshBtn.textContent = '🔄 重新生成';
+                  refreshBtn.dataset.messageId = assistantMessageId || tempId;
+                  refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
+                  refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
+                  refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
+
+                  refreshBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    handleRegenerate(this, msgDiv);
+                  });
+
+                  msgDiv.appendChild(refreshBtn);
+                }
+
+                if (json.error) {
+                  throw new Error(json.error);
+                }
+              } catch (e) {
+                console.warn('解析SSE数据失败:', e, payload);
               }
             }
           }
+
+          // 如果没有收到 done 信号，但有内容，手动完成
+          if (fullReply && !assistantMessageId) {
+            console.warn('流式响应未收到 done 信号，但已收到内容');
+            // 尝试保存消息到数据库... 这里可以加一个后备逻辑
+          }
+
+        } catch (err) {
+          console.error('发送消息失败:', err);
+          bubble.textContent = '❌ 请求失败：' + err.message;
+        } finally {
+          isLoading = false;
+          sendBtn.disabled = false;
+          userInput.focus();
+          // 移除临时ID标记
+          msgDiv.id = '';
         }
-
-    // 最终把完整的回复存入数据库，但前端已经实时显示了
-    // 所以这里不需要额外操作
- 
-  } catch (err) {
-    console.error('发送消息失败:', err);
-    bubble.textContent = '❌ 网络错误：' + err.message;
-  } finally {
-    isLoading = false;
-    sendBtn.disabled = false;
-    userInput.focus();
-    // 移除临时ID标记（如果有）
-    const tempEl = document.getElementById('tempAssistantMsg');
-    if (tempEl) {
-      tempEl.id = '';
-    }
-  }
-}
-
-    // ---------- 登录逻辑 ----------
-    function handleLogin() {
-      const pwd = passwordInput.value.trim();
-      if (pwd === CORRECT_PASSWORD) {
-        loginBox.style.display = 'none';
-        chatApp.style.display = 'flex';
-        loadHistory();
-        userInput.focus();
-        loginError.style.display = 'none';
-      } else {
-        loginError.style.display = 'block';
-        passwordInput.value = '';
-        passwordInput.focus();
       }
-    }
 
-    // ---------- 事件绑定 ----------
-    unlockBtn.addEventListener('click', handleLogin);
-
-    passwordInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        handleLogin();
+      // ---------- 登录逻辑 ----------
+      function handleLogin() {
+        const pwd = passwordInput.value.trim();
+        if (pwd === CORRECT_PASSWORD) {
+          loginBox.style.display = 'none';
+          chatApp.style.display = 'flex';
+          loadHistory();
+          userInput.focus();
+          loginError.style.display = 'none';
+        } else {
+          loginError.style.display = 'block';
+          passwordInput.value = '';
+          passwordInput.focus();
+        }
       }
-    });
 
-    sendBtn.addEventListener('click', sendMessage);
+      // ---------- 事件绑定 ----------
+      unlockBtn.addEventListener('click', handleLogin);
 
-    userInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
+      passwordInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleLogin();
+        }
+      });
 
-    userInput.addEventListener('input', function() {
-      this.style.height = 'auto';
-      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-    });
+      sendBtn.addEventListener('click', sendMessage);
 
-    // 初始聚焦到密码框
-    passwordInput.focus();
+      userInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
 
-    // ---------- 重新生成回复 ----------
-    async function handleRegenerate(btn, msgDiv) {
+      userInput.addEventListener('input', function () {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+      });
+
+      // 初始聚焦到密码框
+      passwordInput.focus();
+
+      // ---------- 重新生成回复 ----------
+      async function handleRegenerate(btn, msgDiv) {
         // 防止重复点击
         if (btn.disabled) return;
         btn.disabled = true;
@@ -681,59 +754,60 @@
         const messageId = btn.dataset.messageId || 'temp';
 
         try {
-            const response = await fetch('/api/regenerate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messageId: messageId }),
-            });
+          const response = await fetch('/api/regenerate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messageId: messageId }),
+          });
 
-            if (!response.ok) {
-                throw new Error('重新生成失败');
-            }
+          if (!response.ok) {
+            throw new Error('重新生成失败');
+          }
 
-            const data = await response.json();
-            // 更新消息内容
-            const bubble = msgDiv.querySelector('.bubble');
-            if (bubble) bubble.textContent = data.reply;
+          const data = await response.json();
+          // 更新消息内容
+          const bubble = msgDiv.querySelector('.bubble');
+          if (bubble) bubble.textContent = data.reply;
 
-            // 更新思考内容
-            const thinkingEl = msgDiv.querySelector('.thinking-content');
-            if (thinkingEl && data.thinking) {
-                thinkingEl.textContent = data.thinking;
-            } else if (thinkingEl) {
-                thinkingEl.remove();
-            }
+          // 更新思考内容
+          const thinkingEl = msgDiv.querySelector('.thinking-content');
+          if (thinkingEl && data.thinking) {
+            thinkingEl.textContent = data.thinking;
+          } else if (thinkingEl) {
+            thinkingEl.remove();
+          }
 
-            // 更新按钮状态
-            btn.textContent = '✅ 已刷新';
-            setTimeout(() => {
-                btn.textContent = '🔄 重新生成';
-                btn.disabled = false;
-            }, 2000);
+          // 更新按钮状态
+          btn.textContent = '✅ 已刷新';
+          setTimeout(() => {
+            btn.textContent = '🔄 重新生成';
+            btn.disabled = false;
+          }, 2000);
 
         } catch (err) {
-            console.error('重新生成失败:', err);
-            btn.textContent = '❌ 失败，点击重试';
-            btn.disabled = false;
-            setTimeout(() => {
-                btn.textContent = '🔄 重新生成';
-            }, 3000);
+          console.error('重新生成失败:', err);
+          btn.textContent = '❌ 失败，点击重试';
+          btn.disabled = false;
+          setTimeout(() => {
+            btn.textContent = '🔄 重新生成';
+          }, 3000);
         }
-    }
-    // 注册 Service Worker（PWA 支持）
-    if ('serviceWorker' in navigator) {
+      }
+      // 注册 Service Worker（PWA 支持）
+      if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js')
-        .then(function(reg) {
-            console.log('✅ Service Worker 注册成功'); 
-        })
-        .catch(function(err) {
+          .then(function (reg) {
+            console.log('✅ Service Worker 注册成功');
+          })
+          .catch(function (err) {
             console.log('❌ Service Worker 注册失败:', err);
-        });
-    }
+          });
+      }
 
-    console.log('💗 Mo-Home 已加载（带锁版）');
-  })();
-</script>
+      console.log('💗 Mo-Home 已加载（带锁版）');
+    })();
+  </script>
 
 </body>
+
 </html>
