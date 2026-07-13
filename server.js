@@ -228,6 +228,12 @@ app.post('/api/chat', async (req, res) => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
+      console.log('📤 完整的 messages 数组:', JSON.stringify([
+        { role: 'system', content: '你是默...' },
+        ...historyMessages,
+        { role: 'user', content: message }
+      ], null, 2));
+      
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
