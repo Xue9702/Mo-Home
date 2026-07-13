@@ -387,17 +387,26 @@ app.get('/api/history', async (req, res) => {
   }
 });
 
-// ------------------ 重新生成回复 ------------------
+// ------------------ 重新生成回复（流式） ------------------
 app.post('/api/regenerate', async (req, res) => {
   const { messageId } = req.body;
-  console.log('📝 收到重新生成请求，messageId:', messageId, '类型:', typeof messageId);
+  console.log('📝 收到重新生成请求，messageId:', messageId);
 
   if (!messageId) {
     return res.status(400).json({ error: '缺少消息ID' });
   }
 
+  // 设置 SSE 响应头
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendSSE = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
   try {
-    // 1. 先查出这条消息所属的 session_id 和原始用户消息
+    // 1. 查找原消息
     const { data: targetMsg, error: findError } = await supabase
       .from('messages')
       .select('session_id, content, role')
@@ -406,33 +415,38 @@ app.post('/api/regenerate', async (req, res) => {
 
     if (findError || !targetMsg) {
       console.error('❌ 查找消息失败:', findError);
-      return res.status(404).json({ error: '未找到原始消息' });
+      sendSSE({ error: '未找到原始消息' });
+      res.end();
+      return;
     }
 
-    // 只有助手消息才能被重新生成，并且需要找到对应的用户消息
     if (targetMsg.role !== 'assistant') {
-      return res.status(400).json({ error: '只能重新生成助手消息' });
+      sendSSE({ error: '只能重新生成助手消息' });
+      res.end();
+      return;
     }
 
-    // 查找这条助手消息之前的用户消息
+    // 2. 查找对应的用户消息
     const { data: userMsg, error: userError } = await supabase
       .from('messages')
       .select('content')
       .eq('session_id', targetMsg.session_id)
       .eq('role', 'user')
-      .lt('id', messageId)  // 找比这条消息更早的用户消息
+      .lt('id', messageId)
       .order('id', { ascending: false })
       .limit(1);
 
     if (userError || !userMsg || userMsg.length === 0) {
       console.error('❌ 找不到对应的用户消息:', userError);
-      return res.status(404).json({ error: '找不到对应的用户消息' });
+      sendSSE({ error: '找不到对应的用户消息' });
+      res.end();
+      return;
     }
 
     const userContent = userMsg[0].content;
     console.log('✅ 找到对应的用户消息:', userContent);
 
-    // 2. 调用 DeepSeek API
+    // 3. 调用 DeepSeek API（流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -442,46 +456,97 @@ app.post('/api/regenerate', async (req, res) => {
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
-          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。' },
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。' },
           { role: 'user', content: userContent }
         ],
         reasoning_effort: 'medium',
         temperature: 0.7,
-        max_tokens: 2048
+        max_tokens: 2048,
+        stream: true
       })
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      console.error('❌ DeepSeek API 错误:', data);
-      return res.status(500).json({ error: 'AI 服务暂时不可用' });
+      const errText = await response.text();
+      console.error('❌ DeepSeek API 错误:', errText);
+      sendSSE({ error: 'AI 服务暂时不可用' });
+      res.end();
+      return;
     }
 
-    const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
-    const thinking = data.choices?.[0]?.message?.reasoning_content || null;
+    let fullReply = '';
+    let fullThinking = '';
 
-    // 3. 更新数据库中的回复
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+        const payload = trimmed.slice(6);
+        if (payload === '[DONE]') continue;
+
+        try {
+          const json = JSON.parse(payload);
+          const delta = json.choices?.[0]?.delta;
+
+          if (delta?.reasoning_content) {
+            fullThinking += delta.reasoning_content;
+            sendSSE({ thinking: delta.reasoning_content });
+          }
+
+          if (delta?.content) {
+            fullReply += delta.content;
+            sendSSE({ content: delta.content });
+          }
+        } catch (e) {
+          // 忽略非 JSON 数据
+        }
+      }
+    }
+
+    if (!fullReply) {
+      console.error('未收到有效回复');
+      sendSSE({ error: 'AI 服务未返回有效内容' });
+      res.end();
+      return;
+    }
+
+    // 4. 更新数据库中的回复
     const { error: updateError } = await supabase
       .from('messages')
       .update({
-        content: reply,
-        reasoning_content: thinking,
+        content: fullReply,
+        reasoning_content: fullThinking || null,
         updated_at: new Date().toISOString()
       })
       .eq('id', messageId);
 
     if (updateError) {
       console.error('❌ 更新消息失败:', updateError);
-      return res.status(500).json({ error: '更新消息失败' });
+      sendSSE({ error: '更新消息失败' });
+      res.end();
+      return;
     }
 
     console.log('✅ 消息更新成功，messageId:', messageId);
-    res.json({ reply, thinking, messageId });
+    sendSSE({ done: true, reply: fullReply, thinking: fullThinking });
+    res.end();
 
   } catch (err) {
     console.error('❌ 重新生成错误:', err.message);
-    res.status(500).json({ error: '处理请求时出错' });
+    sendSSE({ error: '处理请求时出错' });
+    res.end();
   }
 });
 
