@@ -220,6 +220,8 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // 2. 调用 DeepSeek API
+    console.log('📤 发送给 DeepSeek 的总消息数:', 1 + historyMessages.length + 1); // system + 历史 + 当前
+
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -229,11 +231,11 @@ app.post('/api/chat', async (req, res) => {
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
-          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。' },
-         ...historyMessages,
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣...' },
+          ...historyMessages,
           { role: 'user', content: message }
         ],
-        reasoning_effort: 'medium', 
+        reasoning_effort: 'medium',
         temperature: 0.7,
         max_tokens: 2048
       })
