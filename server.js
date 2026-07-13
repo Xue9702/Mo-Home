@@ -181,6 +181,24 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
+    // 加载最近 25 轮历史消息（包含用户和助手）
+    const { data: history, error: historyError } = await supabase
+    .from('messages')
+    .select('role, content')
+    .eq('session_id', 1)
+    .order('created_at', { ascending: true })
+    .limit(50); // 25轮对话 = 50条消息（用户+助手）
+
+    if (historyError) {
+      console.error('加载历史消息失败:', historyError);
+    }
+
+    // 构建历史消息列表
+    const historyMessages = history ? history.map(msg => ({
+      role: msg.role,
+      content: msg.content
+    })) : [];
+
     // 1. 保存用户消息到 Supabase
     const userMessage = {
       session_id: 1, // 暂时固定为 1，后续可扩展多会话
@@ -210,6 +228,7 @@ app.post('/api/chat', async (req, res) => {
         model: 'deepseek-chat',
         messages: [
           { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。' },
+         ...historyMessages,
           { role: 'user', content: message }
         ],
         reasoning_effort: 'medium', 
