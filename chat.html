@@ -414,6 +414,17 @@
 
         // 如果是助手消息，添加刷新按钮 
         if (role === 'assistant') {
+          // 1. 先移除上一条助手消息的刷新按钮（如果有）
+          const allMessages = messageList.querySelectorAll('.message.assistant');
+          if (allMessages.length > 0) {
+            const lastMsg = allMessages[allMessages.length - 1];
+            const oldRefreshBtn = lastMsg.querySelector('.refresh-btn');
+            if (oldRefreshBtn) {
+              oldRefreshBtn.remove();
+            }
+          }
+          
+          // 2. 为当前消息创建刷新按钮
             const refreshBtn = document.createElement('span');
             refreshBtn.className = 'refresh-btn';
             refreshBtn.textContent = '🔄 重新生成';
