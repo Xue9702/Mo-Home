@@ -222,18 +222,19 @@ app.post('/api/chat', async (req, res) => {
     // 2. 调用 DeepSeek API
     console.log('📤 发送给 DeepSeek 的总消息数:', 1 + historyMessages.length + 1); // system + 历史 + 当前
 
+      console.log('📤 完整的 messages 数组:', JSON.stringify([
+        { role: 'system', content: '你是默...' },
+        ...historyMessages,
+        { role: 'user', content: message }
+      ], null, 2));
+
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
-      console.log('📤 完整的 messages 数组:', JSON.stringify([
-        { role: 'system', content: '你是默...' },
-        ...historyMessages,
-        { role: 'user', content: message }
-      ], null, 2));
-      
+
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
