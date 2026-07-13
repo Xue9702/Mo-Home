@@ -183,12 +183,13 @@ app.post('/api/chat', async (req, res) => {
   try {
     // 加载最近 25 轮历史消息（包含用户和助手）
     const { data: history, error: historyError } = await supabase
-    console.log('📜 加载的历史消息数量:', history?.length || 0);
     .from('messages')
     .select('role, content')
     .eq('session_id', 1)
     .order('created_at', { ascending: true })
     .limit(50); // 25轮对话 = 50条消息（用户+助手）
+
+    console.log('📜 加载的历史消息数量:', history?.length || 0);
 
     if (historyError) {
       console.error('加载历史消息失败:', historyError);
