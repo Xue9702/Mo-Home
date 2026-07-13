@@ -520,17 +520,17 @@
       const msgDiv = document.createElement('div');
       msgDiv.className = 'message assistant';
       msgDiv.id = 'streaming-message';
-
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      bubble.textContent = '';
-      msgDiv.appendChild(bubble);
-
+     
       const thinkingContainer = document.createElement('div');
       thinkingContainer.className = 'thinking-content';
       thinkingContainer.style.display = 'block';
       thinkingContainer.textContent = '';
       msgDiv.appendChild(thinkingContainer);
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = '';
+      msgDiv.appendChild(bubble);
 
       const ts = document.createElement('div');
       ts.className = 'timestamp';
