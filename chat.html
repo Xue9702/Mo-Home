@@ -503,7 +503,7 @@
       }
     }
 
-    // ---------- 发送消息 ----------
+    // ---------- 发送消息（流式版） ----------
     async function sendMessage() {
       const text = userInput.value.trim();
       if (!text || isLoading) return;
@@ -511,11 +511,37 @@
       userInput.value = '';
       userInput.style.height = 'auto';
 
+      // 显示用户消息
       addMessage('user', text, null, formatTime());
 
       isLoading = true;
       sendBtn.disabled = true;
-      showTyping();
+
+      // 创建占位消息，用于逐步填充内容
+      const placeholderDiv = document.createElement('div');
+      placeholderDiv.className = 'message assistant';
+      placeholderDiv.id = 'tempAssistantMsg';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = '';
+      placeholderDiv.appendChild(bubble);
+
+      // 思考内容的容器（放在消息框上方）
+      const thinkingWrapper = document.createElement('div');
+      thinkingWrapper.className = 'thinking-content-stream';
+      thinkingWrapper.style.cssText =
+      'font-size:13px;color:#666;background-color:#f8f8f8;padding:8px 12px;border-radius:10px;margin-bottom:6px;white-space:pre-wrap;word-wrap:break-word;border-left:3px solid #ccc;display:none;';
+      placeholderDiv.appendChild(thinkingWrapper);
+
+      // 消息框下方显示时间戳
+      const ts = document.createElement('div');
+      ts.className = 'timestamp';
+      ts.textContent = formatTime();
+      placeholderDiv.appendChild(ts);
+
+      messageList.appendChild(placeholderDiv);
+      messageList.scrollTop = messageList.scrollHeight;
 
       try {
         const response = await fetch('/api/chat', {
@@ -524,33 +550,82 @@
           body: JSON.stringify({ message: text }),
         });
 
-        removeTyping();
-
         if (!response.ok) {
           const errText = await response.text();
-          addMessage('assistant', '❌ 请求失败：' + errText, null, formatTime());
+          bubble.textContent = '❌ 请求失败：' + errText;
           isLoading = false;
           sendBtn.disabled = false;
           return;
         }
 
-        const data = await response.json();
-        console.log('🔍 后端返回的完整数据:', data);
-        const reply = data.reply || '（没有收到回复）';
-        const thinking = data.thinking || null;
-        const assistantMsgId = data.assistantMessageId || null;
+        // 处理流式数据
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let fullReply = '';
+        let thinkingContent = '';
+        let isFirstContent = true;
 
-        addMessage('assistant', reply, thinking, formatTime(), assistantMsgId);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+      
+          const chunk = decoder.decode(value, { stream: true });
+          buffer += chunk;
+     
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-      } catch (err) {
-        removeTyping();
-        addMessage('assistant', '❌ 网络错误：' + err.message, null, formatTime());
-      } finally {
-        isLoading = false;
-        sendBtn.disabled = false;
-        userInput.focus();
-      }
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.substring(6).trim();
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                const type = parsed.type;
+                const content = parsed.content;
+
+                if (type === 'thinking') {
+                  thinkingContent += content;
+                  thinkingWrapper.style.display = 'block';
+                  thinkingWrapper.textContent = thinkingContent;
+                  messageList.scrollTop = messageList.scrollHeight;
+                } else if (type === 'content') {
+                  if (isFirstContent) {
+                    isFirstContent = false;
+                  }
+                  fullReply += content;
+                  bubble.textContent = fullReply;
+                  messageList.scrollTop = messageList.scrollHeight;
+                } else if (type === 'done') {
+                  // 流结束，可以做一些收尾工作
+                  console.log('✅ 流式输出完成');
+                }
+              } catch (parseErr) {
+                // 忽略解析错误
+              }
+            }
+          }
+        }
+
+    // 最终把完整的回复存入数据库，但前端已经实时显示了
+    // 所以这里不需要额外操作
+ 
+  } catch (err) {
+    console.error('发送消息失败:', err);
+    bubble.textContent = '❌ 网络错误：' + err.message;
+  } finally {
+    isLoading = false;
+    sendBtn.disabled = false;
+    userInput.focus();
+    // 移除临时ID标记（如果有）
+    const tempEl = document.getElementById('tempAssistantMsg');
+    if (tempEl) {
+      tempEl.id = '';
     }
+  }
+}
 
     // ---------- 登录逻辑 ----------
     function handleLogin() {

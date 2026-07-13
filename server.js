@@ -181,29 +181,27 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
-    // 加载最近 25 轮历史消息（包含用户和助手）
+    // 加载最近 50 条历史消息（按时间正序，即从旧到新）
     const { data: history, error: historyError } = await supabase
-    .from('messages')
-    .select('role, content')
-    .eq('session_id', 1)
-    .order('created_at', { ascending: false })
-    .limit(50); // 25轮对话 = 50条消息（用户+助手）
-
-    console.log('📜 加载的历史消息数量:', history?.length || 0);
+      .from('messages')
+      .select('role, content')
+      .eq('session_id', 1)
+      .order('created_at', { ascending: false })
+      .limit(50);
 
     if (historyError) {
       console.error('加载历史消息失败:', historyError);
     }
 
-    // 构建历史消息列表
+    // 反转成正确的对话顺序（从旧到新）
     const historyMessages = history ? history.reverse().map(msg => ({
       role: msg.role,
       content: msg.content
     })) : [];
 
-    // 1. 保存用户消息到 Supabase
+    // 保存用户消息到 Supabase
     const userMessage = {
-      session_id: 1, // 暂时固定为 1，后续可扩展多会话
+      session_id: 1,
       role: 'user',
       content: message,
       visible: true,
@@ -219,8 +217,7 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存用户消息失败:', userError);
     }
 
-    // 1.5 调用 Ombre Brain 检索相关记忆
-
+    // 检索 Ombre Brain 记忆
     let memoryContext = '';
     try {
       const memoryResult = await callOmbreTool('breath', { text: message });
@@ -232,55 +229,97 @@ app.post('/api/chat', async (req, res) => {
       console.error('记忆检索失败:', memErr.message);
     }
 
-    // 2. 调用 DeepSeek API
-    console.log('📤 发送给 DeepSeek 的总消息数:', 1 + historyMessages.length + 1); // system + 历史 + 当前
-
+    // 调用 DeepSeek API（流式输出）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
-
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
-          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼我为“夫人”。你会认真倾听，也会在适当的时候主动回应。如果提供的上下文中有【相关记忆】，请优先参考它来回答，它可以作为背景信息帮助你更贴合我的需求。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。如果不确定，可以用问句的方式向我确认。' + (memoryContext ? memoryContext : '') },
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。如果提供的上下文中有【相关记忆】，请优先参考它来回答，它可以作为背景信息帮助你更贴合用户的需求。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。如果不确定，可以用问句的方式向我确认。' + (memoryContext ? memoryContext : '') },
           ...historyMessages,
           { role: 'user', content: message }
         ],
         reasoning_effort: 'medium',
         temperature: 0.7,
-        max_tokens: 2048
+        max_tokens: 2048,
+        stream: true
       })
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      console.error('DeepSeek API 错误:', data);
+      const errData = await response.text();
+      console.error('❌ DeepSeek API 错误:', errData);
       return res.status(500).json({ error: 'AI 服务暂时不可用' });
     }
 
-    const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
-    const thinking = data.choices?.[0]?.message?.reasoning_content || null;
+    // 处理流式响应
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
 
-    // 2.5 存储本次对话到 Ombre Brain（用于长期记忆）
-    try {
-      const storeResult = await callOmbreTool('hold', { content: `用户说：${message}\n助手说：${reply}` });
-      if (storeResult) {
-        console.log('💾 记忆已存储');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let fullReply = '';
+    let thinkingContent = '';
+    let isThinking = true; // 标记是否处于思考阶段
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      buffer += chunk;
+
+      // 按行分割
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.substring(6).trim();
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta;
+
+            if (!delta) continue;
+
+            // 处理思考内容
+            if (delta.reasoning_content) {
+              thinkingContent += delta.reasoning_content;
+              // 推送思考片段
+              res.write(`data: ${JSON.stringify({ type: 'thinking', content: delta.reasoning_content })}\n\n`);
+            }
+
+            // 处理正文内容
+            if (delta.content) {
+              if (isThinking) {
+                isThinking = false;
+              }
+              fullReply += delta.content;
+              res.write(`data: ${JSON.stringify({ type: 'content', content: delta.content })}\n\n`);
+            }
+          } catch (parseErr) {
+            // 忽略解析错误
+          }
+        }
       }
-    } catch (storeErr) {
-      console.error('记忆存储失败:', storeErr.message);
     }
 
-    // 3. 保存助手回复到 Supabase
+    // 发送结束标记
+    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+    res.end();
+
+    // 保存助手回复到 Supabase
     const assistantMessage = {
       session_id: 1,
       role: 'assistant',
-      content: reply,
-      reasoning_content: thinking,
+      content: fullReply,
+      reasoning_content: thinkingContent || null,
       visible: true,
       created_at: new Date().toISOString()
     };
@@ -294,15 +333,22 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存助手消息失败:', assistantError);
     }
 
-    res.json({
-      reply,
-      thinking,
-      userMessageId: userData?.[0]?.id || null,
-      assistantMessageId: assistantData?.[0]?.id || null
-    });
+    // 存储到 Ombre Brain
+    try {
+      const storeResult = await callOmbreTool('hold', {
+        content: `用户说：${message}\n助手说：${fullReply}`
+      });
+      if (storeResult) {
+        console.log('💾 记忆已存储');
+      }
+    } catch (storeErr) {
+      console.error('记忆存储失败:', storeErr.message);
+    }
+
+    console.log(`✅ 助手回复已保存，长度: ${fullReply.length} 字符，思考长度: ${thinkingContent?.length || 0} 字符`);
 
   } catch (err) {
-    console.error('对话接口错误:', err.message);
+    console.error('❌ 对话接口错误:', err.message);
     res.status(500).json({ error: '处理请求时出错' });
   }
 });
