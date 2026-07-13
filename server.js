@@ -219,6 +219,19 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存用户消息失败:', userError);
     }
 
+    // 1.5 调用 Ombre Brain 检索相关记忆
+
+    let memoryContext = '';
+    try {
+      const memoryResult = await callOmbreTool('breath', { text: message });
+      if (memoryResult) {
+        memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
+        console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
+      }
+    } catch (memErr) {
+      console.error('记忆检索失败:', memErr.message);
+    }
+
     // 2. 调用 DeepSeek API
     console.log('📤 发送给 DeepSeek 的总消息数:', 1 + historyMessages.length + 1); // system + 历史 + 当前
 
@@ -238,7 +251,7 @@ app.post('/api/chat', async (req, res) => {
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
-          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣...' },
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。如果提供的上下文中有【相关记忆】，请优先参考它来回答，它可以作为背景信息帮助你更贴合用户的需求。' + (memoryContext ? memoryContext : '') },
           ...historyMessages,
           { role: 'user', content: message }
         ],
@@ -257,6 +270,16 @@ app.post('/api/chat', async (req, res) => {
 
     const reply = data.choices?.[0]?.message?.content || '（没有收到回复）';
     const thinking = data.choices?.[0]?.message?.reasoning_content || null;
+
+    // 2.5 存储本次对话到 Ombre Brain（用于长期记忆）
+    try {
+      const storeResult = await callOmbreTool('hold', { content: `用户说：${message}\n助手说：${reply}` });
+      if (storeResult) {
+        console.log('💾 记忆已存储');
+      }
+    } catch (storeErr) {
+      console.error('记忆存储失败:', storeErr.message);
+    }
 
     // 3. 保存助手回复到 Supabase
     const assistantMessage = {
