@@ -424,6 +424,11 @@
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message ' + role;
 
+          // 存储消息ID到 dataset，供刷新按钮使用
+        if (msgId) {
+          msgDiv.dataset.messageId = msgId;
+        }
+        
         // 思考内容放上方
         if (thinking) {
           const thinkingEl = createThinkingElement(thinking);
@@ -509,7 +514,7 @@
             const existingBtn = lastMsg.querySelector('.refresh-btn');
             if (!existingBtn) {
               // 获取消息ID
-              const msgId = lastMsg.dataset.messageId || null;
+              const msgId = lastMsg.dataset.messageId;
               // 复用 addMessage 的逻辑，但只添加按钮
               const refreshBtn = document.createElement('span');
               refreshBtn.className = 'refresh-btn';
