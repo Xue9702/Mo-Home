@@ -694,46 +694,102 @@
       // 初始聚焦到密码框
       passwordInput.focus();
 
-      // ---------- 重新生成回复 ----------
+      // ---------- 重新生成（流式） ----------
       async function handleRegenerate(btn, msgDiv) {
-        // 防止重复点击
         if (btn.disabled) return;
         btn.disabled = true;
         btn.textContent = '⏳ 生成中...';
 
-        // 获取原消息ID（暂时用时间戳模拟，后续可改用真实ID）
-        const messageId = btn.dataset.messageId || 'temp';
+        const messageId = btn.dataset.messageId;
+        if (!messageId || messageId.startsWith('temp-')) {
+          btn.textContent = '❌ 无效消息';
+          setTimeout(() => { btn.textContent = '🔄 重新生成'; btn.disabled = false; }, 2000);
+          return;
+        }
 
         try {
+          // 清空当前消息内容，准备流式填充
+          const bubble = msgDiv.querySelector('.bubble');
+          const thinkingEl = msgDiv.querySelector('.thinking-content');
+          if (bubble) bubble.textContent = '';
+          if (thinkingEl) thinkingEl.textContent = '';
+
+          let fullReply = '';
+          let fullThinking = '';
+
           const response = await fetch('/api/regenerate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageId: messageId }),
+            body: JSON.stringify({ messageId }),
           });
 
           if (!response.ok) {
-            throw new Error('重新生成失败');
+            throw new Error(`HTTP error! status: ${response.status}`);
           }
 
-          const data = await response.json();
-          // 更新消息内容
-          const bubble = msgDiv.querySelector('.bubble');
-          if (bubble) bubble.textContent = data.reply;
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
 
-          // 更新思考内容
-          const thinkingEl = msgDiv.querySelector('.thinking-content');
-          if (thinkingEl && data.thinking) {
-            thinkingEl.textContent = data.thinking;
-          } else if (thinkingEl) {
-            thinkingEl.remove();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+              const payload = trimmed.slice(6);
+              if (payload === '[DONE]') continue;
+
+              try {
+                const json = JSON.parse(payload);
+
+                if (json.thinking) {
+                  fullThinking += json.thinking;
+                  if (thinkingEl) {
+                    thinkingEl.textContent = fullThinking;
+                  } else {
+                    // 如果还没有思考容器，创建一个
+                    const newThinking = createThinkingElement(fullThinking);
+                    if (newThinking) {
+                      const bubbleEl = msgDiv.querySelector('.bubble');
+                      if (bubbleEl) {
+                        msgDiv.insertBefore(newThinking, bubbleEl);
+                      }
+                    }
+                  }
+                }
+
+                if (json.content) {
+                  fullReply += json.content;
+                  if (bubble) bubble.textContent = fullReply;
+                }
+
+                if (json.error) {
+                  throw new Error(json.error);
+                }
+              } catch (e) {
+                console.warn('解析SSE数据失败:', e, payload);
+              }
+            }
           }
 
-          // 更新按钮状态
-          btn.textContent = '✅ 已刷新';
-          setTimeout(() => {
-            btn.textContent = '🔄 重新生成';
-            btn.disabled = false;
-          }, 2000);
+          // 更新消息ID（如果有新的）
+          if (fullReply) {
+            // 更新完成，恢复按钮状态
+            btn.textContent = '✅ 已刷新';
+            setTimeout(() => {
+              btn.textContent = '🔄 重新生成';
+              btn.disabled = false;
+            }, 2000);
+          } else {
+            throw new Error('未收到有效回复');
+          }
 
         } catch (err) {
           console.error('重新生成失败:', err);
