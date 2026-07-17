@@ -795,6 +795,7 @@
         btn.disabled = true;
         btn.textContent = '⏳ 生成中...';
 
+        const messageId = btn.dataset.messageId;
         if (!messageId || messageId.startsWith('temp-')) {
           btn.textContent = '❌ 无效消息';
           setTimeout(() => {
