@@ -572,7 +572,7 @@
           data.messages.forEach(msg => {
             const role = msg.role === 'user' ? 'user' : 'assistant';
             const thinking = msg.reasoning_content || null;
-            const time = msg.created_at ? new Date(msg.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : formatTime();
+            const time = formatTime(msg.created_at);
             addMessage(role, msg.content, thinking, time, msg.id);
           });
           // 加载完成后，为最新一条助手消息添加刷新按钮
