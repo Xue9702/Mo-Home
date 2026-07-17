@@ -408,15 +408,35 @@
         return `${month}-${day} ${hours}:${minutes}:${seconds}`;
       }
 
-      function createThinkingElement(thinkingText) {
+      // 修改后的 createThinkingElement
+      function createThinkingElement(thinkingText, timestamp = null) {
         if (!thinkingText || thinkingText.trim() === '') return null;
+
         const wrapper = document.createElement('div');
         wrapper.style.marginTop = '6px';
+
+        // --- 新增：横向并排容器 ---
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '6px';
 
         const toggle = document.createElement('span');
         toggle.className = 'thinking-toggle';
         toggle.textContent = '💭 思考';
-        wrapper.appendChild(toggle);
+        row.appendChild(toggle);
+
+        // 如果有时间戳，追加到同一行
+        if (timestamp) {
+          const tsSpan = document.createElement('span');
+          tsSpan.className = 'timestamp';
+          tsSpan.style.marginTop = '0'; // 覆盖原有 margin
+          tsSpan.style.padding = '0';
+          tsSpan.textContent = timestamp;
+          row.appendChild(tsSpan);
+        }
+        wrapper.appendChild(row);
+        // --- 并排容器结束 ---
 
         const content = document.createElement('div');
         content.className = 'thinking-content';
@@ -443,8 +463,15 @@
 
         // 思考内容放上方
         if (thinking) {
-          const thinkingEl = createThinkingElement(thinking);
+          const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
           if (thinkingEl) msgDiv.appendChild(thinkingEl);
+          // 有思考时，时间戳已内置，无需额外添加
+        } else {
+          // 无思考，仍将时间戳放在气泡下方
+          const ts = document.createElement('div');
+          ts.className = 'timestamp';
+          ts.textContent = timestamp || formatTime();
+          msgDiv.appendChild(ts);
         }
 
         const bubble = document.createElement('div');
@@ -467,11 +494,6 @@
           });
           msgDiv.appendChild(refreshBtn);
         }
-
-        const ts = document.createElement('div');
-        ts.className = 'timestamp';
-        ts.textContent = timestamp || formatTime();
-        msgDiv.appendChild(ts);
 
         messageList.appendChild(msgDiv);
         messageList.scrollTop = messageList.scrollHeight;
