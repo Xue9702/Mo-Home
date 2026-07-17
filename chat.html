@@ -389,11 +389,23 @@
       const CORRECT_PASSWORD = '9702520x';
 
       // ---------- 工具函数 ----------
-      function formatTime() {
-        const now = new Date();
-        const h = String(now.getHours()).padStart(2, '0');
-        const m = String(now.getMinutes()).padStart(2, '0');
-        return h + ':' + m;
+      function formatTime(isoString = null) {
+        let date;
+        if (isoString) {
+          date = new Date(isoString);
+          // 容错：若解析失败，使用当前时间
+          if (isNaN(date.getTime())) date = new Date();
+        } else {
+          date = new Date();
+        }
+
+        const month = date.getMonth() + 1; // getMonth() 返回 0-11
+        const day = date.getDate();
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+
+        return `${month}-${day} ${hours}:${minutes}:${seconds}`;
       }
 
       function createThinkingElement(thinkingText) {
@@ -424,11 +436,11 @@
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message ' + role;
 
-          // 存储消息ID到 dataset，供刷新按钮使用
+        // 存储消息ID到 dataset，供刷新按钮使用
         if (msgId) {
           msgDiv.dataset.messageId = msgId;
         }
-        
+
         // 思考内容放上方
         if (thinking) {
           const thinkingEl = createThinkingElement(thinking);
