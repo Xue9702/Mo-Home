@@ -372,6 +372,35 @@
   </div>
 
   <script>
+
+    function createRefreshIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '14');
+      svg.setAttribute('height', '14');
+      svg.setAttribute('viewBox', '0 0 16 16');
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '1.5');
+      svg.style.verticalAlign = 'middle';
+      svg.style.marginRight = '3px';
+
+      const path1 = document.createElementNS(svgNS, 'path');
+      path1.setAttribute('d', 'M1 4v4h4');
+      const path2 = document.createElementNS(svgNS, 'path');
+      path2.setAttribute('d', 'M15 12v-4h-4');
+      const path3 = document.createElementNS(svgNS, 'path');
+      path3.setAttribute('d', 'M13 6.5A5.5 5.5 0 0 0 2.5 4.2');
+      const path4 = document.createElementNS(svgNS, 'path');
+      path4.setAttribute('d', 'M3 9.5A5.5 5.5 0 0 0 13.5 11.8');
+
+      svg.appendChild(path1);
+      svg.appendChild(path2);
+      svg.appendChild(path3);
+      svg.appendChild(path4);
+      return svg;
+    }
+
     (function () {
       // ---------- DOM 元素 ----------
       const loginBox = document.getElementById('loginBox');
@@ -483,7 +512,8 @@
         if (role === 'assistant' && showRefresh) {
           const refreshBtn = document.createElement('span');
           refreshBtn.className = 'refresh-btn';
-          refreshBtn.textContent = '🔄 重新生成';
+          refreshBtn.appendChild(createRefreshIcon());
+          refreshBtn.appendChild(document.createTextNode(' 重新生成'));
           refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
           refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
           refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
@@ -552,7 +582,8 @@
               // 复用 addMessage 的逻辑，但只添加按钮
               const refreshBtn = document.createElement('span');
               refreshBtn.className = 'refresh-btn';
-              refreshBtn.textContent = '🔄 重新生成';
+              refreshBtn.appendChild(createRefreshIcon());
+              refreshBtn.appendChild(document.createTextNode(' 重新生成'));
               refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
               refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
               refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
@@ -676,7 +707,8 @@
 
                   const refreshButton = document.createElement('span');
                   refreshButton.className = 'refresh-btn';
-                  refreshButton.textContent = '🔄 重新生成';
+                  refreshButton.appendChild(createRefreshIcon());
+                  refreshButton.appendChild(document.createTextNode(' 重新生成'));
                   refreshButton.dataset.messageId = assistantMessageId || tempId;
                   refreshButton.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
                   refreshButton.onmouseover = () => refreshButton.style.background = '#e5e5e5';
@@ -763,10 +795,14 @@
         btn.disabled = true;
         btn.textContent = '⏳ 生成中...';
 
-        const messageId = btn.dataset.messageId;
         if (!messageId || messageId.startsWith('temp-')) {
           btn.textContent = '❌ 无效消息';
-          setTimeout(() => { btn.textContent = '🔄 重新生成'; btn.disabled = false; }, 2000);
+          setTimeout(() => {
+            btn.textContent = '';
+            btn.appendChild(createRefreshIcon());
+            btn.appendChild(document.createTextNode(' 重新生成'));
+            btn.disabled = false;
+          }, 2000);
           return;
         }
 
@@ -847,7 +883,9 @@
             // 更新完成，恢复按钮状态
             btn.textContent = '✅ 已刷新';
             setTimeout(() => {
-              btn.textContent = '🔄 重新生成';
+              btn.textContent = '';
+              btn.appendChild(createRefreshIcon());
+              btn.appendChild(document.createTextNode(' 重新生成'));
               btn.disabled = false;
             }, 2000);
           } else {
@@ -859,7 +897,9 @@
           btn.textContent = '❌ 失败，点击重试';
           btn.disabled = false;
           setTimeout(() => {
-            btn.textContent = '🔄 重新生成';
+            btn.textContent = '';
+            btn.appendChild(createRefreshIcon());
+            btn.appendChild(document.createTextNode(' 重新生成'));
           }, 3000);
         }
       }
