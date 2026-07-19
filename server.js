@@ -473,6 +473,8 @@ app.post('/api/regenerate', async (req, res) => {
       })
       : [];
 
+    console.log('📜 重新生成接口 - 过滤后历史消息数量:', filteredHistory.length);
+
     // 5. 构建完整对话上下文
     const chatMessages = [
       { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。如果提供的上下文中有【相关记忆】，请优先参考它来回答，它可以作为背景信息帮助你更贴合我的需求。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。如果不确定，可以用问句的方式向我确认。' },
@@ -710,6 +712,8 @@ app.post('/api/edit-message', async (req, res) => {
         return true;
       })
       : [];
+
+    console.log('📜 编辑接口 - 过滤后历史消息数量:', filteredHistory.length, 'groupId:', groupId);
 
     // 9. 构建完整消息数组
     const chatMessages = [
