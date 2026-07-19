@@ -938,19 +938,21 @@
               asstMsg.element.dataset.assistantVersion = asstMsg.version;
             });
 
-            // 找到版本号最大的那条用户消息，为其添加导航器
-            const latestUserMsg = group.userMessages.reduce((prev, curr) =>
-              (curr.version > prev.version) ? curr : prev
-            );
-
-            if (latestUserMsg) {
-              addVersionNavigator(
-                latestUserMsg.element,
-                groupId,
-                latestUserMsg.version,
-                group.maxVersion,
-                latestUserMsg.messageId
+                  // 找到版本号最大的那条用户消息，为其添加导航器
+            if (group.userMessages.length > 0) {
+              const latestUserMsg = group.userMessages.reduce((prev, curr) =>
+                (curr.version > prev.version) ? curr : prev
               );
+
+              if (latestUserMsg) {
+                addVersionNavigator(
+                  latestUserMsg.element,
+                  groupId,
+                  latestUserMsg.version,
+                  group.maxVersion,
+                  latestUserMsg.messageId
+                );
+              }
             }
           });
 
