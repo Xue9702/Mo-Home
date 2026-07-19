@@ -448,7 +448,39 @@ app.post('/api/regenerate', async (req, res) => {
     const userContent = userMsg[0].content;
     console.log('✅ 找到对应的用户消息:', userContent);
 
-    // 3. 调用 DeepSeek API（流式）
+    // 3. 加载历史消息（获取完整上下文）
+    const { data: history, error: historyError } = await supabase
+      .from('messages')
+      .select('role, content, group_id, version_number, id')
+      .eq('session_id', targetMsg.session_id)
+      .eq('visible', true)
+      .order('created_at', { ascending: true });
+
+    if (historyError) {
+      console.error('加载历史消息失败:', historyError);
+    }
+
+    // 4. 过滤历史消息：排除属于同一编辑组的旧版本，并确保不包含当前要重新生成的消息本身
+    const targetGroupId = targetMsg.group_id;
+    const filteredHistory = history
+      ? history.filter(msg => {
+        // 排除当前要重新生成的消息本身
+        if (msg.id === targetMsg.id) return false;
+        // 如果有 group_id，且与当前消息属于同一组，则排除（旧版本）
+        if (targetGroupId && msg.group_id === targetGroupId) return false;
+        // 保留其他所有可见消息
+        return true;
+      })
+      : [];
+
+    // 5. 构建完整对话上下文
+    const chatMessages = [
+      { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。如果提供的上下文中有【相关记忆】，请优先参考它来回答，它可以作为背景信息帮助你更贴合我的需求。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。如果不确定，可以用问句的方式向我确认。' },
+      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
+      { role: 'user', content: userContent }
+    ];
+
+    // 6. 调用 DeepSeek API（流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -457,10 +489,7 @@ app.post('/api/regenerate', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。' },
-          { role: 'user', content: userContent }
-        ],
+        messages: chatMessages,
         reasoning_effort: 'medium',
         temperature: 0.7,
         max_tokens: 2048,

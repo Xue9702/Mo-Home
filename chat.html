@@ -695,6 +695,14 @@
                 }
 
                 if (json.done) {
+                    console.log('🔍 done信号收到，变量状态:', {
+                    userMessageId: userMessageId,
+                    groupId: groupId,
+                    currentVersion: currentVersion,
+                    totalVersions: totalVersions,
+                    tempUserMsgExists: !!tempUserMsg,
+                    tempUserMsgInDOM: tempUserMsg ? document.body.contains(tempUserMsg) : false
+                  });
                   // 移除旧的临时标记（如果存在），但保留 tempUserMsg 元素本身
                   const oldTemp = document.querySelector('[data-temp-edit="true"]');
                   if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
