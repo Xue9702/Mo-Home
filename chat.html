@@ -601,33 +601,38 @@
         const newText = prompt('编辑消息：', oldContent);
         if (!newText || newText.trim() === '' || newText === oldContent) return;
 
-        // 隐藏该消息之后的所有内容
-        const allMessages = messageList.querySelectorAll('.message');
-        let found = false;
-
-        // 为原始消息打版本标记
-        let originalUserMsg = null;
+        // 为原始消息打版本标记（更稳健的写法）
+        const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
         let originalAssistantMsg = null;
-        let foundOriginal = false;
 
-        allMessages.forEach(msg => {
-          if (msg.dataset.messageId === String(msgId)) {
-            originalUserMsg = msg;
-            foundOriginal = true;
-            msg.dataset.groupId = ''; // 稍后统一赋值
-            msg.dataset.version = '1';
+        if (originalUserMsg) {
+          originalUserMsg.dataset.groupId = ''; // 稍后统一赋值
+          originalUserMsg.dataset.version = '1';
+
+          // 寻找紧跟在它后面的第一个助手消息
+          let nextMsg = originalUserMsg.nextElementSibling;
+          while (nextMsg) {
+            if (nextMsg.classList.contains('assistant') && !nextMsg.dataset.assistantVersion) {
+              originalAssistantMsg = nextMsg;
+              originalAssistantMsg.dataset.groupId = ''; // 稍后赋值
+              originalAssistantMsg.dataset.assistantVersion = '1';
+              break;
+            }
+            nextMsg = nextMsg.nextElementSibling;
           }
-          if (foundOriginal && msg.classList.contains('assistant')) {
-            originalAssistantMsg = msg;
-            foundOriginal = false; // 只取第一个助手消息
+        }
+
+        // 隐藏原始消息及其之后的所有内容
+        let hide = false;
+        const allMessages = messageList.querySelectorAll('.message');
+        allMessages.forEach(msg => {
+          if (hide) {
+            msg.style.display = 'none';
+          }
+          if (msg === originalUserMsg) {
+            hide = true;
           }
         });
-
-        // 如果找到了原始助手消息，也打标记
-        if (originalAssistantMsg) {
-          originalAssistantMsg.dataset.groupId = ''; // 稍后赋值
-          originalAssistantMsg.dataset.assistantVersion = '1';
-        }
 
         allMessages.forEach(msg => {
           if (found) msg.style.display = 'none';
