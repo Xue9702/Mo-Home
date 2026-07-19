@@ -822,19 +822,11 @@
       function switchVersion(groupId, targetVersion, triggerMsgDiv) {
         // 隐藏所有该 group 的用户消息和助手消息
         const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-
-        function switchVersion(groupId, targetVersion, triggerMsgDiv) {
-          const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-          console.log('🔍 找到的用户消息:', userMessages.length, '条');
-          userMessages.forEach(msg => {
-            console.log('  - 元素:', msg, '| version:', msg.dataset.version, '| 内容:', msg.querySelector('.bubble')?.textContent?.substring(0, 20));
-          });
-          // ... 其余代码不变
-        }
-
+        console.log('🔍 找到的用户消息:', userMessages.length, '条');
         const assistantMessages = document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`);
 
         userMessages.forEach(msg => {
+          console.log('  - 元素:', msg, '| version:', msg.dataset.version, '| 内容:', msg.querySelector('.bubble')?.textContent?.substring(0, 20));
           msg.style.display = msg.dataset.version === String(targetVersion) ? '' : 'none';
         });
 
