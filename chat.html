@@ -601,7 +601,7 @@
         const newText = prompt('编辑消息：', oldContent);
         if (!newText || newText.trim() === '' || newText === oldContent) return;
 
-            // 稳健标记原始消息
+        // 稳健标记原始消息并保留在 DOM 中
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
         if (originalUserMsg) {
           originalUserMsg.dataset.groupId = ''; // 稍后统一赋值
@@ -623,13 +623,16 @@
           }
         }
 
-        // 隐藏原始消息及其之后的所有内容
-        let hide = false;
-        const allMessages = messageList.querySelectorAll('.message');
-        allMessages.forEach(msg => {
-          if (hide) msg.style.display = 'none';
-          if (msg === originalUserMsg) hide = true;
-        });
+        // 【关键修改】只隐藏助手消息，保留原始用户消息
+        if (originalUserMsg) {
+          let next = originalUserMsg.nextElementSibling;
+          while (next) {
+            // 如果遇到另一个用户消息，停止隐藏
+            if (next.classList.contains('user')) break;
+            next.style.display = 'none';
+            next = next.nextElementSibling;
+          }
+        }
 
         allMessages.forEach(msg => {
           if (found) msg.style.display = 'none';
