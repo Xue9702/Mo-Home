@@ -552,6 +552,229 @@ app.post('/api/regenerate', async (req, res) => {
   }
 });
 
+// ------------------ 编辑消息并重新发送（流式） ------------------
+app.post('/api/edit-message', async (req, res) => {
+  const { messageId, newContent } = req.body;
+
+  if (!messageId || !newContent || !newContent.trim()) {
+    return res.status(400).json({ error: '缺少消息ID或新内容' });
+  }
+
+  // 设置 SSE 响应头
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendSSE = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    // 1. 查找原始消息
+    const { data: originalMsg, error: findError } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('id', messageId)
+      .single();
+
+    if (findError || !originalMsg) {
+      sendSSE({ error: '未找到原始消息' });
+      res.end();
+      return;
+    }
+
+    if (originalMsg.role !== 'user') {
+      sendSSE({ error: '只能编辑用户消息' });
+      res.end();
+      return;
+    }
+
+    // 2. 确定 group_id（如果是该组第一条被编辑的消息，则生成新的 group_id）
+    let groupId = originalMsg.group_id;
+    if (!groupId) {
+      groupId = `edit-${messageId}-${Date.now()}`;
+    }
+
+    // 3. 计算新版本号：查找该 group 内已存在的最大版本号，+1
+    const { data: existingVersions, error: versionError } = await supabase
+      .from('messages')
+      .select('version_number')
+      .eq('group_id', groupId)
+      .order('version_number', { ascending: false })
+      .limit(1);
+
+    if (versionError) {
+      console.error('查询版本号失败:', versionError);
+      sendSSE({ error: '查询版本号失败' });
+      res.end();
+      return;
+    }
+
+    const newVersion = (existingVersions && existingVersions.length > 0)
+      ? (existingVersions[0].version_number || 1) + 1
+      : 2; // 如果原消息是版本1，则新版本为2
+
+    // 4. 将原始消息之后的所有消息（包括助手回复等）标记为不可见
+    //    范围：同 session，且 id 大于当前消息
+    await supabase
+      .from('messages')
+      .update({ visible: false })
+      .eq('session_id', originalMsg.session_id)
+      .gt('id', messageId);
+
+    // 5. 插入新版本的用户消息
+    const newUserMsg = {
+      session_id: originalMsg.session_id,
+      role: 'user',
+      content: newContent.trim(),
+      group_id: groupId,
+      version_number: newVersion,
+      original_user_id: originalMsg.original_user_id || originalMsg.id,
+      visible: true,
+      created_at: new Date().toISOString()
+    };
+
+    const { data: insertedUser, error: insertError } = await supabase
+      .from('messages')
+      .insert([newUserMsg])
+      .select();
+
+    if (insertError || !insertedUser || insertedUser.length === 0) {
+      console.error('插入新消息失败:', insertError);
+      sendSSE({ error: '插入新消息失败' });
+      res.end();
+      return;
+    }
+
+    const newUserMsgId = insertedUser[0].id;
+    const totalVersions = newVersion; // 当前总版本数
+
+    // 6. 发送用户消息确认信息给前端
+    sendSSE({
+      userMessageId: newUserMsgId,
+      groupId: groupId,
+      currentVersion: newVersion,
+      totalVersions: totalVersions
+    });
+
+    // 7. 调用 DeepSeek 流式生成新回复（逻辑与 /api/chat 一致）
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。'
+          },
+          { role: 'user', content: newContent.trim() }
+        ],
+        reasoning_effort: 'medium',
+        temperature: 0.7,
+        max_tokens: 2048,
+        stream: true
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('DeepSeek API 错误:', errText);
+      sendSSE({ error: 'AI 服务暂时不可用' });
+      res.end();
+      return;
+    }
+
+    let fullReply = '';
+    let fullThinking = '';
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+        const payload = trimmed.slice(6);
+        if (payload === '[DONE]') continue;
+
+        try {
+          const json = JSON.parse(payload);
+          const delta = json.choices?.[0]?.delta;
+
+          if (delta?.reasoning_content) {
+            fullThinking += delta.reasoning_content;
+            sendSSE({ thinking: delta.reasoning_content });
+          }
+
+          if (delta?.content) {
+            fullReply += delta.content;
+            sendSSE({ content: delta.content });
+          }
+        } catch (e) {
+          // 忽略非 JSON 数据
+        }
+      }
+    }
+
+    if (!fullReply) {
+      console.error('未收到有效回复');
+      sendSSE({ error: 'AI 服务未返回有效内容' });
+      res.end();
+      return;
+    }
+
+    // 8. 存储新助手回复
+    const assistantMsg = {
+      session_id: originalMsg.session_id,
+      role: 'assistant',
+      content: fullReply,
+      reasoning_content: fullThinking || null,
+      group_id: groupId,
+      version_number: newVersion,
+      original_user_id: newUserMsgId,
+      visible: true,
+      created_at: new Date().toISOString()
+    };
+
+    const { data: savedAssistant, error: assistantError } = await supabase
+      .from('messages')
+      .insert([assistantMsg])
+      .select();
+
+    if (assistantError) {
+      console.error('保存助手消息失败:', assistantError);
+    }
+
+    // 9. 发送完成信号
+    sendSSE({
+      done: true,
+      assistantMessageId: savedAssistant?.[0]?.id || null,
+      reply: fullReply,
+      thinking: fullThinking
+    });
+
+    res.end();
+
+  } catch (err) {
+    console.error('编辑消息接口错误:', err.message);
+    sendSSE({ error: '处理请求时出错' });
+    res.end();
+  }
+});
+
 // 启动服务
 app.listen(port, () => {
   console.log(`✅ 服务已启动，访问端口: ${port}`);
