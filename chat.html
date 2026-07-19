@@ -695,11 +695,12 @@
                 }
 
                 if (json.done) {
-                  // 清理临时消息
-                  const tempEdit = document.querySelector('[data-temp-edit="true"]');
-                  if (tempEdit) tempEdit.remove();
+                  // 移除旧的临时标记（如果存在），但保留 tempUserMsg 元素本身
+                  const oldTemp = document.querySelector('[data-temp-edit="true"]');
+                  if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
+                  tempUserMsg.removeAttribute('data-temp-edit');
 
-                  // 创建版本导航器
+                  // 为这条编辑后的用户消息添加版本导航器
                   addVersionNavigator(tempUserMsg, groupId, currentVersion, totalVersions, msgId);
                   tempUserMsg.dataset.groupId = groupId;
                   tempUserMsg.dataset.currentVersion = currentVersion;

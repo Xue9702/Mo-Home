@@ -13,7 +13,7 @@ const supabase = createClient(baseUrl, supabaseKey);
 
 // ================== Ombre Brain (MCP) 配置 ==================
 const OMBRE_BRAIN_URL = process.env.OMBRE_BRAIN_URL;
-let ombreSessionId = null; 
+let ombreSessionId = null;
 let ombreCallId = 0;
 
 // 解析 MCP 返回的 SSE 数据
@@ -37,8 +37,8 @@ async function initOmbreSession() {
       params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "mo-home", version: "1.0" } },
       id: ++ombreCallId
     }, {
-      headers: { 
-        'Content-Type': 'application/json', 
+      headers: {
+        'Content-Type': 'application/json',
         'Accept': 'application/json, text/event-stream',
         'X-User-Name': '雪'
       },
@@ -46,7 +46,7 @@ async function initOmbreSession() {
     });
 
     const parsed = parseSSEResponse(response.data);
-    
+
     // 从解析后的响应中读取服务端返回的 session id
     let sessionId = response.headers['mcp-session-id'] || parsed?.id;
 
@@ -312,7 +312,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     console.log('📊 流式读取完成，fullReply 长度:', fullReply.length, 'fullThinking 长度:', fullThinking.length);
-    
+
     // 检查是否收到了完整的回复
     if (!fullReply) {
       console.error('未收到有效回复，完整响应体可能为空');
@@ -658,6 +658,38 @@ app.post('/api/edit-message', async (req, res) => {
     });
 
     // 7. 调用 DeepSeek 流式生成新回复（逻辑与 /api/chat 一致）
+    // 7. 加载历史消息（排除被隐藏的和当前编辑组的旧版本）
+    const { data: history, error: historyError } = await supabase
+      .from('messages')
+      .select('role, content, group_id, version_number')
+      .eq('session_id', originalMsg.session_id)
+      .eq('visible', true)
+      .order('created_at', { ascending: true });
+
+    if (historyError) {
+      console.error('加载历史消息失败:', historyError);
+    }
+
+    // 8. 过滤历史消息：排除属于同一 group_id 的旧版本（避免重复上下文）
+    const filteredHistory = history
+      ? history.filter(msg => {
+        // 保留无 group_id 的消息（普通消息）
+        if (!msg.group_id) return true;
+        // 排除与当前编辑组相同 group_id 的消息（旧版本用户消息和助手回复）
+        if (msg.group_id === groupId) return false;
+        // 保留其他 group_id 的消息（不同编辑组）
+        return true;
+      })
+      : [];
+
+    // 9. 构建完整消息数组
+    const chatMessages = [
+      { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。如果提供的上下文中有【相关记忆】，请优先参考它来回答，它可以作为背景信息帮助你更贴合我的需求。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。如果不确定，可以用问句的方式向我确认。' },
+      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
+      { role: 'user', content: newContent.trim() }
+    ];
+
+    // 10. 调用 DeepSeek 流式生成新回复
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -666,13 +698,7 @@ app.post('/api/edit-message', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。'
-          },
-          { role: 'user', content: newContent.trim() }
-        ],
+        messages: chatMessages,  // 使用动态构建的消息数组
         reasoning_effort: 'medium',
         temperature: 0.7,
         max_tokens: 2048,
