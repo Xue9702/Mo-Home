@@ -872,7 +872,7 @@
       }
 
       // ---------- 加载历史消息 ----------
-      async function loadHistory() {
+     async function loadHistory() {
         try {
           const response = await fetch('/api/history');
           if (!response.ok) return;
@@ -881,22 +881,97 @@
             addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
             return;
           }
+
+          // 用于记录每个编辑组的最新版本和消息元素
+          const groupMap = new Map();
+
           data.messages.forEach(msg => {
             const role = msg.role === 'user' ? 'user' : 'assistant';
             const thinking = msg.reasoning_content || null;
             const time = formatTime(msg.created_at);
+
+            // 调用 addMessage 创建元素
             addMessage(role, msg.content, thinking, time, msg.id);
+
+            // 如果消息属于某个编辑组，收集信息
+            if (msg.group_id) {
+              if (!groupMap.has(msg.group_id)) {
+                groupMap.set(msg.group_id, {
+                  userMessages: [],
+                  assistantMessages: [],
+                  maxVersion: 0
+                });
+              }
+              const group = groupMap.get(msg.group_id);
+              // 获取刚刚添加的消息元素（就是 messageList 的最后一个子元素）
+              const msgElement = messageList.lastElementChild;
+
+              if (role === 'user') {
+                group.userMessages.push({
+                  element: msgElement,
+                  version: msg.version_number || 1,
+                  messageId: msg.id
+                });
+              } else {
+                group.assistantMessages.push({
+                  element: msgElement,
+                  version: msg.version_number || 1
+                });
+              }
+
+              if (msg.version_number && msg.version_number > group.maxVersion) {
+                group.maxVersion = msg.version_number;
+              }
+            }
           });
-          // 加载完成后，为最新一条助手消息添加刷新按钮
+
+          // 为每个编辑组补全属性并添加版本导航器
+          groupMap.forEach((group, groupId) => {
+            // 给所有用户消息设置属性
+            group.userMessages.forEach(userMsg => {
+              userMsg.element.dataset.groupId = groupId;
+              userMsg.element.dataset.version = userMsg.version;
+            });
+            // 给所有助手消息设置属性
+            group.assistantMessages.forEach(asstMsg => {
+              asstMsg.element.dataset.groupId = groupId;
+              asstMsg.element.dataset.assistantVersion = asstMsg.version;
+            });
+
+            // 找到版本号最大的那条用户消息，为其添加导航器
+            const latestUserMsg = group.userMessages.reduce((prev, curr) =>
+              (curr.version > prev.version) ? curr : prev
+            );
+
+            if (latestUserMsg) {
+              addVersionNavigator(
+                latestUserMsg.element,
+                groupId,
+                latestUserMsg.version,
+                group.maxVersion,
+                latestUserMsg.messageId
+              );
+            }
+          });
+
+          // 确保只显示最新版本，隐藏旧版本（初始状态）
+          groupMap.forEach((group, groupId) => {
+            const latestVersion = group.maxVersion;
+            group.userMessages.forEach(userMsg => {
+              userMsg.element.style.display = userMsg.version === latestVersion ? '' : 'none';
+            });
+            group.assistantMessages.forEach(asstMsg => {
+              asstMsg.element.style.display = asstMsg.version === latestVersion ? '' : 'none';
+            });
+          });
+
+          // 为没有编辑组的最后一条助手消息添加刷新按钮（保持原有逻辑）
           const allMsgs = messageList.querySelectorAll('.message.assistant');
           if (allMsgs.length > 0) {
             const lastMsg = allMsgs[allMsgs.length - 1];
-            // 检查是否已有刷新按钮
             const existingBtn = lastMsg.querySelector('.refresh-btn');
             if (!existingBtn) {
-              // 获取消息ID
               const msgId = lastMsg.dataset.messageId;
-              // 复用 addMessage 的逻辑，但只添加按钮
               const refreshBtn = document.createElement('span');
               refreshBtn.className = 'refresh-btn';
               refreshBtn.appendChild(createRefreshIcon());
@@ -912,6 +987,7 @@
               lastMsg.appendChild(refreshBtn);
             }
           }
+
         } catch (err) {
           console.error('加载历史失败:', err);
           addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime());
