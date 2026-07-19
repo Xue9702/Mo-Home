@@ -659,21 +659,24 @@
 
           removeTyping();
 
-          // 填充原始消息的 groupId
+          // ===== 将变量声明全部提前到这里 =====
+          let userMessageId = null;
+          let groupId = null;
+          let currentVersion = 1;
+          let totalVersions = 1;
+          let currentAssistantBubble = null;
+          let currentThinkingContainer = null;
+          let fullReply = '';
+          let fullThinking = '';
+          // ===== 声明结束 =====
+
+          // 填充原始消息的 groupId（现在 groupId 已经声明，虽然值还是 null，但不会报错）
           if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
           if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
 
           const reader = response.body.getReader();
           const decoder = new TextDecoder('utf-8');
           let buffer = '';
-          let currentAssistantBubble = null;
-          let currentThinkingContainer = null;
-          let fullReply = '';
-          let fullThinking = '';
-          let userMessageId = null;
-          let groupId = null;
-          let currentVersion = 1;
-          let totalVersions = 1;
 
           // 创建新助手消息容器
           const newAssistantMsg = document.createElement('div');
@@ -795,7 +798,6 @@
         nextBtn.style.alignItems = 'center';
         nextBtn.appendChild(createChevronRightIcon());
 
-        // 动态读取当前版本进行切换
         prevBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           const current = parseInt(versionText.textContent.split('/')[0]);
@@ -812,7 +814,6 @@
         nav.appendChild(nextBtn);
         msgDiv.appendChild(nav);
 
-        // 初始化箭头透明度
         prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
         nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
       }
