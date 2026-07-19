@@ -601,24 +601,25 @@
         const newText = prompt('编辑消息：', oldContent);
         if (!newText || newText.trim() === '' || newText === oldContent) return;
 
-        // 为原始消息打版本标记（更稳健的写法）
+            // 稳健标记原始消息
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
-        let originalAssistantMsg = null;
-
         if (originalUserMsg) {
           originalUserMsg.dataset.groupId = ''; // 稍后统一赋值
           originalUserMsg.dataset.version = '1';
+        }
 
-          // 寻找紧跟在它后面的第一个助手消息
-          let nextMsg = originalUserMsg.nextElementSibling;
-          while (nextMsg) {
-            if (nextMsg.classList.contains('assistant') && !nextMsg.dataset.assistantVersion) {
-              originalAssistantMsg = nextMsg;
-              originalAssistantMsg.dataset.groupId = ''; // 稍后赋值
+        // 找到紧随其后的第一条助手消息并标记
+        let originalAssistantMsg = null;
+        if (originalUserMsg) {
+          let next = originalUserMsg.nextElementSibling;
+          while (next) {
+            if (next.classList.contains('assistant') && !next.dataset.assistantVersion) {
+              originalAssistantMsg = next;
+              originalAssistantMsg.dataset.groupId = '';
               originalAssistantMsg.dataset.assistantVersion = '1';
               break;
             }
-            nextMsg = nextMsg.nextElementSibling;
+            next = next.nextElementSibling;
           }
         }
 
@@ -626,12 +627,8 @@
         let hide = false;
         const allMessages = messageList.querySelectorAll('.message');
         allMessages.forEach(msg => {
-          if (hide) {
-            msg.style.display = 'none';
-          }
-          if (msg === originalUserMsg) {
-            hide = true;
-          }
+          if (hide) msg.style.display = 'none';
+          if (msg === originalUserMsg) hide = true;
         });
 
         allMessages.forEach(msg => {
@@ -964,14 +961,24 @@
             }
           });
 
-          // 确保只显示最新版本，隐藏旧版本（初始状态）
+          // 确保只显示最新版本（使用 switchVersion 统一控制）
           groupMap.forEach((group, groupId) => {
-            const latestVersion = group.maxVersion;
-            group.userMessages.forEach(userMsg => {
-              userMsg.element.style.display = userMsg.version === latestVersion ? '' : 'none';
-            });
-            group.assistantMessages.forEach(asstMsg => {
-              asstMsg.element.style.display = asstMsg.version === latestVersion ? '' : 'none';
+            // 重新计算用户消息中的实际最大版本号
+            const userVersions = group.userMessages.map(m => m.version).filter(v => v != null);
+            if (userVersions.length === 0) return;
+            const maxVersion = Math.max(...userVersions);
+
+            // 显示最新版本
+            switchVersion(groupId, maxVersion, null);
+
+            // 更新导航器显示的实际总版本数
+            const navs = document.querySelectorAll(`.version-nav[data-group-id="${groupId}"]`);
+            navs.forEach(nav => {
+              nav.dataset.totalVersions = userVersions.length;
+              const versionSpan = nav.querySelector('.version-text');
+              if (versionSpan) {
+                versionSpan.textContent = `${maxVersion}/${userVersions.length}`;
+              }
             });
           });
 
