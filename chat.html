@@ -600,37 +600,31 @@
       async function handleEditMessage(msgId, oldContent) {
         const newText = prompt('编辑消息：', oldContent);
         if (!newText || newText.trim() === '' || newText === oldContent) return;
-        
+
         const allMessages = messageList.querySelectorAll('.message');
         let found = false;
 
-        // 稳健标记原始消息并保留在 DOM 中
+        // 1. 标记并隐藏原始消息，但绝对保留在DOM中
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
         if (originalUserMsg) {
-          originalUserMsg.dataset.groupId = ''; // 稍后统一赋值
+          originalUserMsg.dataset.groupId = '';
           originalUserMsg.dataset.version = '1';
-        }
 
-        // 找到紧随其后的第一条助手消息并标记
-        let originalAssistantMsg = null;
-        if (originalUserMsg) {
+          // 标记紧接着的助手消息
           let next = originalUserMsg.nextElementSibling;
           while (next) {
             if (next.classList.contains('assistant') && !next.dataset.assistantVersion) {
-              originalAssistantMsg = next;
-              originalAssistantMsg.dataset.groupId = '';
-              originalAssistantMsg.dataset.assistantVersion = '1';
+              next.dataset.groupId = '';
+              next.dataset.assistantVersion = '1';
               break;
             }
             next = next.nextElementSibling;
           }
-        }
 
-        // 【关键修改】只隐藏助手消息，保留原始用户消息
-        if (originalUserMsg) {
-          let next = originalUserMsg.nextElementSibling;
+          // 隐藏原始用户消息及其后续所有助手消息（遇到新用户消息则停止）
+          originalUserMsg.style.display = 'none';
+          next = originalUserMsg.nextElementSibling;
           while (next) {
-            // 如果遇到另一个用户消息，停止隐藏
             if (next.classList.contains('user')) break;
             next.style.display = 'none';
             next = next.nextElementSibling;
@@ -755,6 +749,25 @@
                   tempUserMsg.dataset.totalVersions = totalVersions;
                   tempUserMsg.dataset.version = currentVersion; 
                   tempUserMsg.dataset.messageId = userMessageId;
+
+                  // ... 在 json.done 块内部 ...
+                  tempUserMsg.dataset.messageId = userMessageId;
+
+                  // 立即为新气泡绑定长按编辑事件
+                  const newBubble = tempUserMsg.querySelector('.bubble');
+                  if (newBubble && userMessageId) {
+                    let pressTimer;
+                    newBubble.addEventListener('touchstart', (e) => {
+                      pressTimer = setTimeout(() => handleEditMessage(userMessageId, newBubble.textContent), 600);
+                    });
+                    newBubble.addEventListener('touchend', () => clearTimeout(pressTimer));
+                    newBubble.addEventListener('touchmove', () => clearTimeout(pressTimer));
+                    newBubble.addEventListener('mousedown', (e) => {
+                      pressTimer = setTimeout(() => handleEditMessage(userMessageId, newBubble.textContent), 600);
+                    });
+                    newBubble.addEventListener('mouseup', () => clearTimeout(pressTimer));
+                    newBubble.addEventListener('mouseleave', () => clearTimeout(pressTimer));
+                  }
 
                   // 为助手消息关联版本信息
                   newAssistantMsg.dataset.groupId = groupId;
