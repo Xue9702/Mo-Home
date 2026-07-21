@@ -600,7 +600,9 @@
       async function handleEditMessage(msgId, oldContent) {
         const newText = prompt('编辑消息：', oldContent);
         if (!newText || newText.trim() === '' || newText === oldContent) return;
+        
         const allMessages = messageList.querySelectorAll('.message');
+        let found = false;
 
         // 稳健标记原始消息并保留在 DOM 中
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
