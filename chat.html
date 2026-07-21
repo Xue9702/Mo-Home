@@ -740,7 +740,9 @@
                   tempUserMsg.removeAttribute('data-temp-edit');
 
                   // 为这条编辑后的用户消息添加版本导航器
-                  addVersionNavigator(tempUserMsg, groupId, currentVersion, totalVersions, msgId);
+                  if (latestUserMsg) {
+                    addVersionNavigator(groupId, latestUserMsg.version, group.userMessages.length);
+                  }
                   tempUserMsg.dataset.groupId = groupId;
                   tempUserMsg.dataset.currentVersion = currentVersion;
                   tempUserMsg.dataset.totalVersions = totalVersions;
@@ -787,15 +789,16 @@
         }
       }
 
-      function addVersionNavigator(msgDiv, groupId, currentVersion, totalVersions, originalMsgId) {
-        const oldNav = msgDiv.querySelector('.version-nav');
-        if (oldNav) oldNav.remove();
+      function addVersionNavigator(groupId, currentVersion, totalVersions) {
+        const navSelector = `.version-nav[data-group-id="${groupId}"]`;
+        const existingNav = document.querySelector(navSelector);
+        if (existingNav) existingNav.remove();
 
         const nav = document.createElement('div');
         nav.className = 'version-nav';
         nav.dataset.groupId = groupId;
         nav.dataset.totalVersions = totalVersions;
-        nav.style.cssText = 'display:flex;align-items:center;gap:4px;margin-top:4px;font-size:12px;color:#888;';
+        nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 0;font-size:13px;color:#777;';
 
         const prevBtn = document.createElement('span');
         prevBtn.className = 'prev-btn';
@@ -807,7 +810,7 @@
         const versionText = document.createElement('span');
         versionText.className = 'version-text';
         versionText.textContent = `${currentVersion}/${totalVersions}`;
-        versionText.style.fontSize = '11px';
+        versionText.style.fontSize = '12px';
         versionText.style.userSelect = 'none';
 
         const nextBtn = document.createElement('span');
@@ -820,31 +823,30 @@
         prevBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           const current = parseInt(versionText.textContent.split('/')[0]);
-          if (current > 1) switchVersion(groupId, current - 1, msgDiv);
+          if (current > 1) switchVersion(groupId, current - 1);
         });
         nextBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           const [cur, total] = versionText.textContent.split('/').map(Number);
-          if (cur < total) switchVersion(groupId, cur + 1, msgDiv);
+          if (cur < total) switchVersion(groupId, cur + 1);
         });
 
         nav.appendChild(prevBtn);
         nav.appendChild(versionText);
         nav.appendChild(nextBtn);
-        msgDiv.appendChild(nav);
 
-        prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
-        nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
+        // 将导航器插入到编辑组的第一条用户消息之前
+        const firstUserMsg = document.querySelector(`.message.user[data-group-id="${groupId}"]`);
+        if (firstUserMsg) {
+          firstUserMsg.parentNode.insertBefore(nav, firstUserMsg);
+        }
       }
 
-      function switchVersion(groupId, targetVersion, triggerMsgDiv) {
-        // 隐藏所有该 group 的用户消息和助手消息
+      function switchVersion(groupId, targetVersion) {
         const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-        console.log('🔍 找到的用户消息:', userMessages.length, '条');
         const assistantMessages = document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`);
 
         userMessages.forEach(msg => {
-          console.log('  - 元素:', msg, '| version:', msg.dataset.version, '| 内容:', msg.querySelector('.bubble')?.textContent?.substring(0, 20));
           msg.style.display = msg.dataset.version === String(targetVersion) ? '' : 'none';
         });
 
@@ -852,19 +854,17 @@
           msg.style.display = msg.dataset.assistantVersion === String(targetVersion) ? '' : 'none';
         });
 
-        // 更新所有版本导航器上的数字
-        const navs = document.querySelectorAll(`.version-nav[data-group-id="${groupId}"]`);
-        navs.forEach(nav => {
+        // 更新独立导航器的文字
+        const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
+        if (nav) {
+          const total = nav.dataset.totalVersions;
           const versionSpan = nav.querySelector('.version-text');
-          if (versionSpan) {
-            versionSpan.textContent = `${targetVersion}/${nav.dataset.totalVersions}`;
-          }
-          // 更新箭头的可用状态（可选，视觉提示）
+          if (versionSpan) versionSpan.textContent = `${targetVersion}/${total}`;
           const prevBtn = nav.querySelector('.prev-btn');
           const nextBtn = nav.querySelector('.next-btn');
           if (prevBtn) prevBtn.style.opacity = targetVersion > 1 ? '1' : '0.4';
-          if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions) ? '1' : '0.4';
-        });
+          if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(total) ? '1' : '0.4';
+        }
       }
 
       function showTyping() {
