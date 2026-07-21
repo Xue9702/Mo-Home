@@ -599,6 +599,69 @@
           }
         }
 
+        function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
+          const msgDiv = document.createElement('div');
+          msgDiv.className = 'message ' + role;
+
+          // 存储消息ID到 dataset，供刷新按钮和版本管理使用
+          if (msgId) {
+            msgDiv.dataset.messageId = msgId;
+          }
+
+          // 思考内容与时间戳并排显示
+          if (thinking) {
+            const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
+            if (thinkingEl) msgDiv.appendChild(thinkingEl);
+          } else {
+            // 无思考内容，时间戳放在气泡下方
+            const ts = document.createElement('div');
+            ts.className = 'timestamp';
+            ts.textContent = timestamp || formatTime();
+            msgDiv.appendChild(ts);
+          }
+
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble';
+          bubble.textContent = content;
+
+          // 为用户消息气泡绑定长按编辑事件
+          if (role === 'user' && msgId) {
+            let pressTimer;
+            bubble.addEventListener('touchstart', (e) => {
+              pressTimer = setTimeout(() => handleEditMessage(msgId, content), 600);
+            });
+            bubble.addEventListener('touchend', () => clearTimeout(pressTimer));
+            bubble.addEventListener('touchmove', () => clearTimeout(pressTimer));
+            bubble.addEventListener('mousedown', (e) => {
+              pressTimer = setTimeout(() => handleEditMessage(msgId, content), 600);
+            });
+            bubble.addEventListener('mouseup', () => clearTimeout(pressTimer));
+            bubble.addEventListener('mouseleave', () => clearTimeout(pressTimer));
+          }
+
+          msgDiv.appendChild(bubble);
+
+          // 为助手消息添加刷新按钮（可选）
+          if (role === 'assistant' && showRefresh) {
+            const refreshBtn = document.createElement('span');
+            refreshBtn.className = 'refresh-btn';
+            refreshBtn.appendChild(createRefreshIcon());
+            refreshBtn.appendChild(document.createTextNode(' 重新生成'));
+            refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
+            refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
+            refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
+            refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
+            refreshBtn.addEventListener('click', function (e) {
+              e.stopPropagation();
+              handleRegenerate(this, msgDiv);
+            });
+            msgDiv.appendChild(refreshBtn);
+          }
+
+          messageList.appendChild(msgDiv);
+          messageList.scrollTop = messageList.scrollHeight;
+        }
+
         // 初始状态设置
         prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
         nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
@@ -901,7 +964,7 @@
       }
 
       // ---------- 加载历史消息 ----------
-     async function loadHistory() {
+      async function loadHistory() {
         try {
           const response = await fetch('/api/history');
           if (!response.ok) return;
@@ -967,7 +1030,7 @@
               asstMsg.element.dataset.assistantVersion = asstMsg.version;
             });
 
-                  // 找到版本号最大的那条用户消息，为其添加导航器
+            // 找到版本号最大的那条用户消息，为其添加导航器
             if (group.userMessages.length > 0) {
               const latestUserMsg = group.userMessages.reduce((prev, curr) =>
                 (curr.version > prev.version) ? curr : prev
