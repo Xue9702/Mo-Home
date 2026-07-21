@@ -521,81 +521,88 @@
 
         return wrapper;
       }
+      function addVersionNavigator(groupId, currentVersion, totalVersions) {
+        // 1. 移除该组已存在的旧导航器
+        const oldNav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
+        if (oldNav) oldNav.remove();
 
-      function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message ' + role;
+        // 2. 创建导航器主体
+        const nav = document.createElement('div');
+        nav.className = 'version-nav';
+        nav.dataset.groupId = groupId;
+        nav.dataset.totalVersions = totalVersions;
+        nav.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0 8px;
+    font-size: 12px;
+    color: #888;
+    width: 100%;
+  `;
 
-        // 存储消息ID到 dataset，供刷新按钮使用
-        if (msgId) {
-          msgDiv.dataset.messageId = msgId;
-        }
+        // 3. 构建导航按钮
+        const prevBtn = document.createElement('span');
+        prevBtn.className = 'prev-btn';
+        prevBtn.style.cursor = 'pointer';
+        prevBtn.appendChild(createChevronLeftIcon());
 
-        // 思考内容放上方
-        if (thinking) {
-          const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
-          if (thinkingEl) msgDiv.appendChild(thinkingEl);
-          // 有思考时，时间戳已内置，无需额外添加
+        const versionText = document.createElement('span');
+        versionText.className = 'version-text';
+        versionText.textContent = `${currentVersion}/${totalVersions}`;
+        versionText.style.userSelect = 'none';
+
+        const nextBtn = document.createElement('span');
+        nextBtn.className = 'next-btn';
+        nextBtn.style.cursor = 'pointer';
+        nextBtn.appendChild(createChevronRightIcon());
+
+        // 4. 绑定切换事件
+        prevBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const cur = parseInt(versionText.textContent.split('/')[0]);
+          if (cur > 1) switchVersion(groupId, cur - 1);
+        });
+        nextBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const [cur, total] = versionText.textContent.split('/').map(Number);
+          if (cur < total) switchVersion(groupId, cur + 1);
+        });
+
+        nav.appendChild(prevBtn);
+        nav.appendChild(versionText);
+        nav.appendChild(nextBtn);
+
+        // 5. 精准插入：找到该组中版本号最小的用户消息，插到它前面
+        const allGroupUserMsgs = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
+        let minVersionMsg = null;
+        let minVersion = Infinity;
+
+        allGroupUserMsgs.forEach(msg => {
+          const ver = parseInt(msg.dataset.version);
+          if (ver < minVersion) {
+            minVersion = ver;
+            minVersionMsg = msg;
+          }
+        });
+
+        if (minVersionMsg) {
+          // 插入到该组第一条消息之前
+          minVersionMsg.parentNode.insertBefore(nav, minVersionMsg);
         } else {
-          // 无思考，仍将时间戳放在气泡下方
-          const ts = document.createElement('div');
-          ts.className = 'timestamp';
-          ts.textContent = timestamp || formatTime();
-          msgDiv.appendChild(ts);
+          // 极端情况：找不到任何用户消息（不应该发生），则添加到消息列表顶部
+          console.warn('未找到编辑组消息，导航器添加至顶部');
+          if (messageList.firstChild) {
+            messageList.insertBefore(nav, messageList.firstChild);
+          } else {
+            messageList.appendChild(nav);
+          }
         }
 
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        bubble.textContent = content;
-
-        // 【新增】为用户消息气泡添加长按编辑功能
-        if (role === 'user' && msgId) {
-          let pressTimer;
-          bubble.addEventListener('touchstart', function (e) {
-            pressTimer = setTimeout(() => handleEditMessage(msgId, content), 600);
-          });
-          bubble.addEventListener('touchend', function (e) {
-            clearTimeout(pressTimer);
-          });
-          bubble.addEventListener('touchmove', function (e) {
-            clearTimeout(pressTimer);
-          });
-          // PC端鼠标长按支持
-          bubble.addEventListener('mousedown', function (e) {
-            pressTimer = setTimeout(() => handleEditMessage(msgId, content), 600);
-          });
-          bubble.addEventListener('mouseup', function (e) {
-            clearTimeout(pressTimer);
-          });
-          bubble.addEventListener('mouseleave', function (e) {
-            clearTimeout(pressTimer);
-          });
-        }
-        // 【新增结束】
-
-        msgDiv.appendChild(bubble);
-
-        // 只有 showRefresh 为 true 时才添加刷新按钮
-        if (role === 'assistant' && showRefresh) {
-          const refreshBtn = document.createElement('span');
-          refreshBtn.className = 'refresh-btn';
-          refreshBtn.appendChild(createRefreshIcon());
-          refreshBtn.appendChild(document.createTextNode(' 重新生成'));
-          refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
-          refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
-          refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
-          refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
-          refreshBtn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            handleRegenerate(this, msgDiv);
-          });
-          msgDiv.appendChild(refreshBtn);
-        }
-
-        messageList.appendChild(msgDiv);
-        messageList.scrollTop = messageList.scrollHeight;
+        // 初始状态设置
+        prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
+        nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
       }
-
       // 处理编辑消息
       async function handleEditMessage(msgId, oldContent) {
         const newText = prompt('编辑消息：', oldContent);
@@ -987,6 +994,8 @@
 
             // 显示最新版本
             switchVersion(groupId, maxVersion, null);
+            // 为该编辑组创建独立的版本导航器
+            addVersionNavigator(groupId, maxVersion, userVersions.length);
           });
 
           // 为没有编辑组的最后一条助手消息添加刷新按钮（保持原有逻辑）
