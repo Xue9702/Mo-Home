@@ -740,14 +740,12 @@
                   tempUserMsg.removeAttribute('data-temp-edit');
 
                   // 为这条编辑后的用户消息添加版本导航器
-                  if (latestUserMsg) {
                     addVersionNavigator(groupId, currentVersion, totalVersions);
-                  }
+
                   tempUserMsg.dataset.groupId = groupId;
                   tempUserMsg.dataset.currentVersion = currentVersion;
                   tempUserMsg.dataset.totalVersions = totalVersions;
                   tempUserMsg.dataset.version = currentVersion; 
-                  tempUserMsg.dataset.messageId = userMessageId;
 
                   // ... 在 json.done 块内部 ...
                   tempUserMsg.dataset.messageId = userMessageId;
