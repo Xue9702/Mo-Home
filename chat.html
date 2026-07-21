@@ -726,7 +726,7 @@
                 }
 
                 if (json.done) {
-                    console.log('🔍 done信号收到，变量状态:', {
+                  console.log('🔍 done信号收到，变量状态:', {
                     userMessageId: userMessageId,
                     groupId: groupId,
                     currentVersion: currentVersion,
@@ -734,23 +734,27 @@
                     tempUserMsgExists: !!tempUserMsg,
                     tempUserMsgInDOM: tempUserMsg ? document.body.contains(tempUserMsg) : false
                   });
-                  // 移除旧的临时标记（如果存在），但保留 tempUserMsg 元素本身
+
+                  // 1. 移除旧的临时标记
                   const oldTemp = document.querySelector('[data-temp-edit="true"]');
                   if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
                   tempUserMsg.removeAttribute('data-temp-edit');
 
-                  // 为这条编辑后的用户消息添加版本导航器
-                    addVersionNavigator(groupId, currentVersion, totalVersions);
+                  // 2. 回填原始消息的 groupId（现在 groupId 已经有正确的值了）
+                  if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
+                  if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
 
+                  // 3. 为新的用户消息和助手消息设置所有必要属性
                   tempUserMsg.dataset.groupId = groupId;
                   tempUserMsg.dataset.currentVersion = currentVersion;
                   tempUserMsg.dataset.totalVersions = totalVersions;
-                  tempUserMsg.dataset.version = currentVersion; 
-
-                  // ... 在 json.done 块内部 ...
+                  tempUserMsg.dataset.version = currentVersion;
                   tempUserMsg.dataset.messageId = userMessageId;
 
-                  // 立即为新气泡绑定长按编辑事件
+                  newAssistantMsg.dataset.groupId = groupId;
+                  newAssistantMsg.dataset.assistantVersion = currentVersion;
+
+                  // 4. 为新气泡绑定长按编辑事件
                   const newBubble = tempUserMsg.querySelector('.bubble');
                   if (newBubble && userMessageId) {
                     let pressTimer;
@@ -766,9 +770,8 @@
                     newBubble.addEventListener('mouseleave', () => clearTimeout(pressTimer));
                   }
 
-                  // 为助手消息关联版本信息
-                  newAssistantMsg.dataset.groupId = groupId;
-                  newAssistantMsg.dataset.assistantVersion = currentVersion;
+                  // 5. 【最后一步】在所有属性就绪后，创建独立的版本导航器
+                  addVersionNavigator(groupId, currentVersion, totalVersions);
                 }
 
                 if (json.error) {
