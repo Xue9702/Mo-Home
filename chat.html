@@ -21,7 +21,6 @@
       overflow: hidden;
     }
 
-    /* 顶栏 */
     .header {
       background-color: #ffffff;
       padding: 16px 20px 12px;
@@ -35,7 +34,6 @@
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
     }
 
-    /* 消息列表容器 */
     .message-list {
       flex: 1;
       overflow-y: auto;
@@ -46,7 +44,6 @@
       background-color: #f5f5f5;
     }
 
-    /* 消息气泡容器，区分左右 */
     .message {
       display: flex;
       flex-direction: column;
@@ -64,7 +61,6 @@
       align-items: flex-start;
     }
 
-    /* 气泡本身 */
     .bubble {
       padding: 10px 14px;
       border-radius: 18px;
@@ -89,7 +85,6 @@
       border-bottom-left-radius: 4px;
     }
 
-    /* 思考内容（折叠） */
     .thinking-toggle {
       font-size: 12px;
       color: #999;
@@ -131,7 +126,6 @@
       padding: 0 4px;
     }
 
-    /* 底部输入区 */
     .input-area {
       flex-shrink: 0;
       background-color: #ffffff;
@@ -193,7 +187,6 @@
       cursor: not-allowed;
     }
 
-    /* 加载指示器 */
     .typing-indicator {
       font-size: 14px;
       color: #999;
@@ -240,7 +233,6 @@
       }
     }
 
-    /* 滚动条美化 */
     .message-list::-webkit-scrollbar {
       width: 4px;
     }
@@ -254,7 +246,6 @@
       border-radius: 4px;
     }
 
-    /* 密码锁相关样式 */
     #loginBox {
       position: fixed;
       top: 0;
@@ -342,15 +333,44 @@
       flex-direction: column;
       height: 100vh;
     }
+
+    .version-nav {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0 8px;
+      font-size: 12px;
+      color: #888;
+      width: 100%;
+    }
+
+    .version-nav span {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+    }
+
+    .refresh-btn {
+      font-size: 12px;
+      color: #999;
+      cursor: pointer;
+      margin-top: 4px;
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: #f0f0f0;
+      transition: background 0.15s;
+      user-select: none;
+    }
+
+    .refresh-btn:hover {
+      background: #e5e5e5;
+    }
   </style>
-
   <link rel="manifest" href="/manifest.json">
-
 </head>
 
 <body>
-
-  <!-- 密码锁 -->
   <div id="loginBox">
     <div class="login-card">
       <div class="login-title">💗 Mo-Home</div>
@@ -361,7 +381,6 @@
     </div>
   </div>
 
-  <!-- 聊天主界面 -->
   <div id="chatApp">
     <div class="header">💗 Mo-Home · 与默</div>
     <div class="message-list" id="messageList"></div>
@@ -372,1043 +391,333 @@
   </div>
 
   <script>
-
-    function createRefreshIcon() {
-      const svgNS = 'http://www.w3.org/2000/svg';
-      const svg = document.createElementNS(svgNS, 'svg');
-
-      // 外观设置，与官方源码完全对齐
-      svg.setAttribute('width', '14');
-      svg.setAttribute('height', '14');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('fill', 'none');
-      svg.setAttribute('stroke', 'currentColor');
-      svg.setAttribute('stroke-width', '2');
-      svg.setAttribute('stroke-linecap', 'round');
-      svg.setAttribute('stroke-linejoin', 'round');
-      svg.style.verticalAlign = 'middle';
-      svg.style.marginRight = '3px';
-
-      // 官方4条精准路径
-      const paths = [
-        'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8',
-        'M21 3v5h-5',
-        'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16',
-        'M8 16H3v5'
-      ];
-
-      paths.forEach(d => {
-        const path = document.createElementNS(svgNS, 'path');
-        path.setAttribute('d', d);
-        svg.appendChild(path);
-      });
-
-      return svg;
-    }
-
-    function createChevronLeftIcon() {
-      const svgNS = 'http://www.w3.org/2000/svg';
-      const svg = document.createElementNS(svgNS, 'svg');
-      svg.setAttribute('width', '12');
-      svg.setAttribute('height', '12');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('fill', 'none');
-      svg.setAttribute('stroke', 'currentColor');
-      svg.setAttribute('stroke-width', '2');
-      svg.setAttribute('stroke-linecap', 'round');
-      svg.setAttribute('stroke-linejoin', 'round');
-      svg.style.verticalAlign = 'middle';
-      const path = document.createElementNS(svgNS, 'path');
-      path.setAttribute('d', 'm15 18-6-6 6-6');
-      svg.appendChild(path);
-      return svg;
-    }
-
-    function createChevronRightIcon() {
-      const svgNS = 'http://www.w3.org/2000/svg';
-      const svg = document.createElementNS(svgNS, 'svg');
-      svg.setAttribute('width', '12');
-      svg.setAttribute('height', '12');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('fill', 'none');
-      svg.setAttribute('stroke', 'currentColor');
-      svg.setAttribute('stroke-width', '2');
-      svg.setAttribute('stroke-linecap', 'round');
-      svg.setAttribute('stroke-linejoin', 'round');
-      svg.style.verticalAlign = 'middle';
-      const path = document.createElementNS(svgNS, 'path');
-      path.setAttribute('d', 'm9 18 6-6-6-6');
-      svg.appendChild(path);
-      return svg;
-    }
-
     (function () {
-      // ---------- DOM 元素 ----------
+      // ---------- DOM ----------
       const loginBox = document.getElementById('loginBox');
       const passwordInput = document.getElementById('passwordInput');
       const unlockBtn = document.getElementById('unlockBtn');
       const loginError = document.getElementById('loginError');
       const chatApp = document.getElementById('chatApp');
-
       const messageList = document.getElementById('messageList');
       const userInput = document.getElementById('userInput');
       const sendBtn = document.getElementById('sendBtn');
 
-      // ---------- 状态 ----------
       let isLoading = false;
       const CORRECT_PASSWORD = '9702520x';
 
       // ---------- 工具函数 ----------
       function formatTime(isoString = null) {
         let date;
-        if (isoString) {
-          date = new Date(isoString);
-          // 容错：若解析失败，使用当前时间
-          if (isNaN(date.getTime())) date = new Date();
-        } else {
-          date = new Date();
-        }
-
-        const month = date.getMonth() + 1; // getMonth() 返回 0-11
+        if (isoString) { date = new Date(isoString); if (isNaN(date.getTime())) date = new Date(); }
+        else { date = new Date(); }
+        const month = date.getMonth() + 1;
         const day = date.getDate();
         const hours = String(date.getHours()).padStart(2, '0');
         const minutes = String(date.getMinutes()).padStart(2, '0');
         const seconds = String(date.getSeconds()).padStart(2, '0');
-
         return `${month}-${day} ${hours}:${minutes}:${seconds}`;
       }
 
-      // 修改后的 createThinkingElement
+      function createRefreshIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        svg.style.verticalAlign = 'middle'; svg.style.marginRight = '3px';
+        const paths = ['M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16', 'M8 16H3v5'];
+        paths.forEach(d => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', d); svg.appendChild(p); });
+        return svg;
+      }
+
+      function createChevronLeftIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm15 18-6-6 6-6');
+        svg.appendChild(p); return svg;
+      }
+
+      function createChevronRightIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm9 18 6-6-6-6');
+        svg.appendChild(p); return svg;
+      }
+
       function createThinkingElement(thinkingText, timestamp = null) {
         if (!thinkingText || thinkingText.trim() === '') return null;
-
-        const wrapper = document.createElement('div');
-        wrapper.style.marginTop = '6px';
-
-        // --- 新增：横向并排容器 ---
-        const row = document.createElement('div');
-        row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.gap = '6px';
-
-        const toggle = document.createElement('span');
-        toggle.className = 'thinking-toggle';
-        toggle.textContent = '💭 思考';
+        const wrapper = document.createElement('div'); wrapper.style.marginTop = '6px';
+        const row = document.createElement('div'); row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.gap = '6px';
+        const toggle = document.createElement('span'); toggle.className = 'thinking-toggle'; toggle.textContent = '💭 思考';
         row.appendChild(toggle);
-
-        // 如果有时间戳，追加到同一行
         if (timestamp) {
-          const tsSpan = document.createElement('span');
-          tsSpan.className = 'timestamp';
-          tsSpan.style.marginTop = '0'; // 覆盖原有 margin
-          tsSpan.style.padding = '0';
-          tsSpan.textContent = timestamp;
+          const tsSpan = document.createElement('span'); tsSpan.className = 'timestamp';
+          tsSpan.style.marginTop = '0'; tsSpan.style.padding = '0'; tsSpan.textContent = timestamp;
           row.appendChild(tsSpan);
         }
         wrapper.appendChild(row);
-        // --- 并排容器结束 ---
-
-        const content = document.createElement('div');
-        content.className = 'thinking-content';
-        content.textContent = thinkingText.trim();
+        const content = document.createElement('div'); content.className = 'thinking-content'; content.textContent = thinkingText.trim();
         wrapper.appendChild(content);
-
-        toggle.addEventListener('click', function (e) {
-          e.stopPropagation();
-          content.classList.toggle('open');
-          toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考';
-        });
-
+        toggle.addEventListener('click', (e) => { e.stopPropagation(); content.classList.toggle('open'); toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考'; });
         return wrapper;
       }
+
+      function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
+        const msgDiv = document.createElement('div'); msgDiv.className = 'message ' + role;
+        if (msgId) msgDiv.dataset.messageId = msgId;
+        if (thinking) { const el = createThinkingElement(thinking, timestamp || formatTime()); if (el) msgDiv.appendChild(el); }
+        else { const ts = document.createElement('div'); ts.className = 'timestamp'; ts.textContent = timestamp || formatTime(); msgDiv.appendChild(ts); }
+        const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.textContent = content;
+        if (role === 'user' && msgId) {
+          let timer; bubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
+          bubble.addEventListener('touchend', () => clearTimeout(timer)); bubble.addEventListener('touchmove', () => clearTimeout(timer));
+          bubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
+          bubble.addEventListener('mouseup', () => clearTimeout(timer)); bubble.addEventListener('mouseleave', () => clearTimeout(timer));
+        }
+        msgDiv.appendChild(bubble);
+        if (role === 'assistant' && showRefresh) {
+          const btn = document.createElement('span'); btn.className = 'refresh-btn';
+          btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成'));
+          btn.dataset.messageId = msgId || 'temp-' + Date.now();
+          btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, msgDiv); });
+          msgDiv.appendChild(btn);
+        }
+        messageList.appendChild(msgDiv); messageList.scrollTop = messageList.scrollHeight;
+      }
+
       function addVersionNavigator(groupId, currentVersion, totalVersions) {
-        // 1. 移除该组已存在的旧导航器
-        const oldNav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
-        if (oldNav) oldNav.remove();
-
-        // 2. 创建导航器主体
-        const nav = document.createElement('div');
-        nav.className = 'version-nav';
-        nav.dataset.groupId = groupId;
-        nav.dataset.totalVersions = totalVersions;
-        nav.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 0 8px;
-    font-size: 12px;
-    color: #888;
-    width: 100%;
-  `;
-
-        // 3. 构建导航按钮
-        const prevBtn = document.createElement('span');
-        prevBtn.className = 'prev-btn';
-        prevBtn.style.cursor = 'pointer';
-        prevBtn.appendChild(createChevronLeftIcon());
-
-        const versionText = document.createElement('span');
-        versionText.className = 'version-text';
-        versionText.textContent = `${currentVersion}/${totalVersions}`;
-        versionText.style.userSelect = 'none';
-
-        const nextBtn = document.createElement('span');
-        nextBtn.className = 'next-btn';
-        nextBtn.style.cursor = 'pointer';
-        nextBtn.appendChild(createChevronRightIcon());
-
-        // 4. 绑定切换事件
-        prevBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const cur = parseInt(versionText.textContent.split('/')[0]);
-          if (cur > 1) switchVersion(groupId, cur - 1);
-        });
-        nextBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const [cur, total] = versionText.textContent.split('/').map(Number);
-          if (cur < total) switchVersion(groupId, cur + 1);
-        });
-
-        nav.appendChild(prevBtn);
-        nav.appendChild(versionText);
-        nav.appendChild(nextBtn);
-
-        // 5. 精准插入：找到该组中版本号最小的用户消息，插到它前面
-        const allGroupUserMsgs = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-        let minVersionMsg = null;
-        let minVersion = Infinity;
-
-        allGroupUserMsgs.forEach(msg => {
-          const ver = parseInt(msg.dataset.version);
-          if (ver < minVersion) {
-            minVersion = ver;
-            minVersionMsg = msg;
-          }
-        });
-
-        if (minVersionMsg) {
-          // 插入到该组第一条消息之前
-          minVersionMsg.parentNode.insertBefore(nav, minVersionMsg);
-        } else {
-          // 极端情况：找不到任何用户消息（不应该发生），则添加到消息列表顶部
-          console.warn('未找到编辑组消息，导航器添加至顶部');
-          if (messageList.firstChild) {
-            messageList.insertBefore(nav, messageList.firstChild);
-          } else {
-            messageList.appendChild(nav);
-          }
-        }
-
-        function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
-          const msgDiv = document.createElement('div');
-          msgDiv.className = 'message ' + role;
-
-          // 存储消息ID到 dataset，供刷新按钮和版本管理使用
-          if (msgId) {
-            msgDiv.dataset.messageId = msgId;
-          }
-
-          // 思考内容与时间戳并排显示
-          if (thinking) {
-            const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
-            if (thinkingEl) msgDiv.appendChild(thinkingEl);
-          } else {
-            // 无思考内容，时间戳放在气泡下方
-            const ts = document.createElement('div');
-            ts.className = 'timestamp';
-            ts.textContent = timestamp || formatTime();
-            msgDiv.appendChild(ts);
-          }
-
-          const bubble = document.createElement('div');
-          bubble.className = 'bubble';
-          bubble.textContent = content;
-
-          // 为用户消息气泡绑定长按编辑事件
-          if (role === 'user' && msgId) {
-            let pressTimer;
-            bubble.addEventListener('touchstart', (e) => {
-              pressTimer = setTimeout(() => handleEditMessage(msgId, content), 600);
-            });
-            bubble.addEventListener('touchend', () => clearTimeout(pressTimer));
-            bubble.addEventListener('touchmove', () => clearTimeout(pressTimer));
-            bubble.addEventListener('mousedown', (e) => {
-              pressTimer = setTimeout(() => handleEditMessage(msgId, content), 600);
-            });
-            bubble.addEventListener('mouseup', () => clearTimeout(pressTimer));
-            bubble.addEventListener('mouseleave', () => clearTimeout(pressTimer));
-          }
-
-          msgDiv.appendChild(bubble);
-
-          // 为助手消息添加刷新按钮（可选）
-          if (role === 'assistant' && showRefresh) {
-            const refreshBtn = document.createElement('span');
-            refreshBtn.className = 'refresh-btn';
-            refreshBtn.appendChild(createRefreshIcon());
-            refreshBtn.appendChild(document.createTextNode(' 重新生成'));
-            refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
-            refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
-            refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
-            refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
-            refreshBtn.addEventListener('click', function (e) {
-              e.stopPropagation();
-              handleRegenerate(this, msgDiv);
-            });
-            msgDiv.appendChild(refreshBtn);
-          }
-
-          messageList.appendChild(msgDiv);
-          messageList.scrollTop = messageList.scrollHeight;
-        }
-
-        // 初始状态设置
+        const old = document.querySelector(`.version-nav[data-group-id="${groupId}"]`); if (old) old.remove();
+        const nav = document.createElement('div'); nav.className = 'version-nav'; nav.dataset.groupId = groupId; nav.dataset.totalVersions = totalVersions;
+        const prevBtn = document.createElement('span'); prevBtn.appendChild(createChevronLeftIcon());
+        const text = document.createElement('span'); text.className = 'version-text'; text.textContent = `${currentVersion}/${totalVersions}`; text.style.userSelect = 'none';
+        const nextBtn = document.createElement('span'); nextBtn.appendChild(createChevronRightIcon());
+        prevBtn.addEventListener('click', e => { e.stopPropagation(); const cur = parseInt(text.textContent.split('/')[0]); if (cur > 1) switchVersion(groupId, cur - 1); });
+        nextBtn.addEventListener('click', e => { e.stopPropagation(); const [cur, tot] = text.textContent.split('/').map(Number); if (cur < tot) switchVersion(groupId, cur + 1); });
+        nav.appendChild(prevBtn); nav.appendChild(text); nav.appendChild(nextBtn);
+        const allUser = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
+        let first = null, minVer = Infinity;
+        allUser.forEach(m => { const v = parseInt(m.dataset.version); if (v < minVer) { minVer = v; first = m; } });
+        if (first) first.parentNode.insertBefore(nav, first);
+        else messageList.insertBefore(nav, messageList.firstChild);
         prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
         nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
       }
-      // 处理编辑消息
+
+      function switchVersion(groupId, targetVersion) {
+        document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`).forEach(m => m.style.display = m.dataset.version === String(targetVersion) ? '' : 'none');
+        document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`).forEach(m => m.style.display = m.dataset.assistantVersion === String(targetVersion) ? '' : 'none');
+        const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
+        if (nav) {
+          const text = nav.querySelector('.version-text'); if (text) text.textContent = `${targetVersion}/${nav.dataset.totalVersions}`;
+          const prev = nav.querySelector('span:first-child'); const next = nav.querySelector('span:last-child');
+          if (prev) prev.style.opacity = targetVersion > 1 ? '1' : '0.4';
+          if (next) next.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions) ? '1' : '0.4';
+        }
+      }
+
       async function handleEditMessage(msgId, oldContent) {
         const newText = prompt('编辑消息：', oldContent);
         if (!newText || newText.trim() === '' || newText === oldContent) return;
-
-        const allMessages = messageList.querySelectorAll('.message');
-        let found = false;
-        let originalAssistantMsg = null;
-
-        // 1. 稳健标记原始消息，绝对不在此时删除任何元素
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
+        let originalAssistantMsg = null;
         if (originalUserMsg) {
-          // 强制设置版本1属性，防止丢失
-          originalUserMsg.dataset.groupId = '';
-          originalUserMsg.dataset.version = '1';
-
-          // 标记紧接着的助手消息
+          originalUserMsg.dataset.groupId = ''; originalUserMsg.dataset.version = '1';
           let next = originalUserMsg.nextElementSibling;
           while (next) {
-            if (next.classList.contains('assistant') && !next.dataset.assistantVersion) {
-              next.dataset.groupId = '';
-              next.dataset.assistantVersion = '1';
-              break;
-            }
+            if (next.classList.contains('assistant') && !next.dataset.assistantVersion) { originalAssistantMsg = next; originalAssistantMsg.dataset.groupId = ''; originalAssistantMsg.dataset.assistantVersion = '1'; break; }
             next = next.nextElementSibling;
           }
-
-          // 隐藏原始消息及其后续所有助手消息，直到下一个用户消息
           originalUserMsg.style.display = 'none';
           next = originalUserMsg.nextElementSibling;
-          while (next) {
-            if (next.classList.contains('user')) break; // 遇到新用户消息就停止
-            next.style.display = 'none';
-            next = next.nextElementSibling;
-          }
+          while (next) { if (next.classList.contains('user')) break; next.style.display = 'none'; next = next.nextElementSibling; }
         }
-
-        // 添加临时用户消息气泡（新版本）
-        const tempUserMsg = document.createElement('div');
-        tempUserMsg.className = 'message user';
-        tempUserMsg.dataset.tempEdit = 'true';
-        const tempBubble = document.createElement('div');
-        tempBubble.className = 'bubble';
-        tempBubble.textContent = newText;
-        tempUserMsg.appendChild(tempBubble);
-        messageList.appendChild(tempUserMsg);
-        messageList.scrollTop = messageList.scrollHeight;
-
-        // 准备接收流式回复
+        const tempUserMsg = document.createElement('div'); tempUserMsg.className = 'message user'; tempUserMsg.dataset.tempEdit = 'true';
+        const tempBubble = document.createElement('div'); tempBubble.className = 'bubble'; tempBubble.textContent = newText;
+        tempUserMsg.appendChild(tempBubble); messageList.appendChild(tempUserMsg); messageList.scrollTop = messageList.scrollHeight;
         showTyping();
-
         try {
-          const response = await fetch('/api/edit-message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageId: msgId, newContent: newText })
-          });
-
+          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText }) });
           if (!response.ok) throw new Error('请求失败');
-
           removeTyping();
-
-          // ===== 将变量声明全部提前到这里 =====
-          let userMessageId = null;
-          let groupId = null;
-          let currentVersion = 1;
-          let totalVersions = 1;
-          let currentAssistantBubble = null;
-          let currentThinkingContainer = null;
-          let fullReply = '';
-          let fullThinking = '';
-          // ===== 声明结束 =====
-
-          // 填充原始消息的 groupId（现在 groupId 已经声明，虽然值还是 null，但不会报错）
+          let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
           if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
           if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder('utf-8');
-          let buffer = '';
-
-          // 创建新助手消息容器
-          const newAssistantMsg = document.createElement('div');
-          newAssistantMsg.className = 'message assistant';
-          const newBubble = document.createElement('div');
-          newBubble.className = 'bubble';
-          newAssistantMsg.appendChild(newBubble);
-          messageList.appendChild(newAssistantMsg);
-          currentAssistantBubble = newBubble;
-
+          const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
+          const newAssistantMsg = document.createElement('div'); newAssistantMsg.className = 'message assistant';
+          const newBubble = document.createElement('div'); newBubble.className = 'bubble'; newAssistantMsg.appendChild(newBubble);
+          messageList.appendChild(newAssistantMsg); currentAssistantBubble = newBubble;
           while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
+            const { done, value } = await reader.read(); if (done) break;
+            buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
             for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
+              const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
               const payload = trimmed.slice(6);
               try {
                 const json = JSON.parse(payload);
-
-                if (json.userMessageId) {
-                  userMessageId = json.userMessageId;
-                  groupId = json.groupId;
-                  currentVersion = json.currentVersion;
-                  totalVersions = json.totalVersions;
-                }
-
-                if (json.thinking) {
-                  fullThinking += json.thinking;
-                  if (!currentThinkingContainer) {
-                    currentThinkingContainer = document.createElement('div');
-                    currentThinkingContainer.className = 'thinking-content';
-                    currentThinkingContainer.style.display = 'block';
-                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
-                  }
-                  currentThinkingContainer.textContent = fullThinking;
-                }
-
-                if (json.content) {
-                  fullReply += json.content;
-                  currentAssistantBubble.textContent = fullReply;
-                }
-
+                if (json.userMessageId) { userMessageId = json.userMessageId; groupId = json.groupId; currentVersion = json.currentVersion; totalVersions = json.totalVersions; }
+                if (json.thinking) { fullThinking += json.thinking; if (!currentThinkingContainer) { currentThinkingContainer = document.createElement('div'); currentThinkingContainer.className = 'thinking-content'; currentThinkingContainer.style.display = 'block'; newAssistantMsg.insertBefore(currentThinkingContainer, newBubble); } currentThinkingContainer.textContent = fullThinking; }
+                if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
                 if (json.done) {
-                  console.log('🔍 done信号收到，变量状态:', {
-                    userMessageId: userMessageId,
-                    groupId: groupId,
-                    currentVersion: currentVersion,
-                    totalVersions: totalVersions,
-                    tempUserMsgExists: !!tempUserMsg,
-                    tempUserMsgInDOM: tempUserMsg ? document.body.contains(tempUserMsg) : false
-                  });
-
-                  // 1. 移除旧的临时标记
-                  const oldTemp = document.querySelector('[data-temp-edit="true"]');
-                  if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
+                  const oldTemp = document.querySelector('[data-temp-edit="true"]'); if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
                   tempUserMsg.removeAttribute('data-temp-edit');
-
-                  // 2. 回填原始消息的 groupId（现在 groupId 已经有正确的值了）
                   if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
                   if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
-
-                  // 3. 为新的用户消息和助手消息设置所有必要属性
-                  tempUserMsg.dataset.groupId = groupId;
-                  tempUserMsg.dataset.currentVersion = currentVersion;
-                  tempUserMsg.dataset.totalVersions = totalVersions;
-                  tempUserMsg.dataset.version = currentVersion;
-                  tempUserMsg.dataset.messageId = userMessageId;
-
-                  newAssistantMsg.dataset.groupId = groupId;
-                  newAssistantMsg.dataset.assistantVersion = currentVersion;
-
-                  // 4. 为新气泡绑定长按编辑事件
-                  const newBubble = tempUserMsg.querySelector('.bubble');
-                  if (newBubble && userMessageId) {
-                    let pressTimer;
-                    newBubble.addEventListener('touchstart', (e) => {
-                      pressTimer = setTimeout(() => handleEditMessage(userMessageId, newBubble.textContent), 600);
-                    });
-                    newBubble.addEventListener('touchend', () => clearTimeout(pressTimer));
-                    newBubble.addEventListener('touchmove', () => clearTimeout(pressTimer));
-                    newBubble.addEventListener('mousedown', (e) => {
-                      pressTimer = setTimeout(() => handleEditMessage(userMessageId, newBubble.textContent), 600);
-                    });
-                    newBubble.addEventListener('mouseup', () => clearTimeout(pressTimer));
-                    newBubble.addEventListener('mouseleave', () => clearTimeout(pressTimer));
+                  tempUserMsg.dataset.groupId = groupId; tempUserMsg.dataset.version = currentVersion; tempUserMsg.dataset.messageId = userMessageId;
+                  newAssistantMsg.dataset.groupId = groupId; newAssistantMsg.dataset.assistantVersion = currentVersion;
+                  const newBub = tempUserMsg.querySelector('.bubble');
+                  if (newBub && userMessageId) {
+                    let t; newBub.addEventListener('touchstart', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
+                    newBub.addEventListener('touchend', () => clearTimeout(t)); newBub.addEventListener('touchmove', () => clearTimeout(t));
+                    newBub.addEventListener('mousedown', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
+                    newBub.addEventListener('mouseup', () => clearTimeout(t)); newBub.addEventListener('mouseleave', () => clearTimeout(t));
                   }
-
-                  // 5. 【最后一步】在所有属性就绪后，创建独立的版本导航器
                   addVersionNavigator(groupId, currentVersion, totalVersions);
                 }
-
-                if (json.error) {
-                  throw new Error(json.error);
-                }
-              } catch (e) {
-                console.warn('解析SSE失败:', e);
-              }
+                if (json.error) throw new Error(json.error);
+              } catch (e) { console.warn('解析SSE失败:', e); }
             }
           }
-        } catch (err) {
-          console.error('编辑发送失败:', err);
-          const tempEdit = document.querySelector('[data-temp-edit="true"]');
-          if (tempEdit) tempEdit.remove();
-          alert('发送失败：' + err.message);
-        }
-      }
-
-      function addVersionNavigator(groupId, currentVersion, totalVersions) {
-        const navSelector = `.version-nav[data-group-id="${groupId}"]`;
-        const existingNav = document.querySelector(navSelector);
-        if (existingNav) existingNav.remove();
-
-        const nav = document.createElement('div');
-        nav.className = 'version-nav';
-        nav.dataset.groupId = groupId;
-        nav.dataset.totalVersions = totalVersions;
-        nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 0;font-size:13px;color:#777;';
-
-        const prevBtn = document.createElement('span');
-        prevBtn.className = 'prev-btn';
-        prevBtn.style.cursor = 'pointer';
-        prevBtn.style.display = 'flex';
-        prevBtn.style.alignItems = 'center';
-        prevBtn.appendChild(createChevronLeftIcon());
-
-        const versionText = document.createElement('span');
-        versionText.className = 'version-text';
-        versionText.textContent = `${currentVersion}/${totalVersions}`;
-        versionText.style.fontSize = '12px';
-        versionText.style.userSelect = 'none';
-
-        const nextBtn = document.createElement('span');
-        nextBtn.className = 'next-btn';
-        nextBtn.style.cursor = 'pointer';
-        nextBtn.style.display = 'flex';
-        nextBtn.style.alignItems = 'center';
-        nextBtn.appendChild(createChevronRightIcon());
-
-        prevBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const current = parseInt(versionText.textContent.split('/')[0]);
-          if (current > 1) switchVersion(groupId, current - 1);
-        });
-        nextBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const [cur, total] = versionText.textContent.split('/').map(Number);
-          if (cur < total) switchVersion(groupId, cur + 1);
-        });
-
-        nav.appendChild(prevBtn);
-        nav.appendChild(versionText);
-        nav.appendChild(nextBtn);
-
-        // 将导航器插入到编辑组的第一条用户消息之前
-        const firstUserMsg = document.querySelector(`.message.user[data-group-id="${groupId}"]`);
-        if (firstUserMsg) {
-          firstUserMsg.parentNode.insertBefore(nav, firstUserMsg);
-        }
-      }
-
-      function switchVersion(groupId, targetVersion) {
-        const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-        const assistantMessages = document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`);
-
-        userMessages.forEach(msg => {
-          msg.style.display = msg.dataset.version === String(targetVersion) ? '' : 'none';
-        });
-
-        assistantMessages.forEach(msg => {
-          msg.style.display = msg.dataset.assistantVersion === String(targetVersion) ? '' : 'none';
-        });
-
-        // 更新独立导航器的文字
-        const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
-        if (nav) {
-          const total = nav.dataset.totalVersions;
-          const versionSpan = nav.querySelector('.version-text');
-          if (versionSpan) versionSpan.textContent = `${targetVersion}/${total}`;
-          const prevBtn = nav.querySelector('.prev-btn');
-          const nextBtn = nav.querySelector('.next-btn');
-          if (prevBtn) prevBtn.style.opacity = targetVersion > 1 ? '1' : '0.4';
-          if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(total) ? '1' : '0.4';
-        }
+        } catch (err) { console.error('编辑发送失败:', err); document.querySelector('[data-temp-edit="true"]')?.remove(); removeTyping(); alert('发送失败：' + err.message); }
       }
 
       function showTyping() {
-        const div = document.createElement('div');
-        div.className = 'message assistant';
-        div.id = 'typingIndicator';
-
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        bubble.style.backgroundColor = '#f0f0f0';
-        bubble.style.color = '#888';
-
-        const indicator = document.createElement('div');
-        indicator.className = 'typing-indicator';
-        indicator.innerHTML = '<span>●</span><span>●</span><span>●</span>';
-        bubble.appendChild(indicator);
-        div.appendChild(bubble);
-
-        messageList.appendChild(div);
-        messageList.scrollTop = messageList.scrollHeight;
+        const div = document.createElement('div'); div.className = 'message assistant'; div.id = 'typingIndicator';
+        const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.style.backgroundColor = '#f0f0f0'; bubble.style.color = '#888';
+        const ind = document.createElement('div'); ind.className = 'typing-indicator'; ind.innerHTML = '<span>●</span><span>●</span><span>●</span>';
+        bubble.appendChild(ind); div.appendChild(bubble); messageList.appendChild(div); messageList.scrollTop = messageList.scrollHeight;
       }
 
-      function removeTyping() {
-        const el = document.getElementById('typingIndicator');
-        if (el) el.remove();
-      }
+      function removeTyping() { const el = document.getElementById('typingIndicator'); if (el) el.remove(); }
 
-      // ---------- 加载历史消息 ----------
       async function loadHistory() {
         try {
-          const response = await fetch('/api/history');
-          if (!response.ok) return;
+          const response = await fetch('/api/history'); if (!response.ok) return;
           const data = await response.json();
-          if (!data.messages || data.messages.length === 0) {
-            addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime());
-            return;
-          }
-
-          // 用于记录每个编辑组的最新版本和消息元素
+          if (!data.messages || data.messages.length === 0) { addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime()); return; }
           const groupMap = new Map();
-
           data.messages.forEach(msg => {
             const role = msg.role === 'user' ? 'user' : 'assistant';
-            const thinking = msg.reasoning_content || null;
-            const time = formatTime(msg.created_at);
-
-            // 调用 addMessage 创建元素
-            addMessage(role, msg.content, thinking, time, msg.id);
-
-            // 如果消息属于某个编辑组，收集信息
+            addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id);
             if (msg.group_id) {
-              if (!groupMap.has(msg.group_id)) {
-                groupMap.set(msg.group_id, {
-                  userMessages: [],
-                  assistantMessages: [],
-                  maxVersion: 0
-                });
-              }
-              const group = groupMap.get(msg.group_id);
-              // 获取刚刚添加的消息元素（就是 messageList 的最后一个子元素）
-              const msgElement = messageList.lastElementChild;
-
-              if (role === 'user') {
-                group.userMessages.push({
-                  element: msgElement,
-                  version: msg.version_number || 1,
-                  messageId: msg.id
-                });
-              } else {
-                group.assistantMessages.push({
-                  element: msgElement,
-                  version: msg.version_number || 1
-                });
-              }
-
-              if (msg.version_number && msg.version_number > group.maxVersion) {
-                group.maxVersion = msg.version_number;
-              }
+              if (!groupMap.has(msg.group_id)) groupMap.set(msg.group_id, { userMessages: [], assistantMessages: [], maxVersion: 0 });
+              const group = groupMap.get(msg.group_id); const el = messageList.lastElementChild;
+              if (role === 'user') group.userMessages.push({ element: el, version: msg.version_number || 1, messageId: msg.id });
+              else group.assistantMessages.push({ element: el, version: msg.version_number || 1 });
+              if (msg.version_number && msg.version_number > group.maxVersion) group.maxVersion = msg.version_number;
             }
           });
-
-          // 为每个编辑组补全属性并添加版本导航器
           groupMap.forEach((group, groupId) => {
-            // 给所有用户消息设置属性
-            group.userMessages.forEach(userMsg => {
-              userMsg.element.dataset.groupId = groupId;
-              userMsg.element.dataset.version = userMsg.version;
-            });
-            // 给所有助手消息设置属性
-            group.assistantMessages.forEach(asstMsg => {
-              asstMsg.element.dataset.groupId = groupId;
-              asstMsg.element.dataset.assistantVersion = asstMsg.version;
-            });
-
-            // 找到版本号最大的那条用户消息，为其添加导航器
-            if (group.userMessages.length > 0) {
-              const latestUserMsg = group.userMessages.reduce((prev, curr) =>
-                (curr.version > prev.version) ? curr : prev
-              );
-
-              if (latestUserMsg) {
-                addVersionNavigator(
-                  latestUserMsg.element,
-                  groupId,
-                  latestUserMsg.version,
-                  group.maxVersion,
-                  latestUserMsg.messageId
-                );
-              }
-            }
+            group.userMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.version = m.version; });
+            group.assistantMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.assistantVersion = m.version; });
+            const versions = group.userMessages.map(m => m.version).filter(v => v != null);
+            const maxVer = Math.max(...versions);
+            switchVersion(groupId, maxVer);
+            addVersionNavigator(groupId, maxVer, versions.length);
           });
-
-          // 确保只显示最新版本（使用 switchVersion 统一控制）
-          groupMap.forEach((group, groupId) => {
-            // 重新计算用户消息中的实际最大版本号
-            const userVersions = group.userMessages.map(m => m.version).filter(v => v != null);
-            if (userVersions.length === 0) return;
-            const maxVersion = Math.max(...userVersions);
-
-            // 显示最新版本
-            switchVersion(groupId, maxVersion, null);
-            // 为该编辑组创建独立的版本导航器
-            addVersionNavigator(groupId, maxVersion, userVersions.length);
-          });
-
-          // 为没有编辑组的最后一条助手消息添加刷新按钮（保持原有逻辑）
           const allMsgs = messageList.querySelectorAll('.message.assistant');
           if (allMsgs.length > 0) {
-            const lastMsg = allMsgs[allMsgs.length - 1];
-            const existingBtn = lastMsg.querySelector('.refresh-btn');
-            if (!existingBtn) {
-              const msgId = lastMsg.dataset.messageId;
-              const refreshBtn = document.createElement('span');
-              refreshBtn.className = 'refresh-btn';
-              refreshBtn.appendChild(createRefreshIcon());
-              refreshBtn.appendChild(document.createTextNode(' 重新生成'));
-              refreshBtn.dataset.messageId = msgId || 'temp-' + Date.now();
-              refreshBtn.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
-              refreshBtn.onmouseover = () => refreshBtn.style.background = '#e5e5e5';
-              refreshBtn.onmouseout = () => refreshBtn.style.background = '#f0f0f0';
-              refreshBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                handleRegenerate(this, lastMsg);
-              });
-              lastMsg.appendChild(refreshBtn);
+            const last = allMsgs[allMsgs.length - 1];
+            if (!last.querySelector('.refresh-btn')) {
+              const btn = document.createElement('span'); btn.className = 'refresh-btn';
+              btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成'));
+              btn.dataset.messageId = last.dataset.messageId || 'temp-' + Date.now();
+              btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, last); });
+              last.appendChild(btn);
             }
           }
-
-        } catch (err) {
-          console.error('加载历史失败:', err);
-          addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime());
-        }
+        } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
       }
 
-      // ---------- 发送消息（流式响应） ----------
       async function sendMessage() {
-        const text = userInput.value.trim();
-        if (!text || isLoading) return;
-
-        userInput.value = '';
-        userInput.style.height = 'auto';
-
-        addMessage('user', text, null, formatTime());
-
-        isLoading = true;
-        sendBtn.disabled = true;
-
-        const tempId = 'temp-' + Date.now();
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message assistant';
-        msgDiv.id = 'streaming-message';
-
-        const thinkingContainer = document.createElement('div');
-        thinkingContainer.className = 'thinking-content';
-        thinkingContainer.style.display = 'block';
-        thinkingContainer.textContent = '';
-        msgDiv.appendChild(thinkingContainer);
-
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        bubble.textContent = '';
-        msgDiv.appendChild(bubble);
-
-        const ts = document.createElement('div');
-        ts.className = 'timestamp';
-        ts.textContent = formatTime();
-        msgDiv.appendChild(ts);
-
-        messageList.appendChild(msgDiv);
-        messageList.scrollTop = messageList.scrollHeight;
-
-        let fullReply = '';
-        let fullThinking = '';
-        let assistantMessageId = null;
-
+        const text = userInput.value.trim(); if (!text || isLoading) return;
+        userInput.value = ''; userInput.style.height = 'auto'; addMessage('user', text, null, formatTime());
+        isLoading = true; sendBtn.disabled = true;
+        const msgDiv = document.createElement('div'); msgDiv.className = 'message assistant'; msgDiv.id = 'streaming-message';
+        const thinkDiv = document.createElement('div'); thinkDiv.className = 'thinking-content'; thinkDiv.style.display = 'block'; msgDiv.appendChild(thinkDiv);
+        const bubble = document.createElement('div'); bubble.className = 'bubble'; msgDiv.appendChild(bubble);
+        const ts = document.createElement('div'); ts.className = 'timestamp'; ts.textContent = formatTime(); msgDiv.appendChild(ts);
+        messageList.appendChild(msgDiv); messageList.scrollTop = messageList.scrollHeight;
+        let fullReply = '', fullThinking = '', assistantMessageId = null;
         try {
-          const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder('utf-8');
-          let buffer = '';
-
+          const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) });
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
           while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
+            const { done, value } = await reader.read(); if (done) break;
+            buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
             for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
+              const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
               const payload = trimmed.slice(6);
-              if (payload === '[DONE]') continue;
-
               try {
                 const json = JSON.parse(payload);
-
-                if (json.thinking) {
-                  fullThinking += json.thinking;
-                  thinkingContainer.textContent = fullThinking;
-                  messageList.scrollTop = messageList.scrollHeight;
-                }
-
-                if (json.content) {
-                  fullReply += json.content;
-                  bubble.textContent = fullReply;
-                  messageList.scrollTop = messageList.scrollHeight;
-                }
-
+                if (json.thinking) { fullThinking += json.thinking; thinkDiv.textContent = fullThinking; }
+                if (json.content) { fullReply += json.content; bubble.textContent = fullReply; }
                 if (json.done) {
-                  assistantMessageId = json.assistantMessageId;
-                  // 从 DOM 中移除临时的消息占位
-                  if (msgDiv.parentNode) {
-                    msgDiv.remove();
-                  }
-
-                  // 使用 addMessage 添加完整消息，并带上 showRefresh = true
-                  addMessage('assistant', fullReply, fullThinking, null, assistantMessageId, true);
-
-                  // 移除旧消息上的刷新按钮（只保留最新一条）
-                  const allAssistantMsgs = messageList.querySelectorAll('.message.assistant');
-                  if (allAssistantMsgs.length > 1) {
-                    const prevMsg = allAssistantMsgs[allAssistantMsgs.length - 2];
-                    const oldBtn = prevMsg.querySelector('.refresh-btn');
-                    if (oldBtn) oldBtn.remove();
-                  }
-
-                  const refreshButton = document.createElement('span');
-                  refreshButton.className = 'refresh-btn';
-                  refreshButton.appendChild(createRefreshIcon());
-                  refreshButton.appendChild(document.createTextNode(' 重新生成'));
-                  refreshButton.dataset.messageId = assistantMessageId || tempId;
-                  refreshButton.style.cssText = 'font-size:12px;color:#999;cursor:pointer;margin-top:4px;display:inline-block;padding:2px 8px;border-radius:12px;background:#f0f0f0;transition:background 0.15s;user-select:none;';
-                  refreshButton.onmouseover = () => refreshButton.style.background = '#e5e5e5';
-                  refreshButton.onmouseout = () => refreshButton.style.background = '#f0f0f0';
-
-                  refreshButton.addEventListener('click', function (e) {
-                    e.stopPropagation();
-                    handleRegenerate(this, msgDiv);
-                  });
-
-                  msgDiv.appendChild(refreshButton);
+                  msgDiv.remove();
+                  addMessage('assistant', fullReply, fullThinking, null, json.assistantMessageId || null, true);
+                  const allAsst = messageList.querySelectorAll('.message.assistant');
+                  if (allAsst.length > 1) { const prev = allAsst[allAsst.length - 2]; const oldBtn = prev.querySelector('.refresh-btn'); if (oldBtn) oldBtn.remove(); }
                 }
-
-                if (json.error) {
-                  throw new Error(json.error);
-                }
-              } catch (e) {
-                console.warn('解析SSE数据失败:', e, payload);
-              }
+                if (json.error) throw new Error(json.error);
+              } catch (e) { /* ignore */ }
             }
           }
-
-          if (fullReply && !assistantMessageId) {
-            console.warn('流式响应未收到 done 信号，但已收到内容');
-          }
-
-        } catch (err) {
-          console.error('发送消息失败:', err);
-          bubble.textContent = '❌ 请求失败：' + err.message;
-        } finally {
-          isLoading = false;
-          sendBtn.disabled = false;
-          userInput.focus();
-          msgDiv.id = '';
-        }
+        } catch (err) { console.error('发送消息失败:', err); bubble.textContent = '❌ 请求失败：' + err.message; }
+        finally { isLoading = false; sendBtn.disabled = false; userInput.focus(); msgDiv.id = ''; }
       }
 
-      // ---------- 登录逻辑 ----------
-      function handleLogin() {
-        const pwd = passwordInput.value.trim();
-        if (pwd === CORRECT_PASSWORD) {
-          loginBox.style.display = 'none';
-          chatApp.style.display = 'flex';
-          loadHistory();
-          userInput.focus();
-          loginError.style.display = 'none';
-        } else {
-          loginError.style.display = 'block';
-          passwordInput.value = '';
-          passwordInput.focus();
-        }
-      }
-
-      // ---------- 事件绑定 ----------
-      unlockBtn.addEventListener('click', handleLogin);
-
-      passwordInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          handleLogin();
-        }
-      });
-
-      sendBtn.addEventListener('click', sendMessage);
-
-      userInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          sendMessage();
-        }
-      });
-
-      userInput.addEventListener('input', function () {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-      });
-
-      // 初始聚焦到密码框
-      passwordInput.focus();
-
-      // ---------- 重新生成（流式） ----------
       async function handleRegenerate(btn, msgDiv) {
-        if (btn.disabled) return;
-        btn.disabled = true;
-        btn.textContent = '⏳ 生成中...';
-
+        if (btn.disabled) return; btn.disabled = true; btn.textContent = '⏳ 生成中...';
         const messageId = btn.dataset.messageId;
-        if (!messageId || messageId.startsWith('temp-')) {
-          btn.textContent = '❌ 无效消息';
-          setTimeout(() => {
-            btn.textContent = '';
-            btn.appendChild(createRefreshIcon());
-            btn.appendChild(document.createTextNode(' 重新生成'));
-            btn.disabled = false;
-          }, 2000);
-          return;
-        }
-
+        if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成')); btn.disabled = false; }, 2000); return; }
         try {
-          // 清空当前消息内容，准备流式填充
-          const bubble = msgDiv.querySelector('.bubble');
-          const thinkingEl = msgDiv.querySelector('.thinking-content');
-          if (bubble) bubble.textContent = '';
-          if (thinkingEl) thinkingEl.textContent = '';
-
-          let fullReply = '';
-          let fullThinking = '';
-
-          const response = await fetch('/api/regenerate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageId }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder('utf-8');
-          let buffer = '';
-
+          const bubble = msgDiv.querySelector('.bubble'); const thinkingEl = msgDiv.querySelector('.thinking-content');
+          if (bubble) bubble.textContent = ''; if (thinkingEl) thinkingEl.textContent = '';
+          let fullReply = '', fullThinking = '';
+          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) });
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
           while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
+            const { done, value } = await reader.read(); if (done) break;
+            buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
             for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
+              const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
               const payload = trimmed.slice(6);
-              if (payload === '[DONE]') continue;
-
               try {
                 const json = JSON.parse(payload);
-
-                if (json.thinking) {
-                  fullThinking += json.thinking;
-                  if (thinkingEl) {
-                    thinkingEl.textContent = fullThinking;
-                  } else {
-                    // 如果还没有思考容器，创建一个
-                    const newThinking = createThinkingElement(fullThinking);
-                    if (newThinking) {
-                      const bubbleEl = msgDiv.querySelector('.bubble');
-                      if (bubbleEl) {
-                        msgDiv.insertBefore(newThinking, bubbleEl);
-                      }
-                    }
-                  }
-                }
-
-                if (json.content) {
-                  fullReply += json.content;
-                  if (bubble) bubble.textContent = fullReply;
-                }
-
-                if (json.error) {
-                  throw new Error(json.error);
-                }
-              } catch (e) {
-                console.warn('解析SSE数据失败:', e, payload);
-              }
+                if (json.thinking) { fullThinking += json.thinking; if (thinkingEl) thinkingEl.textContent = fullThinking; }
+                if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
+                if (json.error) throw new Error(json.error);
+              } catch (e) { console.warn('解析SSE失败:', e, payload); }
             }
           }
-
-          // 更新消息ID（如果有新的）
-          if (fullReply) {
-            // 更新完成，恢复按钮状态
-            btn.textContent = '✅ 已刷新';
-            setTimeout(() => {
-              btn.textContent = '';
-              btn.appendChild(createRefreshIcon());
-              btn.appendChild(document.createTextNode(' 重新生成'));
-              btn.disabled = false;
-            }, 2000);
-          } else {
-            throw new Error('未收到有效回复');
-          }
-
-        } catch (err) {
-          console.error('重新生成失败:', err);
-          btn.textContent = '❌ 失败，点击重试';
-          btn.disabled = false;
-          setTimeout(() => {
-            btn.textContent = '';
-            btn.appendChild(createRefreshIcon());
-            btn.appendChild(document.createTextNode(' 重新生成'));
-          }, 3000);
-        }
+          if (fullReply) { btn.textContent = '✅ 已刷新'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成')); btn.disabled = false; }, 2000); }
+          else throw new Error('未收到有效回复');
+        } catch (err) { console.error('重新生成失败:', err); btn.textContent = '❌ 失败，点击重试'; btn.disabled = false; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成')); }, 3000); }
       }
 
-      // 注册 Service Worker（PWA 支持）
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js')
-          .then(function (reg) {
-            console.log('✅ Service Worker 注册成功');
-          })
-          .catch(function (err) {
-            console.log('❌ Service Worker 注册失败:', err);
-          });
-      }
-
-      console.log('💗 Mo-Home 已加载（带锁版）');
+      unlockBtn.addEventListener('click', () => {
+        if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; loadHistory(); userInput.focus(); loginError.style.display = 'none'; }
+        else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
+      });
+      passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); } });
+      sendBtn.addEventListener('click', sendMessage);
+      userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+      userInput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
+      passwordInput.focus();
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => { });
+      console.log('💗 Mo-Home 已加载');
     })();
   </script>
-
 </body>
 
 </html>
