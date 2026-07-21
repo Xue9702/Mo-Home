@@ -974,19 +974,6 @@
 
             // 显示最新版本
             switchVersion(groupId, maxVersion, null);
-
-            // 更新导航器显示的实际总版本数
-            const navs = document.querySelectorAll(`.version-nav[data-group-id="${groupId}"]`);
-            navs.forEach(nav => {
-              const total = userVersions.length;
-              nav.dataset.totalVersions = total;
-              const versionSpan = nav.querySelector('.version-text');
-              if (versionSpan) {
-                // 直接从导航器所在元素的 dataset 中读取当前版本，确保一致性
-                const current = msgDiv.dataset.currentVersion || maxVersion;
-                versionSpan.textContent = `${current}/${total}`;
-              }
-            });
           });
 
           // 为没有编辑组的最后一条助手消息添加刷新按钮（保持原有逻辑）
