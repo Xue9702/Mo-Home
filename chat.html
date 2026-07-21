@@ -605,9 +605,10 @@
         let found = false;
         let originalAssistantMsg = null;
 
-        // 1. 标记并隐藏原始消息，但绝对保留在DOM中
+        // 1. 稳健标记原始消息，绝对不在此时删除任何元素
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
         if (originalUserMsg) {
+          // 强制设置版本1属性，防止丢失
           originalUserMsg.dataset.groupId = '';
           originalUserMsg.dataset.version = '1';
 
@@ -622,20 +623,15 @@
             next = next.nextElementSibling;
           }
 
-          // 隐藏原始用户消息及其后续所有助手消息（遇到新用户消息则停止）
+          // 隐藏原始消息及其后续所有助手消息，直到下一个用户消息
           originalUserMsg.style.display = 'none';
           next = originalUserMsg.nextElementSibling;
           while (next) {
-            if (next.classList.contains('user')) break;
+            if (next.classList.contains('user')) break; // 遇到新用户消息就停止
             next.style.display = 'none';
             next = next.nextElementSibling;
           }
         }
-
-        allMessages.forEach(msg => {
-          if (found) msg.style.display = 'none';
-          if (msg.dataset.messageId === String(msgId)) found = true;
-        });
 
         // 添加临时用户消息气泡（新版本）
         const tempUserMsg = document.createElement('div');
