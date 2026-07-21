@@ -603,6 +603,7 @@
 
         const allMessages = messageList.querySelectorAll('.message');
         let found = false;
+        let originalAssistantMsg = null;
 
         // 1. 标记并隐藏原始消息，但绝对保留在DOM中
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
