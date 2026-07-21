@@ -741,7 +741,7 @@
 
                   // 为这条编辑后的用户消息添加版本导航器
                   if (latestUserMsg) {
-                    addVersionNavigator(groupId, latestUserMsg.version, group.userMessages.length);
+                    addVersionNavigator(groupId, currentVersion, totalVersions);
                   }
                   tempUserMsg.dataset.groupId = groupId;
                   tempUserMsg.dataset.currentVersion = currentVersion;
