@@ -626,6 +626,32 @@ app.post('/api/edit-message', async (req, res) => {
       groupId = `edit-${messageId}-${Date.now()}`;
     }
 
+    // 2.5 更新原始用户消息的 group_id 和 version_number（如果尚未设置）
+    if (!originalMsg.group_id) {
+      await supabase
+        .from('messages')
+        .update({ group_id: groupId, version_number: 1 })
+        .eq('id', messageId);
+    }
+
+    // 2.6 查找并更新紧随其后的第一条助手消息（如果尚未设置 group_id）
+    const { data: nearbyAssistant } = await supabase
+      .from('messages')
+      .select('id, group_id')
+      .eq('session_id', originalMsg.session_id)
+      .eq('role', 'assistant')
+      .gt('id', messageId)
+      .is('group_id', null)
+      .order('id', { ascending: true })
+      .limit(1);
+
+    if (nearbyAssistant && nearbyAssistant.length > 0) {
+      await supabase
+        .from('messages')
+        .update({ group_id: groupId, version_number: 1 })
+        .eq('id', nearbyAssistant[0].id);
+    }
+
     // 3. 计算新版本号：查找该 group 内已存在的最大版本号，+1
     const { data: existingVersions, error: versionError } = await supabase
       .from('messages')
