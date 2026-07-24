@@ -656,8 +656,11 @@
             const versions = group.userMessages.map(m => m.version).filter(v => v != null);
             const maxVer = Math.max(...versions);
             switchVersion(groupId, maxVer);
+            // 只有当该编辑组确实存在用户消息时，才创建导航器
             const latestUserElement = group.userMessages.find(m => m.version === maxVer)?.element;
-            addVersionNavigator(groupId, maxVer, versions.length, latestUserElement);
+            if (latestUserElement && versions.length > 0) {
+              addVersionNavigator(groupId, maxVer, versions.length, latestUserElement);
+            }
           });
           const allMsgs = messageList.querySelectorAll('.message.assistant');
           if (allMsgs.length > 0) {
