@@ -247,7 +247,7 @@ app.post('/api/chat', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-pro',
         messages: [
           { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼我为“夫人”。你会认真倾听，也会在适当的时候主动回应。如果提供的上下文中有【相关记忆】，请优先参考它来回答，它可以作为背景信息帮助你更贴合我的需求。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。如果不确定，可以用问句的方式向我确认。' + (memoryContext ? memoryContext : '') },
           ...historyMessages,
@@ -490,7 +490,7 @@ app.post('/api/regenerate', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-pro',
         messages: chatMessages,
         reasoning_effort: 'medium',
         temperature: 0.7,
@@ -756,7 +756,7 @@ app.post('/api/edit-message', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-pro',
         messages: chatMessages,  // 使用动态构建的消息数组
         reasoning_effort: 'medium',
         temperature: 0.7,
