@@ -630,7 +630,7 @@ app.post('/api/edit-message', async (req, res) => {
     if (!originalMsg.group_id) {
       await supabase
         .from('messages')
-        .update({ group_id: groupId, version_number: 1 })
+        .update({ group_id: groupId, version_number: 1, visible: true })
         .eq('id', messageId);
     }
 
@@ -648,7 +648,7 @@ app.post('/api/edit-message', async (req, res) => {
     if (nearbyAssistant && nearbyAssistant.length > 0) {
       await supabase
         .from('messages')
-        .update({ group_id: groupId, version_number: 1 })
+        .update({ group_id: groupId, version_number: 1, visible: true })
         .eq('id', nearbyAssistant[0].id);
     }
 
