@@ -676,16 +676,19 @@
         } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
       }
 
-      async function sendMessage() {
+            async function sendMessage() {
         const text = userInput.value.trim(); if (!text || isLoading) return;
-        userInput.value = ''; userInput.style.height = 'auto'; addMessage('user', text, null, formatTime());
+        userInput.value = ''; userInput.style.height = 'auto';
+        addMessage('user', text, null, formatTime());
+        const pendingUserMsg = messageList.lastElementChild; // 保存引用
+
         isLoading = true; sendBtn.disabled = true;
         const msgDiv = document.createElement('div'); msgDiv.className = 'message assistant'; msgDiv.id = 'streaming-message';
         const thinkDiv = document.createElement('div'); thinkDiv.className = 'thinking-content'; thinkDiv.style.display = 'block'; msgDiv.appendChild(thinkDiv);
         const bubble = document.createElement('div'); bubble.className = 'bubble'; msgDiv.appendChild(bubble);
         const ts = document.createElement('div'); ts.className = 'timestamp'; ts.textContent = formatTime(); msgDiv.appendChild(ts);
         messageList.appendChild(msgDiv); messageList.scrollTop = messageList.scrollHeight;
-        let fullReply = '', fullThinking = '', assistantMessageId = null;
+        let fullReply = '', fullThinking = '';
         try {
           const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -703,6 +706,22 @@
                 if (json.done) {
                   msgDiv.remove();
                   addMessage('assistant', fullReply, fullThinking, null, json.assistantMessageId || null, true);
+
+                  // 给刚发送的用户消息补上 msgId 和长按事件
+                  if (pendingUserMsg && json.userMessageId) {
+                    pendingUserMsg.dataset.messageId = json.userMessageId;
+                    const userBubble = pendingUserMsg.querySelector('.bubble');
+                    if (userBubble) {
+                      let timer;
+                      userBubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
+                      userBubble.addEventListener('touchend', () => clearTimeout(timer));
+                      userBubble.addEventListener('touchmove', () => clearTimeout(timer));
+                      userBubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
+                      userBubble.addEventListener('mouseup', () => clearTimeout(timer));
+                      userBubble.addEventListener('mouseleave', () => clearTimeout(timer));
+                    }
+                  }
+
                   const allAsst = messageList.querySelectorAll('.message.assistant');
                   if (allAsst.length > 1) { const prev = allAsst[allAsst.length - 2]; const oldBtn = prev.querySelector('.refresh-btn'); if (oldBtn) oldBtn.remove(); }
                 }

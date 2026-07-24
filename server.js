@@ -353,6 +353,7 @@ app.post('/api/chat', async (req, res) => {
     // 发送完成信号，包含消息ID
     sendSSE({
       done: true,
+      userMessageId: userData?.[0]?.id || null,
       assistantMessageId: assistantData?.[0]?.id || null,
       reply: fullReply,
       thinking: fullThinking
