@@ -494,33 +494,68 @@
         messageList.appendChild(msgDiv); messageList.scrollTop = messageList.scrollHeight;
       }
 
-      function addVersionNavigator(groupId, currentVersion, totalVersions) {
-        const old = document.querySelector(`.version-nav[data-group-id="${groupId}"]`); if (old) old.remove();
-        const nav = document.createElement('div'); nav.className = 'version-nav'; nav.dataset.groupId = groupId; nav.dataset.totalVersions = totalVersions;
+      function addVersionNavigator(groupId, currentVersion, totalVersions, targetMsgElement = null) {
+        const old = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
+        if (old) old.remove();
+
+        const nav = document.createElement('div');
+        nav.className = 'version-nav';
+        nav.dataset.groupId = groupId;
+        nav.dataset.totalVersions = totalVersions;
+        nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0 0;font-size:12px;color:#888;justify-content:flex-end;width:100%;';
+
         const prevBtn = document.createElement('span'); prevBtn.appendChild(createChevronLeftIcon());
-        const text = document.createElement('span'); text.className = 'version-text'; text.textContent = `${currentVersion}/${totalVersions}`; text.style.userSelect = 'none';
+        const versionText = document.createElement('span'); versionText.className = 'version-text'; versionText.textContent = `${currentVersion}/${totalVersions}`; versionText.style.userSelect = 'none';
         const nextBtn = document.createElement('span'); nextBtn.appendChild(createChevronRightIcon());
-        prevBtn.addEventListener('click', e => { e.stopPropagation(); const cur = parseInt(text.textContent.split('/')[0]); if (cur > 1) switchVersion(groupId, cur - 1); });
-        nextBtn.addEventListener('click', e => { e.stopPropagation(); const [cur, tot] = text.textContent.split('/').map(Number); if (cur < tot) switchVersion(groupId, cur + 1); });
-        nav.appendChild(prevBtn); nav.appendChild(text); nav.appendChild(nextBtn);
-        const allUser = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-        let first = null, minVer = Infinity;
-        allUser.forEach(m => { const v = parseInt(m.dataset.version); if (v < minVer) { minVer = v; first = m; } });
-        if (first) first.parentNode.insertBefore(nav, first);
-        else messageList.insertBefore(nav, messageList.firstChild);
+
+        prevBtn.addEventListener('click', e => { e.stopPropagation(); const cur = parseInt(versionText.textContent.split('/')[0]); if (cur > 1) switchVersion(groupId, cur - 1); });
+        nextBtn.addEventListener('click', e => { e.stopPropagation(); const [cur, tot] = versionText.textContent.split('/').map(Number); if (cur < tot) switchVersion(groupId, cur + 1); });
+
+        nav.appendChild(prevBtn); nav.appendChild(versionText); nav.appendChild(nextBtn);
+
+        // 确定插入目标
+        let target = targetMsgElement;
+        if (!target) {
+          const allUser = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
+          let minVer = Infinity;
+          allUser.forEach(m => { const v = parseInt(m.dataset.version); if (v < minVer) { minVer = v; target = m; } });
+        }
+
+        if (target) {
+          target.appendChild(nav);
+        } else {
+          messageList.appendChild(nav);
+        }
+
         prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
         nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
       }
 
       function switchVersion(groupId, targetVersion) {
-        document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`).forEach(m => m.style.display = m.dataset.version === String(targetVersion) ? '' : 'none');
-        document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`).forEach(m => m.style.display = m.dataset.assistantVersion === String(targetVersion) ? '' : 'none');
+        const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
+        const assistantMessages = document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`);
+
+        let visibleUserMsg = null;
+        userMessages.forEach(msg => {
+          const show = msg.dataset.version === String(targetVersion);
+          msg.style.display = show ? '' : 'none';
+          if (show) visibleUserMsg = msg;
+        });
+
+        assistantMessages.forEach(msg => {
+          msg.style.display = msg.dataset.assistantVersion === String(targetVersion) ? '' : 'none';
+        });
+
+        // 将现有导航器移到当前可见的用户消息内
         const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
-        if (nav) {
-          const text = nav.querySelector('.version-text'); if (text) text.textContent = `${targetVersion}/${nav.dataset.totalVersions}`;
-          const prev = nav.querySelector('span:first-child'); const next = nav.querySelector('span:last-child');
-          if (prev) prev.style.opacity = targetVersion > 1 ? '1' : '0.4';
-          if (next) next.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions) ? '1' : '0.4';
+        if (nav && visibleUserMsg) {
+          visibleUserMsg.appendChild(nav);
+          const versionSpan = nav.querySelector('.version-text');
+          if (versionSpan) versionSpan.textContent = `${targetVersion}/${nav.dataset.totalVersions}`;
+          const prevBtn = nav.querySelector('.prev-btn');
+          const nextBtn = nav.querySelector('.next-btn');
+          if (prevBtn) prevBtn.style.opacity = targetVersion > 1 ? '1' : '0.4';
+          if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions) ? '1' : '0.4';
         }
       }
 
@@ -580,7 +615,7 @@
                     newBub.addEventListener('mousedown', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
                     newBub.addEventListener('mouseup', () => clearTimeout(t)); newBub.addEventListener('mouseleave', () => clearTimeout(t));
                   }
-                  addVersionNavigator(groupId, currentVersion, totalVersions);
+                  addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
                 }
                 if (json.error) throw new Error(json.error);
               } catch (e) { console.warn('解析SSE失败:', e); }
@@ -621,7 +656,8 @@
             const versions = group.userMessages.map(m => m.version).filter(v => v != null);
             const maxVer = Math.max(...versions);
             switchVersion(groupId, maxVer);
-            addVersionNavigator(groupId, maxVer, versions.length);
+            const latestUserElement = group.userMessages.find(m => m.version === maxVer)?.element;
+            addVersionNavigator(groupId, maxVer, versions.length, latestUserElement);
           });
           const allMsgs = messageList.querySelectorAll('.message.assistant');
           if (allMsgs.length > 0) {
