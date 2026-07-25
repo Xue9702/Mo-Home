@@ -216,6 +216,29 @@ function getTimeInfo() {
   };
 }
 
+// 决策层：检查是否应该推送
+function shouldPush() {
+  const { hour, isWeekend } = getTimeInfo();
+
+  // 1. 深夜保护
+  if (hour >= QUIET_HOURS.start && hour < QUIET_HOURS.end) {
+    console.log(`🚫 深夜保护：当前时间 ${hour}:xx，不推送`);
+    return false;
+  }
+
+  // 2. 随机冷静期
+  if (lastPushTime) {
+    const elapsed = (Date.now() - lastPushTime) / 1000 / 60; // 分钟
+    if (elapsed < randomCooldownMinutes) {
+      console.log(`⏳ 冷静期中：还需等待 ${Math.round(randomCooldownMinutes - elapsed)} 分钟`);
+      return false;
+    }
+  }
+
+  // 3. 每日上限检查在接口中进行
+  return true;
+}
+
 // ------------------ 对话接口（带 Supabase 存储） ------------------
 // ------------------ 对话接口（流式响应） ------------------
 app.post('/api/chat', async (req, res) => {
