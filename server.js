@@ -12,9 +12,27 @@ const COOLDOWN_MAX_MINUTES = 210; // 最大冷静期（分钟）
 const QUIET_HOURS = { start: 2, end: 12 }; // 统一深夜保护：2-12点
 
 // 简单的内存锁，防止并发推送
-let isPushInProgress = false;
-let lastPushTime = null; // 上一次成功推送的时间
-let randomCooldownMinutes = 0; // 当前随机冷静期
+let isPushInProgress = false; // 这个保留，防止并发
+
+// 从 Supabase 读取推送状态的函数
+async function getPushState() {
+  const { data } = await supabase
+    .from('push_state')
+    .select('last_push_time, cooldown_minutes')
+    .eq('id', 1)
+    .single();
+  return {
+    lastPushTime: data?.last_push_time ? new Date(data.last_push_time).getTime() : null,
+    cooldownMinutes: data?.cooldown_minutes || 0
+  };
+}
+
+// 更新 Supabase 中的推送状态
+async function updatePushState(lastPushTimeISO, cooldownMinutes) {
+  await supabase
+    .from('push_state')
+    .upsert({ id: 1, last_push_time: lastPushTimeISO, cooldown_minutes: cooldownMinutes }, { onConflict: 'id' });
+}
 
 const app = express();
 app.use(express.json());
@@ -216,9 +234,8 @@ function getTimeInfo() {
   };
 }
 
-// 决策层：检查是否应该推送
-function shouldPush() {
-  const { hour, isWeekend } = getTimeInfo();
+async function shouldPush() {
+  const { hour } = getTimeInfo();
 
   // 1. 深夜保护
   if (hour >= QUIET_HOURS.start && hour < QUIET_HOURS.end) {
@@ -226,16 +243,17 @@ function shouldPush() {
     return false;
   }
 
-  // 2. 随机冷静期
-  if (lastPushTime) {
-    const elapsed = (Date.now() - lastPushTime) / 1000 / 60; // 分钟
-    if (elapsed < randomCooldownMinutes) {
-      console.log(`⏳ 冷静期中：还需等待 ${Math.round(randomCooldownMinutes - elapsed)} 分钟`);
+  // 2. 从数据库读取冷静期状态
+  const state = await getPushState();
+
+  if (state.lastPushTime) {
+    const elapsed = (Date.now() - state.lastPushTime) / 1000 / 60;
+    if (elapsed < state.cooldownMinutes) {
+      console.log(`⏳ 冷静期中：还需等待 ${Math.round(state.cooldownMinutes - elapsed)} 分钟`);
       return false;
     }
   }
 
-  // 3. 每日上限检查在接口中进行
   return true;
 }
 
@@ -309,8 +327,6 @@ app.post('/api/chat', async (req, res) => {
     } catch (memErr) {
       console.error('记忆检索失败:', memErr.message);
     }
-
-    console.log('🕒 注入的系统时间:', getTimeInfo().timeString);
 
     // 调用 DeepSeek API（开启流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
