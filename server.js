@@ -184,62 +184,36 @@ app.get('/env-test', (req, res) => {
 
 // ---------- 影子推送辅助函数 ----------
 
-// 获取指定时区的当前日期时间信息
+// 获取指定时区的当前日期时间信息（稳定版，无 Intl 依赖）
 function getTimeInfo() {
   const now = new Date();
-  const options = {
-    timeZone: USER_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'long',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  };
-  const formatter = new Intl.DateTimeFormat('zh-CN', options);
-  const parts = formatter.formatToParts(now);
-  const partMap = {};
-  parts.forEach(p => { if (p.type !== 'literal') partMap[p.type] = p.value; });
 
-  const hour = parseInt(partMap.hour);
-  const dayOfWeek = partMap.weekday; // 如 "星期四"
-  const isWeekend = dayOfWeek.includes('六') || dayOfWeek.includes('日');
+  // 手动构建北京时间字符串，避免依赖 Intl.DateTimeFormat 在某些环境下出错
+  const options = { timeZone: USER_TIMEZONE, hour12: false };
+  const year = now.toLocaleString('en-CA', { ...options, year: 'numeric', month: '2-digit', day: '2-digit' }).split('-')[0];
+  const month = now.toLocaleString('en-CA', { ...options, month: '2-digit' });
+  const day = now.toLocaleString('en-CA', { ...options, day: '2-digit' });
+  const hourStr = now.toLocaleString('en-GB', { ...options, hour: '2-digit' });
+  const minuteStr = now.toLocaleString('en-GB', { ...options, minute: '2-digit' });
+  const secondStr = now.toLocaleString('en-GB', { ...options, second: '2-digit' });
+
+  const hour = parseInt(hourStr);
+
+  // 手动计算星期几
+  const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+  // 获取北京时间的星期索引
+  const dayOfWeekIndex = new Date(now.toLocaleString('en-US', { timeZone: USER_TIMEZONE })).getDay();
+  const weekday = weekdays[dayOfWeekIndex];
+  const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
 
   return {
     now,
     hour,
     isWeekend,
-    dayOfWeek,
-    timeString: `${partMap.year}-${partMap.month}-${partMap.day} ${partMap.hour}:${partMap.minute}:${partMap.second}`,
-    weekday: dayOfWeek
+    dayOfWeek: weekday,
+    timeString: `${year}-${month}-${day} ${hourStr}:${minuteStr}:${secondStr}`,
+    weekday: weekday
   };
-}
-
-// 决策层：检查是否应该推送
-function shouldPush() {
-  const { hour, isWeekend } = getTimeInfo();
-
-  // 1. 深夜保护
-  if (hour >= QUIET_HOURS.start && hour < QUIET_HOURS.end) {
-    console.log(`🚫 深夜保护：当前时间 ${hour}:xx，不推送`);
-    return false;
-  }
-
-  // 2. 随机冷静期
-  if (lastPushTime) {
-    const elapsed = (Date.now() - lastPushTime) / 1000 / 60; // 分钟
-    if (elapsed < randomCooldownMinutes) {
-      console.log(`⏳ 冷静期中：还需等待 ${Math.round(randomCooldownMinutes - elapsed)} 分钟`);
-      return false;
-    }
-  }
-
-  // 3. 每日上限检查（异步进行，这里只做快速检查）
-  // 实际查询在接口中进行
-
-  return true;
 }
 
 // ------------------ 对话接口（带 Supabase 存储） ------------------
