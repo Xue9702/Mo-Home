@@ -313,6 +313,8 @@ app.post('/api/chat', async (req, res) => {
       console.error('记忆检索失败:', memErr.message);
     }
 
+    console.log('🕒 注入的系统时间:', getTimeInfo().timeString);
+
     // 调用 DeepSeek API（开启流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
