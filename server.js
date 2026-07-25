@@ -9,7 +9,7 @@ const COOLDOWN_MIN_MINUTES = 120; // 最小冷静期（分钟）
 const COOLDOWN_MAX_MINUTES = 210; // 最大冷静期（分钟）
 
 // 深夜保护时间段（东八区时间）
-const QUIET_HOURS = { start: 2, end: 12 }; // 2-12点
+const QUIET_HOURS = { start: 2, end: 12 }; // 统一深夜保护：2-12点
 
 // 简单的内存锁，防止并发推送
 let isPushInProgress = false;
@@ -222,8 +222,7 @@ function shouldPush() {
   const { hour, isWeekend } = getTimeInfo();
 
   // 1. 深夜保护
-  const quiet = isWeekend ? QUIET_HOURS_WEEKEND : QUIET_HOURS_WEEKDAY;
-  if (hour >= quiet.start && hour < quiet.end) {
+  if (hour >= QUIET_HOURS.start && hour < QUIET_HOURS.end) {
     console.log(`🚫 深夜保护：当前时间 ${hour}:xx，不推送`);
     return false;
   }
