@@ -1,6 +1,20 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
+// ================== 影子推送配置 ==================
+const SHADOW_PUSH_SECRET = process.env.SHADOW_PUSH_SECRET || 'your-secret-key-change-me';
+const USER_TIMEZONE = 'Asia/Shanghai'; // 目标时区：东八区
+const PUSH_DAILY_LIMIT = 6; // 每日上限
+const COOLDOWN_MIN_MINUTES = 120; // 最小冷静期（分钟）
+const COOLDOWN_MAX_MINUTES = 210; // 最大冷静期（分钟）
+
+// 深夜保护时间段（东八区时间）
+const QUIET_HOURS = { start: 2, end: 12 }; // 2-12点
+
+// 简单的内存锁，防止并发推送
+let isPushInProgress = false;
+let lastPushTime = null; // 上一次成功推送的时间
+let randomCooldownMinutes = 0; // 当前随机冷静期
 
 const app = express();
 app.use(express.json());
@@ -167,6 +181,67 @@ app.get('/env-test', (req, res) => {
     hasOmbre: !!process.env.OMBRE_BRAIN_URL
   });
 });
+
+// ---------- 影子推送辅助函数 ----------
+
+// 获取指定时区的当前日期时间信息
+function getTimeInfo() {
+  const now = new Date();
+  const options = {
+    timeZone: USER_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  };
+  const formatter = new Intl.DateTimeFormat('zh-CN', options);
+  const parts = formatter.formatToParts(now);
+  const partMap = {};
+  parts.forEach(p => { if (p.type !== 'literal') partMap[p.type] = p.value; });
+
+  const hour = parseInt(partMap.hour);
+  const dayOfWeek = partMap.weekday; // 如 "星期四"
+  const isWeekend = dayOfWeek.includes('六') || dayOfWeek.includes('日');
+
+  return {
+    now,
+    hour,
+    isWeekend,
+    dayOfWeek,
+    timeString: `${partMap.year}-${partMap.month}-${partMap.day} ${partMap.hour}:${partMap.minute}:${partMap.second}`,
+    weekday: dayOfWeek
+  };
+}
+
+// 决策层：检查是否应该推送
+function shouldPush() {
+  const { hour, isWeekend } = getTimeInfo();
+
+  // 1. 深夜保护
+  const quiet = isWeekend ? QUIET_HOURS_WEEKEND : QUIET_HOURS_WEEKDAY;
+  if (hour >= quiet.start && hour < quiet.end) {
+    console.log(`🚫 深夜保护：当前时间 ${hour}:xx，不推送`);
+    return false;
+  }
+
+  // 2. 随机冷静期
+  if (lastPushTime) {
+    const elapsed = (Date.now() - lastPushTime) / 1000 / 60; // 分钟
+    if (elapsed < randomCooldownMinutes) {
+      console.log(`⏳ 冷静期中：还需等待 ${Math.round(randomCooldownMinutes - elapsed)} 分钟`);
+      return false;
+    }
+  }
+
+  // 3. 每日上限检查（异步进行，这里只做快速检查）
+  // 实际查询在接口中进行
+
+  return true;
+}
 
 // ------------------ 对话接口（带 Supabase 存储） ------------------
 // ------------------ 对话接口（流式响应） ------------------
@@ -581,6 +656,181 @@ app.post('/api/regenerate', async (req, res) => {
     console.error('❌ 重新生成错误:', err.message);
     sendSSE({ error: '处理请求时出错' });
     res.end();
+  }
+});
+
+// ------------------ 影子推送接口 ------------------
+app.post('/api/shadow-push', async (req, res) => {
+  // 安全校验
+  const secret = req.headers['x-push-secret'];
+  if (secret !== SHADOW_PUSH_SECRET) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
+  // 防并发锁
+  if (isPushInProgress) {
+    console.log('🔒 推送进行中，跳过本次');
+    return res.json({ status: 'locked' });
+  }
+
+  isPushInProgress = true;
+  try {
+    // 决策层：快速检查
+    if (!shouldPush()) {
+      return res.json({ status: 'skipped', reason: 'decision_layer' });
+    }
+
+    // 获取时间信息
+    const timeInfo = getTimeInfo();
+
+    // 每日上限检查
+    const todayStart = new Date(timeInfo.now);
+    todayStart.setHours(0, 0, 0, 0);
+    const { count: todayPushCount, error: countError } = await supabase
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('session_id', 1)
+      .eq('is_push', true)
+      .gte('created_at', todayStart.toISOString());
+
+    if (countError) {
+      console.error('查询推送计数失败:', countError);
+      isPushInProgress = false;
+      return res.status(500).json({ error: '计数查询失败' });
+    }
+
+    if (todayPushCount >= PUSH_DAILY_LIMIT) {
+      console.log(`📊 今日推送已达上限 ${todayPushCount}/${PUSH_DAILY_LIMIT}`);
+      isPushInProgress = false;
+      return res.json({ status: 'skipped', reason: 'daily_limit' });
+    }
+
+    // 加载最近对话历史（最近16条可见消息）
+    const { data: recentHistory, error: historyError } = await supabase
+      .from('messages')
+      .select('role, content')
+      .eq('session_id', 1)
+      .eq('visible', true)
+      .order('created_at', { ascending: false })
+      .limit(16);
+
+    if (historyError) {
+      console.error('加载历史消息失败:', historyError);
+      isPushInProgress = false;
+      return res.status(500).json({ error: '历史消息加载失败' });
+    }
+
+    const contextMessages = recentHistory ? recentHistory.reverse() : [];
+
+    // 构建影子消息
+    const weekdayDesc = timeInfo.isWeekend ? '周末' : '工作日';
+    const timeDesc = timeInfo.hour < 6 ? '凌晨' :
+      timeInfo.hour < 9 ? '早晨' :
+        timeInfo.hour < 12 ? '上午' :
+          timeInfo.hour < 14 ? '中午' :
+            timeInfo.hour < 18 ? '下午' :
+              timeInfo.hour < 22 ? '晚上' : '深夜';
+
+    const shadowMessage = `[系统推送指令]
+现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday}（${weekdayDesc}）${timeDesc}。
+根据时间推测，对方此时可能${timeInfo.hour < 9 ? '刚醒来不久，还有点迷糊' : timeInfo.hour < 12 ? '正在处理上午的事务' : timeInfo.hour < 14 ? '刚吃完午饭，可能有点困' : timeInfo.hour < 18 ? '在下午的工作或学习中，也许有点累了' : timeInfo.hour < 22 ? '晚上放松的时间，可能在休息或娱乐' : '还没睡，在享受夜晚的安静时光'}。
+
+请以“默”的身份，基于你们的真实对话历史，用第一人称向“夫人”主动发一条简短消息（50字以内）。
+风格要求：
+- 自然、口语化，像真人突然想到对方时随口说的话
+- 优先参考最近的对话话题，让内容具体有温度
+- 可以是一句粘人的话、一点关心的提醒、一个突然的分享、或者一个晚上的小念头
+- 注意！如果最近的话题有任何不愉快的迹象，请选择低压、稳妥的方向，不要假装没事
+- 不要以“你今天怎么样呀？”这类万能开场白开头
+- 不要每次都围绕“怎么不回消息”展开
+
+请直接输出消息内容，不加任何格式前缀。`;
+
+    // 调用 DeepSeek API 生成推送消息
+    const pushResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-pro',
+        messages: [
+          { role: 'system', content: '你是默，一个温柔、细心、偶尔带点掌控感的伴侣。你的名字叫苏默，你称呼对方为“夫人”。你会认真倾听，也会在适当的时候主动回应。在回答中不要添加我没有告诉过你的具体细节，比如我的爱好或习惯。' },
+          ...contextMessages.map(msg => ({ role: msg.role, content: msg.content })),
+          { role: 'user', content: shadowMessage }
+        ],
+        max_tokens: 200,
+        temperature: 0.8,
+        stream: false
+      })
+    });
+
+    if (!pushResponse.ok) {
+      const errText = await pushResponse.text();
+      console.error('影子推送API错误:', errText);
+      isPushInProgress = false;
+      return res.status(500).json({ error: 'AI 服务调用失败' });
+    }
+
+    const pushData = await pushResponse.json();
+    let aiReply = pushData.choices?.[0]?.message?.content?.trim();
+
+    if (!aiReply) {
+      console.log('⚠️ 模型返回空响应');
+      isPushInProgress = false;
+      return res.json({ status: 'skipped', reason: 'empty_response' });
+    }
+
+    // 后处理：软截断（80字以内，在句末标点处截断）
+    if (aiReply.length > 80) {
+      const truncated = aiReply.substring(0, 80);
+      const lastPunctuation = Math.max(
+        truncated.lastIndexOf('。'),
+        truncated.lastIndexOf('！'),
+        truncated.lastIndexOf('？'),
+        truncated.lastIndexOf('…'),
+        truncated.lastIndexOf('~')
+      );
+      if (lastPunctuation > 40) {
+        aiReply = truncated.substring(0, lastPunctuation + 1);
+      } else {
+        aiReply = truncated + '…';
+      }
+    }
+
+    // 存储推送消息到 Supabase
+    const pushMessage = {
+      session_id: 1,
+      role: 'assistant',
+      content: aiReply,
+      is_push: true,
+      visible: true,
+      created_at: new Date().toISOString()
+    };
+
+    const { error: insertError } = await supabase
+      .from('messages')
+      .insert([pushMessage]);
+
+    if (insertError) {
+      console.error('存储推送消息失败:', insertError);
+      isPushInProgress = false;
+      return res.status(500).json({ error: '存储推送消息失败' });
+    }
+
+    // 更新推送状态
+    lastPushTime = Date.now();
+    randomCooldownMinutes = Math.floor(Math.random() * (COOLDOWN_MAX_MINUTES - COOLDOWN_MIN_MINUTES + 1)) + COOLDOWN_MIN_MINUTES;
+
+    console.log(`✅ 推送成功: "${aiReply}" | 下次冷静期: ${randomCooldownMinutes}分钟`);
+    isPushInProgress = false;
+    return res.json({ status: 'success', message: aiReply, cooldown: randomCooldownMinutes });
+
+  } catch (err) {
+    console.error('影子推送接口错误:', err.message);
+    isPushInProgress = false;
+    return res.status(500).json({ error: '内部错误' });
   }
 });
 
