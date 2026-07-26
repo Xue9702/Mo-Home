@@ -466,7 +466,7 @@
         }
         wrapper.appendChild(row);
         const content = document.createElement('div');
-        content.className = 'thinking-content open'; 
+        content.className = 'thinking-content open';
         content.textContent = thinkingText.trim();
         wrapper.appendChild(content);
         toggle.addEventListener('click', (e) => { e.stopPropagation(); content.classList.toggle('open'); toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考'; });
@@ -726,50 +726,107 @@
         } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
       }
 
-            async function sendMessage() {
+      async function sendMessage() {
         const text = userInput.value.trim(); if (!text || isLoading) return;
         userInput.value = ''; userInput.style.height = 'auto';
         addMessage('user', text, null, formatTime());
-        const pendingUserMsg = messageList.lastElementChild; // 保存引用
+        const pendingUserMsg = messageList.lastElementChild;
 
         isLoading = true; sendBtn.disabled = true;
-        const msgDiv = document.createElement('div'); msgDiv.className = 'message assistant'; msgDiv.id = 'streaming-message';
-        const thinkDiv = document.createElement('div'); thinkDiv.className = 'thinking-content'; thinkDiv.style.display = 'block'; msgDiv.appendChild(thinkDiv);
-        const bubble = document.createElement('div'); bubble.className = 'bubble'; msgDiv.appendChild(bubble);
-        const ts = document.createElement('div'); ts.className = 'timestamp'; ts.textContent = formatTime(); msgDiv.appendChild(ts);
-        messageList.appendChild(msgDiv); messageList.scrollTop = messageList.scrollHeight;
+
+        // 创建流式消息容器
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message assistant';
+        msgDiv.id = 'streaming-message';
+
+        // 思考内容容器（默认隐藏，有内容才显示）
+        const thinkDiv = document.createElement('div');
+        thinkDiv.className = 'thinking-content';
+        thinkDiv.style.display = 'none';
+        msgDiv.appendChild(thinkDiv);
+
+        // 消息气泡
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        msgDiv.appendChild(bubble);
+
+        // 时间戳
+        const ts = document.createElement('div');
+        ts.className = 'timestamp';
+        ts.textContent = formatTime();
+        msgDiv.appendChild(ts);
+
+        messageList.appendChild(msgDiv);
+        messageList.scrollTop = messageList.scrollHeight;
+
         let fullReply = '', fullThinking = '';
         try {
-          const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) });
+          const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text })
+          });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-          const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+
           while (true) {
-            const { done, value } = await reader.read(); if (done) break;
-            buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
             for (const line of lines) {
-              const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith('data: ')) continue;
               const payload = trimmed.slice(6);
+
               try {
                 const json = JSON.parse(payload);
+
                 if (json.thinking) {
-                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
+                  // 去重追加思考内容
                   if (!fullThinking.endsWith(json.thinking)) {
                     fullThinking += json.thinking;
                   }
-                  if (!currentThinkingContainer) {
-                    currentThinkingContainer = document.createElement('div');
-                    currentThinkingContainer.className = 'thinking-content';
-                    currentThinkingContainer.style.display = 'block';
-                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
-                  }
-                  currentThinkingContainer.textContent = fullThinking;
+                  thinkDiv.textContent = fullThinking;
+                  thinkDiv.style.display = 'block'; // 有内容就显示
+                  messageList.scrollTop = messageList.scrollHeight;
                 }
-                if (json.content) { fullReply += json.content; bubble.textContent = fullReply; }
-                if (json.done) {
-                  msgDiv.remove();
-                  addMessage('assistant', fullReply, fullThinking, null, json.assistantMessageId || null, true);
 
-                  // 给刚发送的用户消息补上 msgId 和长按事件
+                if (json.content) {
+                  fullReply += json.content;
+                  bubble.textContent = fullReply;
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
+
+                if (json.done) {
+                  // 【核心修改】不再删除 msgDiv，而是直接在上面做最后加工
+
+                  // 1. 如果有思考内容，创建一个可以折叠的包装器来替换 thinkDiv
+                  if (fullThinking) {
+                    const thinkingEl = createThinkingElement(fullThinking, formatTime());
+                    // 替换掉原来的 thinkDiv
+                    if (thinkingEl && thinkDiv.parentNode) {
+                      thinkDiv.parentNode.replaceChild(thinkingEl, thinkDiv);
+                    }
+                  } else {
+                    // 没有思考内容，直接移除空的 thinkDiv
+                    if (thinkDiv.parentNode) {
+                      thinkDiv.parentNode.removeChild(thinkDiv);
+                    }
+                  }
+
+                  // 2. 将 msgDiv 从流式容器转换为最终消息
+                  msgDiv.id = ''; // 移除流式 ID
+                  if (json.assistantMessageId) {
+                    msgDiv.dataset.messageId = json.assistantMessageId;
+                  }
+
+                  // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
                   if (pendingUserMsg && json.userMessageId) {
                     pendingUserMsg.dataset.messageId = json.userMessageId;
                     const userBubble = pendingUserMsg.querySelector('.bubble');
@@ -784,15 +841,27 @@
                     }
                   }
 
+                  // 4. 处理刷新按钮（只保留最新一条有刷新按钮）
                   const allAsst = messageList.querySelectorAll('.message.assistant');
-                  if (allAsst.length > 1) { const prev = allAsst[allAsst.length - 2]; const oldBtn = prev.querySelector('.refresh-btn'); if (oldBtn) oldBtn.remove(); }
+                  if (allAsst.length > 1) {
+                    const prev = allAsst[allAsst.length - 2];
+                    const oldBtn = prev.querySelector('.refresh-btn');
+                    if (oldBtn) oldBtn.remove();
+                  }
                 }
+
                 if (json.error) throw new Error(json.error);
               } catch (e) { /* ignore */ }
             }
           }
-        } catch (err) { console.error('发送消息失败:', err); bubble.textContent = '❌ 请求失败：' + err.message; }
-        finally { isLoading = false; sendBtn.disabled = false; userInput.focus(); msgDiv.id = ''; }
+        } catch (err) {
+          console.error('发送消息失败:', err);
+          bubble.textContent = '❌ 请求失败：' + err.message;
+        } finally {
+          isLoading = false;
+          sendBtn.disabled = false;
+          userInput.focus();
+        }
       }
 
       async function handleRegenerate(btn, msgDiv) {
