@@ -474,26 +474,53 @@
       }
 
       function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
-        const msgDiv = document.createElement('div'); msgDiv.className = 'message ' + role;
-        if (msgId) msgDiv.dataset.messageId = msgId;
-        if (thinking) { const el = createThinkingElement(thinking, timestamp || formatTime()); if (el) msgDiv.appendChild(el); }
-        else { const ts = document.createElement('div'); ts.className = 'timestamp'; ts.textContent = timestamp || formatTime(); msgDiv.appendChild(ts); }
-        const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.textContent = content;
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message ' + role;
+
+        if (msgId) {
+          msgDiv.dataset.messageId = msgId;
+        }
+
+        // 处理思考内容：完全委托给 createThinkingElement
+        if (thinking) {
+          const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
+          if (thinkingEl) msgDiv.appendChild(thinkingEl);
+          // 注意：有思考时，时间戳已由 createThinkingElement 处理，这里不再重复添加
+        } else {
+          // 无思考时，才单独显示时间戳
+          const ts = document.createElement('div');
+          ts.className = 'timestamp';
+          ts.textContent = timestamp || formatTime();
+          msgDiv.appendChild(ts);
+        }
+
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = content;
+
         if (role === 'user' && msgId) {
-          let timer; bubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
-          bubble.addEventListener('touchend', () => clearTimeout(timer)); bubble.addEventListener('touchmove', () => clearTimeout(timer));
+          let timer;
+          bubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
+          bubble.addEventListener('touchend', () => clearTimeout(timer));
+          bubble.addEventListener('touchmove', () => clearTimeout(timer));
           bubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
-          bubble.addEventListener('mouseup', () => clearTimeout(timer)); bubble.addEventListener('mouseleave', () => clearTimeout(timer));
+          bubble.addEventListener('mouseup', () => clearTimeout(timer));
+          bubble.addEventListener('mouseleave', () => clearTimeout(timer));
         }
         msgDiv.appendChild(bubble);
+
         if (role === 'assistant' && showRefresh) {
-          const btn = document.createElement('span'); btn.className = 'refresh-btn';
-          btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成'));
+          const btn = document.createElement('span');
+          btn.className = 'refresh-btn';
+          btn.appendChild(createRefreshIcon());
+          btn.appendChild(document.createTextNode(' 重新生成'));
           btn.dataset.messageId = msgId || 'temp-' + Date.now();
           btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, msgDiv); });
           msgDiv.appendChild(btn);
         }
-        messageList.appendChild(msgDiv); messageList.scrollTop = messageList.scrollHeight;
+
+        messageList.appendChild(msgDiv);
+        messageList.scrollTop = messageList.scrollHeight;
       }
 
       function addVersionNavigator(groupId, currentVersion, totalVersions, targetMsgElement = null) {
