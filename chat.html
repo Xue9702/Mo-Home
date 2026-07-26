@@ -804,24 +804,47 @@
                 }
 
                 if (json.done) {
-                  // 【核心修改】不再删除 msgDiv，而是直接在上面做最后加工
-
-                  // 1. 如果有思考内容，创建一个可以折叠的包装器来替换 thinkDiv
+                  // 1. 如果有思考内容，原地将 thinkDiv 升级为可折叠容器
                   if (fullThinking) {
-                    const thinkingEl = createThinkingElement(fullThinking, formatTime());
-                    // 替换掉原来的 thinkDiv
-                    if (thinkingEl && thinkDiv.parentNode) {
-                      thinkDiv.parentNode.replaceChild(thinkingEl, thinkDiv);
-                    }
+                    // 创建折叠按钮行
+                    const row = document.createElement('div');
+                    row.style.display = 'flex';
+                    row.style.alignItems = 'center';
+                    row.style.gap = '6px';
+                    row.style.marginTop = '6px';
+
+                    const toggle = document.createElement('span');
+                    toggle.className = 'thinking-toggle';
+                    toggle.textContent = '💭 收起';
+                    toggle.addEventListener('click', () => {
+                      thinkDiv.classList.toggle('open');
+                      toggle.textContent = thinkDiv.classList.contains('open') ? '💭 收起' : '💭 思考';
+                    });
+                    row.appendChild(toggle);
+
+                    // 添加时间戳
+                    const timeSpan = document.createElement('span');
+                    timeSpan.className = 'timestamp';
+                    timeSpan.style.marginTop = '0';
+                    timeSpan.style.padding = '0';
+                    timeSpan.textContent = formatTime();
+                    row.appendChild(timeSpan);
+
+                    // 将按钮行插入到 thinkDiv 前面
+                    thinkDiv.parentNode.insertBefore(row, thinkDiv);
+
+                    // 确保 thinkDiv 展开
+                    thinkDiv.classList.add('open');
+                    thinkDiv.style.display = 'block';
                   } else {
-                    // 没有思考内容，直接移除空的 thinkDiv
+                    // 没有思考内容，移除空的 thinkDiv
                     if (thinkDiv.parentNode) {
                       thinkDiv.parentNode.removeChild(thinkDiv);
                     }
                   }
 
                   // 2. 将 msgDiv 从流式容器转换为最终消息
-                  msgDiv.id = ''; // 移除流式 ID
+                  msgDiv.id = '';
                   if (json.assistantMessageId) {
                     msgDiv.dataset.messageId = json.assistantMessageId;
                   }
@@ -841,7 +864,7 @@
                     }
                   }
 
-                  // 4. 处理刷新按钮（只保留最新一条有刷新按钮）
+                  // 4. 清理上一个助手消息的刷新按钮
                   const allAsst = messageList.querySelectorAll('.message.assistant');
                   if (allAsst.length > 1) {
                     const prev = allAsst[allAsst.length - 2];
