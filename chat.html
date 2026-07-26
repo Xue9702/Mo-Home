@@ -457,7 +457,7 @@
         if (!thinkingText || thinkingText.trim() === '') return null;
         const wrapper = document.createElement('div'); wrapper.style.marginTop = '6px';
         const row = document.createElement('div'); row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.gap = '6px';
-        const toggle = document.createElement('span'); toggle.className = 'thinking-toggle'; toggle.textContent = '💭 思考';
+        const toggle = document.createElement('span'); toggle.className = 'thinking-toggle'; toggle.textContent = '💭 收起';
         row.appendChild(toggle);
         if (timestamp) {
           const tsSpan = document.createElement('span'); tsSpan.className = 'timestamp';
@@ -465,7 +465,9 @@
           row.appendChild(tsSpan);
         }
         wrapper.appendChild(row);
-        const content = document.createElement('div'); content.className = 'thinking-content'; content.textContent = thinkingText.trim();
+        const content = document.createElement('div');
+        content.className = 'thinking-content open'; 
+        content.textContent = thinkingText.trim();
         wrapper.appendChild(content);
         toggle.addEventListener('click', (e) => { e.stopPropagation(); content.classList.toggle('open'); toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考'; });
         return wrapper;
@@ -599,7 +601,19 @@
               try {
                 const json = JSON.parse(payload);
                 if (json.userMessageId) { userMessageId = json.userMessageId; groupId = json.groupId; currentVersion = json.currentVersion; totalVersions = json.totalVersions; }
-                if (json.thinking) { fullThinking += json.thinking; if (!currentThinkingContainer) { currentThinkingContainer = document.createElement('div'); currentThinkingContainer.className = 'thinking-content'; currentThinkingContainer.style.display = 'block'; newAssistantMsg.insertBefore(currentThinkingContainer, newBubble); } currentThinkingContainer.textContent = fullThinking; }
+                if (json.thinking) {
+                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
+                  if (!fullThinking.endsWith(json.thinking)) {
+                    fullThinking += json.thinking;
+                  }
+                  if (!currentThinkingContainer) {
+                    currentThinkingContainer = document.createElement('div');
+                    currentThinkingContainer.className = 'thinking-content';
+                    currentThinkingContainer.style.display = 'block';
+                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
+                  }
+                  currentThinkingContainer.textContent = fullThinking;
+                }
                 if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
                 if (json.done) {
                   const oldTemp = document.querySelector('[data-temp-edit="true"]'); if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
@@ -701,7 +715,19 @@
               const payload = trimmed.slice(6);
               try {
                 const json = JSON.parse(payload);
-                if (json.thinking) { fullThinking += json.thinking; thinkDiv.textContent = fullThinking; }
+                if (json.thinking) {
+                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
+                  if (!fullThinking.endsWith(json.thinking)) {
+                    fullThinking += json.thinking;
+                  }
+                  if (!currentThinkingContainer) {
+                    currentThinkingContainer = document.createElement('div');
+                    currentThinkingContainer.className = 'thinking-content';
+                    currentThinkingContainer.style.display = 'block';
+                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
+                  }
+                  currentThinkingContainer.textContent = fullThinking;
+                }
                 if (json.content) { fullReply += json.content; bubble.textContent = fullReply; }
                 if (json.done) {
                   msgDiv.remove();
@@ -752,7 +778,19 @@
               const payload = trimmed.slice(6);
               try {
                 const json = JSON.parse(payload);
-                if (json.thinking) { fullThinking += json.thinking; if (thinkingEl) thinkingEl.textContent = fullThinking; }
+                if (json.thinking) {
+                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
+                  if (!fullThinking.endsWith(json.thinking)) {
+                    fullThinking += json.thinking;
+                  }
+                  if (!currentThinkingContainer) {
+                    currentThinkingContainer = document.createElement('div');
+                    currentThinkingContainer.className = 'thinking-content';
+                    currentThinkingContainer.style.display = 'block';
+                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
+                  }
+                  currentThinkingContainer.textContent = fullThinking;
+                }
                 if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
                 if (json.error) throw new Error(json.error);
               } catch (e) { console.warn('解析SSE失败:', e, payload); }
