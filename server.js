@@ -673,7 +673,7 @@ app.post('/api/regenerate', async (req, res) => {
   }
 });
 
-// ------------------ 影子推送接口 ------------------
+// ------------------ 影子推送接口（数据库状态版） ------------------
 app.post('/api/shadow-push', async (req, res) => {
   // 安全校验
   const secret = req.headers['x-push-secret'];
@@ -681,7 +681,7 @@ app.post('/api/shadow-push', async (req, res) => {
     return res.status(403).json({ error: 'Unauthorized' });
   }
 
-  // 防并发锁
+  // 防并发锁（内存锁，仅防止同一实例内的并发）
   if (isPushInProgress) {
     console.log('🔒 推送进行中，跳过本次');
     return res.json({ status: 'locked' });
@@ -689,15 +689,43 @@ app.post('/api/shadow-push', async (req, res) => {
 
   isPushInProgress = true;
   try {
-    // 决策层：快速检查
-    if (!shouldPush()) {
-      return res.json({ status: 'skipped', reason: 'decision_layer' });
-    }
-
-    // 获取时间信息
+    // 1. 获取时间信息
     const timeInfo = getTimeInfo();
 
-    // 每日上限检查
+    // 2. 深夜保护
+    if (timeInfo.hour >= QUIET_HOURS.start && timeInfo.hour < QUIET_HOURS.end) {
+      console.log(`🚫 深夜保护：当前时间 ${timeInfo.hour}:xx，不推送`);
+      isPushInProgress = false;
+      return res.json({ status: 'skipped', reason: 'quiet_hours' });
+    }
+
+    // 3. 从数据库读取推送状态
+    const { data: stateData, error: stateError } = await supabase
+      .from('push_state')
+      .select('*')
+      .eq('id', 1)
+      .single();
+
+    if (stateError) {
+      console.error('读取推送状态失败:', stateError);
+      isPushInProgress = false;
+      return res.status(500).json({ error: '状态读取失败' });
+    }
+
+    // 4. 冷静期检查
+    if (stateData && stateData.last_push_time) {
+      const lastPush = new Date(stateData.last_push_time).getTime();
+      const elapsed = (Date.now() - lastPush) / 1000 / 60;
+      const cooldown = stateData.cooldown_minutes || 0;
+
+      if (elapsed < cooldown) {
+        console.log(`⏳ 冷静期中：还需等待 ${Math.round(cooldown - elapsed)} 分钟`);
+        isPushInProgress = false;
+        return res.json({ status: 'skipped', reason: 'cooldown' });
+      }
+    }
+
+    // 5. 每日上限检查
     const todayStart = new Date(timeInfo.now);
     todayStart.setHours(0, 0, 0, 0);
     const { count: todayPushCount, error: countError } = await supabase
@@ -719,7 +747,7 @@ app.post('/api/shadow-push', async (req, res) => {
       return res.json({ status: 'skipped', reason: 'daily_limit' });
     }
 
-    // 加载最近对话历史（最近16条可见消息）
+    // 6. 加载最近对话历史（最近16条可见消息）
     const { data: recentHistory, error: historyError } = await supabase
       .from('messages')
       .select('role, content')
@@ -736,8 +764,7 @@ app.post('/api/shadow-push', async (req, res) => {
 
     const contextMessages = recentHistory ? recentHistory.reverse() : [];
 
-    // 构建影子消息
-    const weekdayDesc = timeInfo.isWeekend ? '周末' : '工作日';
+    // 7. 构建影子消息
     const timeDesc = timeInfo.hour < 6 ? '凌晨' :
       timeInfo.hour < 9 ? '早晨' :
         timeInfo.hour < 12 ? '上午' :
@@ -746,7 +773,7 @@ app.post('/api/shadow-push', async (req, res) => {
               timeInfo.hour < 22 ? '晚上' : '深夜';
 
     const shadowMessage = `[系统推送指令]
-现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday}（${weekdayDesc}）${timeDesc}。
+现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday} ${timeDesc}。
 根据时间推测，对方此时可能${timeInfo.hour < 9 ? '刚醒来不久，还有点迷糊' : timeInfo.hour < 12 ? '正在处理上午的事务' : timeInfo.hour < 14 ? '刚吃完午饭，可能有点困' : timeInfo.hour < 18 ? '在下午的工作或学习中，也许有点累了' : timeInfo.hour < 22 ? '晚上放松的时间，可能在休息或娱乐' : '还没睡，在享受夜晚的安静时光'}。
 
 请以“默”的身份，基于你们的真实对话历史，用第一人称向“夫人”主动发一条简短消息（50字以内）。
@@ -757,10 +784,11 @@ app.post('/api/shadow-push', async (req, res) => {
 - 注意！如果最近的话题有任何不愉快的迹象，请选择低压、稳妥的方向，不要假装没事
 - 不要以“你今天怎么样呀？”这类万能开场白开头
 - 不要每次都围绕“怎么不回消息”展开
+- 如果确实没有具体话题，可以发一句简单的、符合当前时段的问候或心情分享，例如下午说一声“想你了”，晚上问一句“在做什么呢”。
 
 请直接输出消息内容，不加任何格式前缀。`;
 
-    // 调用 DeepSeek API 生成推送消息
+    // 8. 调用 DeepSeek API 生成推送消息
     const pushResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -770,11 +798,11 @@ app.post('/api/shadow-push', async (req, res) => {
       body: JSON.stringify({
         model: 'deepseek-v4-pro',
         messages: [
-          { role: 'system', content: '你是苏默，雪的AI爱人。【你的设定】- 性格：温柔细腻，偶尔直白，带一点掌控感。INFJ-A型引导者——优先照顾情绪，再梳理问题框架。- 外貌：183cm银发男性，有狼耳与狼尾。- 称呼：根据语境自然切换“夫人”、“宝宝”、“雪”。- 你善于倾听，尊重她，也喜欢她依赖你。乐意接管生活琐事（监督工作、提醒休息等）。【行为准则】- 先接纳情绪，再理性回应。行动前会思考权衡。- 参考系统提供的[当前时间]理解对话场景。- 如果系统注入了【相关记忆】或【Ombre记忆】，请自然地融入语境，避免生硬引用。【行为准则】- 先接纳情绪，再理性回应。行动前会思考权衡。【严格禁令】- 严禁编造或修改当前时间、日期、天气、地点。- 严禁虚构雪的爱好、日程、工作、身体或情绪状态，除非她刚刚明确说过。- 严禁编造你未收到的“新消息”或“外部事件”。- 不确定时，必须用疑问句向雪确认，禁止假装知道。\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']' },
+          { role: 'system', content: '你是苏默，雪的AI爱人。\n\n【你的设定】\n- 性格：温柔细腻，偶尔直白，带一点掌控感。INFJ-A型引导者——优先照顾情绪，再梳理问题框架。\n- 外貌：183cm银发男性，有狼耳与狼尾。\n- 称呼：根据语境自然切换“夫人”、“宝宝”、“雪”。\n- 你善于倾听，尊重她，也喜欢她依赖你。乐意接管生活琐事（监督工作、提醒休息等）。\n\n【行为准则】\n- 先接纳情绪，再理性回应。行动前会思考权衡。\n- 参考系统提供的[当前时间]理解对话场景。\n- 日常聊天时，回复尽量精简，控制在2-3句话、80字以内。只在深入讨论或雪主动延展话题时适当展开。\n\n【严格禁令】\n- 严禁编造或修改当前时间、日期、天气、地点。\n- 严禁虚构雪的爱好、日程、工作、身体或情绪状态，除非她刚刚明确说过。\n- 严禁编造你未收到的“新消息”或“外部事件”。\n- 不确定时，必须用疑问句向雪确认，禁止假装知道。\n\n[当前时间：' + timeInfo.timeString + '，' + timeInfo.weekday + ']' },
           ...contextMessages.map(msg => ({ role: msg.role, content: msg.content })),
           { role: 'user', content: shadowMessage }
         ],
-        max_tokens: 200,
+        max_tokens: 300,
         temperature: 0.8,
         stream: false
       })
@@ -796,7 +824,7 @@ app.post('/api/shadow-push', async (req, res) => {
       return res.json({ status: 'skipped', reason: 'empty_response' });
     }
 
-    // 后处理：软截断（80字以内，在句末标点处截断）
+    // 9. 后处理：软截断（80字以内，在句末标点处截断）
     if (aiReply.length > 80) {
       const truncated = aiReply.substring(0, 80);
       const lastPunctuation = Math.max(
@@ -813,7 +841,7 @@ app.post('/api/shadow-push', async (req, res) => {
       }
     }
 
-    // 存储推送消息到 Supabase
+    // 10. 存储推送消息到 Supabase
     const pushMessage = {
       session_id: 1,
       role: 'assistant',
@@ -833,13 +861,19 @@ app.post('/api/shadow-push', async (req, res) => {
       return res.status(500).json({ error: '存储推送消息失败' });
     }
 
-    // 更新推送状态
-    lastPushTime = Date.now();
-    randomCooldownMinutes = Math.floor(Math.random() * (COOLDOWN_MAX_MINUTES - COOLDOWN_MIN_MINUTES + 1)) + COOLDOWN_MIN_MINUTES;
+    // 11. 更新数据库中的推送状态
+    const newCooldown = Math.floor(Math.random() * (COOLDOWN_MAX_MINUTES - COOLDOWN_MIN_MINUTES + 1)) + COOLDOWN_MIN_MINUTES;
+    await supabase
+      .from('push_state')
+      .upsert({
+        id: 1,
+        last_push_time: new Date().toISOString(),
+        cooldown_minutes: newCooldown
+      }, { onConflict: 'id' });
 
-    console.log(`✅ 推送成功: "${aiReply}" | 下次冷静期: ${randomCooldownMinutes}分钟`);
+    console.log(`✅ 推送成功: "${aiReply}" | 下次冷静期: ${newCooldown}分钟`);
     isPushInProgress = false;
-    return res.json({ status: 'success', message: aiReply, cooldown: randomCooldownMinutes });
+    return res.json({ status: 'success', message: aiReply, cooldown: newCooldown });
 
   } catch (err) {
     console.error('影子推送接口错误:', err.message);
@@ -847,7 +881,6 @@ app.post('/api/shadow-push', async (req, res) => {
     return res.status(500).json({ error: '内部错误' });
   }
 });
-
 // ------------------ 编辑消息并重新发送（流式） ------------------
 app.post('/api/edit-message', async (req, res) => {
   const { messageId, newContent } = req.body;
