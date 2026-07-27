@@ -817,8 +817,9 @@
                     toggle.className = 'thinking-toggle';
                     toggle.textContent = '💭 收起';
                     toggle.addEventListener('click', () => {
-                      thinkDiv.classList.toggle('open');
-                      toggle.textContent = thinkDiv.classList.contains('open') ? '💭 收起' : '💭 思考';
+                      const isOpen = thinkDiv.classList.toggle('open');
+                      thinkDiv.style.display = isOpen ? 'block' : 'none';
+                      toggle.textContent = isOpen ? '💭 收起' : '💭 思考';
                     });
                     row.appendChild(toggle);
 
