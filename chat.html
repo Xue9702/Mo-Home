@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Mo-Home - 测试部署</title>
+  <title>Mo-Home</title>
   <style>
     * {
       margin: 0;
@@ -425,7 +425,7 @@
         svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
         svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
         svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        svg.style.verticalAlign = 'middle'; svg.style.marginRight = '3px';
+        svg.style.verticalAlign = 'middle';
         const paths = ['M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16', 'M8 16H3v5'];
         paths.forEach(d => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', d); svg.appendChild(p); });
         return svg;
@@ -515,7 +515,7 @@
 
         // 默认展开，显示心跳线图标
         toggle.appendChild(createActivityIcon());
-        toggle.appendChild(document.createTextNode(' 思考中'));
+        toggle.title = '收起思考';
 
         row.appendChild(toggle);
 
@@ -544,10 +544,10 @@
           toggle.innerHTML = '';
           if (isOpen) {
             toggle.appendChild(createActivityIcon());
-            toggle.appendChild(document.createTextNode(' 思考中'));
+            toggle.title = '收起思考';
           } else {
             toggle.appendChild(createHeartIcon());
-            toggle.appendChild(document.createTextNode(' 思考'));
+            toggle.title = '展开思考';
           }
         });
 
@@ -592,7 +592,7 @@
           const btn = document.createElement('span');
           btn.className = 'refresh-btn';
           btn.appendChild(createRefreshIcon());
-          btn.appendChild(document.createTextNode(' 重新生成'));
+          btn.title = '重新生成';
           btn.dataset.messageId = msgId || 'temp-' + Date.now();
           btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, msgDiv); });
           msgDiv.appendChild(btn);
@@ -787,7 +787,7 @@
             const last = allMsgs[allMsgs.length - 1];
             if (!last.querySelector('.refresh-btn')) {
               const btn = document.createElement('span'); btn.className = 'refresh-btn';
-              btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成'));
+              btn.appendChild(createRefreshIcon()); btn.title = '重新生成';
               btn.dataset.messageId = last.dataset.messageId || 'temp-' + Date.now();
               btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, last); });
               last.appendChild(btn);
@@ -893,7 +893,7 @@
 
                     // 展开状态显示心跳线
                     toggle.appendChild(createActivityIcon());
-                    toggle.appendChild(document.createTextNode(' 思考中'));
+                    toggle.title = '收起思考';
 
                     toggle.addEventListener('click', () => {
                       const isOpen = thinkDiv.classList.toggle('open');
@@ -901,10 +901,10 @@
                       toggle.innerHTML = '';
                       if (isOpen) {
                         toggle.appendChild(createActivityIcon());
-                        toggle.appendChild(document.createTextNode(' 思考中'));
+                        toggle.title = '收起思考';
                       } else {
                         toggle.appendChild(createHeartIcon());
-                        toggle.appendChild(document.createTextNode(' 思考'));
+                        toggle.title = '展开思考';
                       }
                     });
                     row.appendChild(toggle);
@@ -973,7 +973,7 @@
       async function handleRegenerate(btn, msgDiv) {
         if (btn.disabled) return; btn.disabled = true; btn.textContent = '⏳ 生成中...';
         const messageId = btn.dataset.messageId;
-        if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成')); btn.disabled = false; }, 2000); return; }
+        if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }
         try {
           const bubble = msgDiv.querySelector('.bubble'); const thinkingEl = msgDiv.querySelector('.thinking-content');
           if (bubble) bubble.textContent = ''; if (thinkingEl) thinkingEl.textContent = '';
@@ -1007,9 +1007,9 @@
               } catch (e) { console.warn('解析SSE失败:', e, payload); }
             }
           }
-          if (fullReply) { btn.textContent = '✅ 已刷新'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成')); btn.disabled = false; }, 2000); }
+          if (fullReply) { btn.textContent = '✅ 已刷新'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); }
           else throw new Error('未收到有效回复');
-        } catch (err) { console.error('重新生成失败:', err); btn.textContent = '❌ 失败，点击重试'; btn.disabled = false; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.appendChild(document.createTextNode(' 重新生成')); }, 3000); }
+        } catch (err) { console.error('重新生成失败:', err); btn.textContent = '❌ 失败，点击重试'; btn.disabled = false; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; }, 3000); }
       }
 
       unlockBtn.addEventListener('click', () => {
