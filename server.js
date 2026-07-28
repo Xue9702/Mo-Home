@@ -456,6 +456,23 @@ app.post('/api/chat', async (req, res) => {
       console.error('记忆存储失败:', storeErr.message);
     }
 
+    // 【提前】解析并移除 post_moment 工具调用标签
+    const postMomentRegex = /\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
+    const postMomentMatch = fullReply.match(postMomentRegex);
+    if (postMomentMatch) {
+      try {
+        const toolParams = JSON.parse(postMomentMatch[1]);
+        await saveMoMoment(
+          toolParams.content || '',
+          toolParams.context_note || ''
+        );
+        // 从回复中彻底移除标签及之后的内容
+        fullReply = fullReply.replace(postMomentRegex, '').trim();
+      } catch (e) {
+        console.error('[Moments] 解析 post_moment 失败:', e.message);
+      }
+    }
+
     // 保存完整的助手回复到 Supabase（包含思考内容）
     const assistantMessage = {
       session_id: 1,
