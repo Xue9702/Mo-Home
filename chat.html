@@ -418,6 +418,41 @@
         return `${month}-${day} ${hours}:${minutes}:${seconds}`;
       }
 
+      function createRefreshIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        svg.style.verticalAlign = 'middle'; svg.style.marginRight = '3px';
+        const paths = ['M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16', 'M8 16H3v5'];
+        paths.forEach(d => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', d); svg.appendChild(p); });
+        return svg;
+      }
+
+      function createChevronLeftIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm15 18-6-6 6-6');
+        svg.appendChild(p); return svg;
+      }
+
+      function createChevronRightIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm9 18 6-6-6-6');
+        svg.appendChild(p); return svg;
+      }
+
       // 心跳线图标（展开状态）
       function createActivityIcon() {
         const svgNS = 'http://www.w3.org/2000/svg';
@@ -456,41 +491,6 @@
         path.setAttribute('d', 'M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5');
         svg.appendChild(path);
         return svg;
-      }
-
-      function createRefreshIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        svg.style.verticalAlign = 'middle'; svg.style.marginRight = '3px';
-        const paths = ['M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16', 'M8 16H3v5'];
-        paths.forEach(d => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', d); svg.appendChild(p); });
-        return svg;
-      }
-
-      function createChevronLeftIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm15 18-6-6 6-6');
-        svg.appendChild(p); return svg;
-      }
-
-      function createChevronRightIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm9 18 6-6-6-6');
-        svg.appendChild(p); return svg;
       }
 
       function createThinkingElement(thinkingText, timestamp = null) {
