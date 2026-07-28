@@ -47,7 +47,6 @@ async function updatePushState(lastPushTimeISO, cooldownMinutes) {
 
 const app = express();
 app.use(express.json());
-app.use((req, res, next) => { res.setHeader('Content-Type', 'application/json; charset=utf-8'); next(); }); // 新增：强制 UTF-8
 const port = process.env.PORT || 3000;
 
 // ================== 原有 Supabase 配置 ==================
