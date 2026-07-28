@@ -438,6 +438,9 @@ app.post('/api/chat', async (req, res) => {
       console.error('记忆存储失败:', storeErr.message);
     }
 
+    // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
+    console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
+
     // 【提前】解析并移除 post_moment 工具调用标签
     let momentPostResult = null;
     const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
@@ -682,6 +685,9 @@ app.post('/api/regenerate', async (req, res) => {
       res.end();
       return;
     }
+
+    // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
+    console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
     // 解析并移除 post_moment 工具调用标签
     const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
@@ -1458,6 +1464,9 @@ app.post('/api/edit-message', async (req, res) => {
       res.end();
       return;
     }
+
+    // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
+    console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
     // 解析并移除 post_moment 工具调用标签
     const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
