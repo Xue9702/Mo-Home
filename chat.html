@@ -89,16 +89,12 @@
     }
 
     .thinking-toggle {
-      font-size: 12px;
-      color: #d0d0d0;
+      background-color: transparent;
+      /* 去掉灰色底框 */
+      color: #888;
       cursor: pointer;
-      margin-top: 4px;
+      font-size: 12px;
       user-select: none;
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      background-color: #4a4a4a;
-      transition: background-color 0.15s;
     }
 
     .thinking-toggle:hover {
@@ -106,17 +102,17 @@
     }
 
     .thinking-content {
+      background-color: transparent;
+      /* 背景完全透明 */
+      color: #555;
+      /* 深灰色文字，在白底上可读 */
+      border-left: 2px solid #d0d0d0;
+      /* 保留左侧细线，用作视觉引导 */
+      padding: 6px 12px;
+      margin-top: 2px;
       font-size: 13px;
-      color: #d0d0d0;
-      background-color: #4a4a4a;
-      border-left-color: #888;
-      padding: 8px 12px;
-      border-radius: 10px;
-      margin-top: 4px;
       white-space: pre-wrap;
       word-wrap: break-word;
-      display: none;
-      border-left: 3px solid #ccc;
     }
 
     .thinking-content.open {
@@ -128,10 +124,6 @@
       color: #b0b0b0;
       margin-top: 4px;
       padding: 0 4px;
-    }
-
-    .message.assistant .timestamp {
-      color: #c0c0c0;
     }
 
     .input-area {
