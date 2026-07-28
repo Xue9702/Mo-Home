@@ -268,7 +268,6 @@ async function shouldPush() {
   return true;
 }
 
-// ------------------ 对话接口（带 Supabase 存储） ------------------
 // ------------------ 对话接口（流式响应） ------------------
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
@@ -684,18 +683,18 @@ app.post('/api/regenerate', async (req, res) => {
       return;
     }
 
-    // 解析并执行 post_moment 工具调用
-    let momentPostResult = null;
-    const postMomentMatch = fullReply.match(/\[POST_MOMENT\]({[\s\S]*?})\n?/);
+    // 解析并移除 post_moment 工具调用标签
+    const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
+    const postMomentMatch = fullReply.match(postMomentRegex);
     if (postMomentMatch) {
       try {
         const toolParams = JSON.parse(postMomentMatch[1]);
-        momentPostResult = await saveMoMoment(
+        await saveMoMoment(
           toolParams.content || '',
           toolParams.context_note || ''
         );
-        // 从回复中移除工具调用标签
-        fullReply = fullReply.replace(/\[POST_MOMENT\][\s\S]*?\n?/, '').trim();
+        // 从回复中彻底移除标签及之后的内容
+        fullReply = fullReply.replace(postMomentRegex, '').trim();
       } catch (e) {
         console.error('[Moments] 解析 post_moment 失败:', e.message);
       }
@@ -1460,18 +1459,18 @@ app.post('/api/edit-message', async (req, res) => {
       return;
     }
 
-    // 解析并执行 post_moment 工具调用
-    let momentPostResult = null;
-    const postMomentMatch = fullReply.match(/\[POST_MOMENT\]({[\s\S]*?})\n?/);
+    // 解析并移除 post_moment 工具调用标签
+    const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
+    const postMomentMatch = fullReply.match(postMomentRegex);
     if (postMomentMatch) {
       try {
         const toolParams = JSON.parse(postMomentMatch[1]);
-        momentPostResult = await saveMoMoment(
+        await saveMoMoment(
           toolParams.content || '',
           toolParams.context_note || ''
         );
-        // 从回复中移除工具调用标签
-        fullReply = fullReply.replace(/\[POST_MOMENT\][\s\S]*?\n?/, '').trim();
+        // 从回复中彻底移除标签及之后的内容
+        fullReply = fullReply.replace(postMomentRegex, '').trim();
       } catch (e) {
         console.error('[Moments] 解析 post_moment 失败:', e.message);
       }
