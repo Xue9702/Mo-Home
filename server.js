@@ -441,26 +441,28 @@ app.post('/api/chat', async (req, res) => {
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
     console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
-    // 【提前】解析并移除 post_moment 工具调用标签
-    let momentPostResult = null;
-    const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
-    const postMomentMatch = fullReply.match(postMomentRegex);
-    if (postMomentMatch) {
+    // 【提前】解析并移除 post_moment 工具调用标签（纯字符串分割版）
+    const postMomentMarker = '[POST_MOMENT]';
+    const markerIndex = fullReply.indexOf(postMomentMarker);
+
+    if (markerIndex !== -1) {
+      // 提取标签之后的所有内容（即 JSON 字符串）
+      const afterMarker = fullReply.substring(markerIndex + postMomentMarker.length).trim();
+
       try {
-        const toolParams = JSON.parse(postMomentMatch[1]);
+        // 尝试解析 JSON
+        const toolParams = JSON.parse(afterMarker);
         await saveMoMoment(
           toolParams.content || '',
           toolParams.context_note || ''
         );
-        // 从回复中彻底移除标签及之后的内容
-        // 从标签开始位置截断，只保留标签之前的内容
-        const matchIndex = fullReply.search(postMomentRegex);
-        if (matchIndex !== -1) {
-          fullReply = fullReply.substring(0, matchIndex).trim();
-        }
+        console.log('✅ [Moments] 朋友圈动态已成功发布');
       } catch (e) {
-        console.error('[Moments] 解析 post_moment 失败:', e.message);
+        console.error('[Moments] JSON解析失败，原始内容:', afterMarker.substring(0, 100));
       }
+
+      // 无论如何，把标签及之后的内容全部砍掉
+      fullReply = fullReply.substring(0, markerIndex).trim();
     }
 
     // 保存完整的助手回复到 Supabase（包含思考内容）
@@ -693,25 +695,28 @@ app.post('/api/regenerate', async (req, res) => {
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
     console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
-    // 解析并移除 post_moment 工具调用标签
-    const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
-    const postMomentMatch = fullReply.match(postMomentRegex);
-    if (postMomentMatch) {
+    // 【提前】解析并移除 post_moment 工具调用标签（纯字符串分割版）
+    const postMomentMarker = '[POST_MOMENT]';
+    const markerIndex = fullReply.indexOf(postMomentMarker);
+
+    if (markerIndex !== -1) {
+      // 提取标签之后的所有内容（即 JSON 字符串）
+      const afterMarker = fullReply.substring(markerIndex + postMomentMarker.length).trim();
+
       try {
-        const toolParams = JSON.parse(postMomentMatch[1]);
+        // 尝试解析 JSON
+        const toolParams = JSON.parse(afterMarker);
         await saveMoMoment(
           toolParams.content || '',
           toolParams.context_note || ''
         );
-        // 从回复中彻底移除标签及之后的内容
-        // 从标签开始位置截断，只保留标签之前的内容
-        const matchIndex = fullReply.search(postMomentRegex);
-        if (matchIndex !== -1) {
-          fullReply = fullReply.substring(0, matchIndex).trim();
-        }
+        console.log('✅ [Moments] 朋友圈动态已成功发布');
       } catch (e) {
-        console.error('[Moments] 解析 post_moment 失败:', e.message);
+        console.error('[Moments] JSON解析失败，原始内容:', afterMarker.substring(0, 100));
       }
+
+      // 无论如何，把标签及之后的内容全部砍掉
+      fullReply = fullReply.substring(0, markerIndex).trim();
     }
 
     // 4. 更新数据库中的回复
@@ -1476,25 +1481,28 @@ app.post('/api/edit-message', async (req, res) => {
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
     console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
-    // 解析并移除 post_moment 工具调用标签
-    const postMomentRegex = /\s*\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
-    const postMomentMatch = fullReply.match(postMomentRegex);
-    if (postMomentMatch) {
+    // 【提前】解析并移除 post_moment 工具调用标签（纯字符串分割版）
+    const postMomentMarker = '[POST_MOMENT]';
+    const markerIndex = fullReply.indexOf(postMomentMarker);
+
+    if (markerIndex !== -1) {
+      // 提取标签之后的所有内容（即 JSON 字符串）
+      const afterMarker = fullReply.substring(markerIndex + postMomentMarker.length).trim();
+
       try {
-        const toolParams = JSON.parse(postMomentMatch[1]);
+        // 尝试解析 JSON
+        const toolParams = JSON.parse(afterMarker);
         await saveMoMoment(
           toolParams.content || '',
           toolParams.context_note || ''
         );
-        // 从回复中彻底移除标签及之后的内容
-        // 从标签开始位置截断，只保留标签之前的内容
-        const matchIndex = fullReply.search(postMomentRegex);
-        if (matchIndex !== -1) {
-          fullReply = fullReply.substring(0, matchIndex).trim();
-        }
+        console.log('✅ [Moments] 朋友圈动态已成功发布');
       } catch (e) {
-        console.error('[Moments] 解析 post_moment 失败:', e.message);
+        console.error('[Moments] JSON解析失败，原始内容:', afterMarker.substring(0, 100));
       }
+
+      // 无论如何，把标签及之后的内容全部砍掉
+      fullReply = fullReply.substring(0, markerIndex).trim();
     }
 
     // 8. 存储新助手回复
