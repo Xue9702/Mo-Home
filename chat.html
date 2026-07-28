@@ -563,20 +563,9 @@
         }
 
         if (thinking) {
+          // 直接使用 createThinkingElement，它已经处理好了所有逻辑，包括默认展开和按钮
           const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
-          if (thinkingEl) {
-            // 【关键修复】强制展开思考内容
-            const contentDiv = thinkingEl.querySelector('.thinking-content');
-            if (contentDiv) {
-              contentDiv.classList.add('open');        // 确保展开
-              contentDiv.style.display = 'block';      // 强制可见
-            }
-            const toggle = thinkingEl.querySelector('.thinking-toggle');
-            if (toggle) {
-              toggle.textContent = '💭 收起';          // 同步按钮文字
-            }
-            msgDiv.appendChild(thinkingEl);
-          }
+          if (thinkingEl) msgDiv.appendChild(thinkingEl);
         } else {
           const ts = document.createElement('div');
           ts.className = 'timestamp';
