@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>朋友圈 · Mo-Home</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+            background-color: #ffffff;
+            min-height: 100vh;
+            padding-bottom: 100px;
+        }
+
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #fff;
+            border-bottom: 1px solid #eee;
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        .back-btn {
+            cursor: pointer;
+            color: #1e90ff;
+            font-size: 15px;
+            background: none;
+            border: none;
+        }
+
+        /* 发帖区 */
+        .post-box {
+            margin: 16px;
+            padding: 14px;
+            border: 1px solid #e9e9e9;
+            border-radius: 16px;
+            background: #fafafa;
+        }
+
+        .post-box textarea {
+            width: 100%;
+            border: none;
+            resize: none;
+            font-size: 15px;
+            font-family: inherit;
+            outline: none;
+            background: transparent;
+            min-height: 48px;
+        }
+
+        .post-box .actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+
+        .post-box button {
+            background: #1e90ff;
+            color: #fff;
+            border: none;
+            border-radius: 20px;
+            padding: 8px 20px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .post-box button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        /* 动态卡片 */
+        .moment-card {
+            margin: 0 16px 16px;
+            padding: 16px;
+            border-radius: 16px;
+            background: #fff;
+            border: 1px solid #eee;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+        }
+
+        .moment-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .moment-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        .avatar-mo {
+            background: #3a3a3a;
+            color: #fff;
+        }
+
+        .avatar-xue {
+            background: #ffe4e6;
+            color: #d44;
+        }
+
+        .moment-author {
+            font-weight: 500;
+            font-size: 15px;
+        }
+
+        .moment-time {
+            font-size: 12px;
+            color: #999;
+            margin-left: auto;
+        }
+
+        .moment-content {
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .moment-reply {
+            margin-top: 10px;
+            padding: 10px 14px;
+            background: #f8f8f8;
+            border-radius: 12px;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .moment-actions {
+            display: flex;
+            gap: 16px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #888;
+        }
+
+        .moment-actions span {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .moment-actions .liked {
+            color: #e74c3c;
+        }
+
+        /* 评论列表 */
+        .comments-section {
+            margin-top: 8px;
+            border-top: 1px solid #f0f0f0;
+            padding-top: 8px;
+        }
+
+        .comment-item {
+            font-size: 13px;
+            margin-bottom: 6px;
+            line-height: 1.5;
+        }
+
+        .comment-author {
+            font-weight: 500;
+        }
+
+        .comment-input-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .comment-input-row input {
+            flex: 1;
+            border: 1px solid #e9e9e9;
+            border-radius: 20px;
+            padding: 6px 14px;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .comment-input-row button {
+            background: #1e90ff;
+            color: #fff;
+            border: none;
+            border-radius: 20px;
+            padding: 6px 16px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #ccc;
+            padding: 60px 20px;
+            font-size: 15px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <button class="back-btn" onclick="window.location.href='/chat.html'">← 返回</button>
+        <h1>朋友圈</h1>
+        <div></div>
+    </div>
+
+    <!-- 发帖区 -->
+    <div class="post-box">
+        <textarea id="postContent" placeholder="说点什么吧…" rows="2"></textarea>
+        <div class="actions">
+            <button id="postBtn" onclick="postMoment()">发布</button>
+        </div>
+    </div>
+
+    <!-- 动态列表 -->
+    <div id="momentList"></div>
+
+    <script>
+        const API = ''; // 同域，无需前缀
+
+        async function loadMoments() {
+            const list = document.getElementById('momentList');
+            try {
+                const res = await fetch('/api/moments');
+                const data = await res.json();
+                const entries = data.entries || [];
+                if (entries.length === 0) {
+                    list.innerHTML = '<div class="empty-state">还没有动态，发一条吧~</div>';
+                    return;
+                }
+                list.innerHTML = entries.map(m => renderMoment(m)).join('');
+            } catch (e) {
+                list.innerHTML = '<div class="empty-state">加载失败，请刷新重试</div>';
+            }
+        }
+
+        function renderMoment(m) {
+            const isMo = m.author === 'mo';
+            const avatar = isMo ? '<div class="moment-avatar avatar-mo">默</div>' : '<div class="moment-avatar avatar-xue">雪</div>';
+            const authorName = isMo ? '默' : '雪';
+            const time = new Date(m.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+            let replyHtml = '';
+            if (m.reply_content) {
+                replyHtml = `<div class="moment-reply"><strong>默：</strong>${escapeHtml(m.reply_content)}</div>`;
+            } else if (m.reply_status === 'pending') {
+                replyHtml = '<div class="moment-reply" style="color:#bbb;">默还在想怎么回复…</div>';
+            }
+
+            const likeClass = isMo ? (m.xue_liked ? 'liked' : '') : (m.liked ? 'liked' : '');
+            const likeText = isMo ? (m.xue_liked ? '❤️' : '🤍') : (m.liked ? '❤️' : '🤍');
+            const likeAction = `likeMoment('${m.id}', '${m.author}')`;
+
+            let commentsHtml = '';
+            if (m.comments && m.comments.length > 0) {
+                commentsHtml = `
+          <div class="comments-section">
+            ${m.comments.map(c => `
+              <div class="comment-item">
+                <span class="comment-author">${c.author === 'mo' ? '默' : '雪'}:</span>
+                ${escapeHtml(c.content)}
+              </div>
+            `).join('')}
+          </div>`;
+            }
+
+            return `
+        <div class="moment-card" id="moment-${m.id}">
+          <div class="moment-header">
+            ${avatar}
+            <span class="moment-author">${authorName}</span>
+            <span class="moment-time">${time}</span>
+          </div>
+          <div class="moment-content">${escapeHtml(m.content)}</div>
+          ${replyHtml}
+          ${commentsHtml}
+          <div class="moment-actions">
+            <span onclick="${likeAction}">${likeText} 赞</span>
+            <span onclick="toggleCommentInput('${m.id}')">💬 评论</span>
+          </div>
+          <div id="comment-input-${m.id}" style="display:none;" class="comment-input-row">
+            <input id="comment-text-${m.id}" placeholder="写评论…">
+            <button onclick="submitComment('${m.id}')">发送</button>
+          </div>
+        </div>
+      `;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        async function postMoment() {
+            const textarea = document.getElementById('postContent');
+            const btn = document.getElementById('postBtn');
+            const content = textarea.value.trim();
+            if (!content) return;
+
+            btn.disabled = true;
+            btn.textContent = '发布中…';
+            try {
+                await fetch('/api/moments', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                textarea.value = '';
+                loadMoments();
+            } catch (e) {
+                alert('发布失败');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '发布';
+            }
+        }
+
+        async function likeMoment(id, author) {
+            const isMo = author === 'mo';
+            const card = document.getElementById(`moment-${id}`);
+            const currentLiked = card.querySelector('.liked') !== null;
+            const newLiked = !currentLiked;
+
+            await fetch(`/api/moments/${id}/like`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ author: isMo ? 'xue' : 'mo', liked: newLiked })
+            });
+            loadMoments();
+        }
+
+        function toggleCommentInput(id) {
+            const div = document.getElementById(`comment-input-${id}`);
+            div.style.display = div.style.display === 'none' ? 'flex' : 'none';
+            if (div.style.display === 'flex') {
+                document.getElementById(`comment-text-${id}`).focus();
+            }
+        }
+
+        async function submitComment(id) {
+            const input = document.getElementById(`comment-text-${id}`);
+            const content = input.value.trim();
+            if (!content) return;
+            await fetch(`/api/moments/${id}/comments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content })
+            });
+            input.value = '';
+            loadMoments();
+        }
+
+        // 初始加载
+        loadMoments();
+    </script>
+</body>
+
+</html>
