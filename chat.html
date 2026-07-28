@@ -368,6 +368,105 @@
       color: #666;
     }
 
+    /* 页面容器 */
+    .page-container {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .page {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+    }
+
+    .page.active {
+      display: flex;
+    }
+
+    /* 聊天页面内的布局调整 */
+    #chatPage .message-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    #chatPage .input-area {
+      flex-shrink: 0;
+    }
+
+    /* 小屋页面内容区 */
+    .home-content {
+      padding: 16px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    /* 底部状态栏 */
+    .tab-bar {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      background-color: #ffffff;
+      border-top: 1px solid #e9e9e9;
+      padding: 8px 0;
+      flex-shrink: 0;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 12px;
+      border-radius: 8px;
+      transition: background 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .tab-btn:hover {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    .tab-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #999;
+      transition: color 0.15s;
+    }
+
+    .tab-btn.active .tab-icon {
+      color: #1e90ff;
+    }
+
+    /* 小屋功能卡片通用样式（提前准备） */
+    .feature-card {
+      background: #ffffff;
+      border: 1px solid #e9e9e9;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 12px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      transition: box-shadow 0.15s;
+    }
+
+    .feature-card:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+    }
+
+    .feature-card .card-icon {
+      color: #555;
+    }
   </style>
   <link rel="manifest" href="/manifest.json">
 </head>
@@ -384,648 +483,860 @@
   </div>
 
   <div id="chatApp">
-    <div class="header">💗 Mo-Home · 与默</div>
-    <div class="message-list" id="messageList"></div>
-    <div class="input-area" id="inputArea">
-      <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
-      <button id="sendBtn">发送</button>
+    <!-- 顶部标题栏 -->
+    <div class="header" id="headerTitle">💗 Mo-Home · 与默</div>
+
+    <!-- 页面容器：用于切换聊天页和小屋页 -->
+    <div class="page-container" id="pageContainer">
+      <!-- 聊天页面 -->
+      <div class="page active" id="chatPage">
+        <div class="message-list" id="messageList"></div>
+        <div class="input-area" id="inputArea">
+          <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
+          <button id="sendBtn">发送</button>
+        </div>
+      </div>
+
+      <!-- 小屋页面（暂时留空，后面填充） -->
+      <div class="page" id="homePage">
+        <div class="home-content">
+          <!-- 这里以后放朋友圈卡片和其他功能按钮 -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部状态栏 -->
+    <div class="tab-bar" id="tabBar">
+      <button class="tab-btn" data-page="homePage" aria-label="小屋">
+        <span class="tab-icon" id="homeIcon"></span>
+      </button>
+      <button class="tab-btn active" data-page="chatPage" aria-label="聊天">
+        <span class="tab-icon" id="chatIcon"></span>
+      </button>
+      <button class="tab-btn" data-page="settingsPage" aria-label="设置">
+        <span class="tab-icon" id="settingsIcon"></span>
+      </button>
     </div>
   </div>
 
   <script>
     (function () {
-      // ---------- DOM ----------
+      // ---------- DOM 元素 ----------
       const loginBox = document.getElementById('loginBox');
       const passwordInput = document.getElementById('passwordInput');
       const unlockBtn = document.getElementById('unlockBtn');
       const loginError = document.getElementById('loginError');
       const chatApp = document.getElementById('chatApp');
+
+      const headerTitle = document.getElementById('headerTitle');
+      const pageContainer = document.getElementById('pageContainer');
+      const chatPage = document.getElementById('chatPage');
+      const homePage = document.getElementById('homePage');
+      const tabBar = document.getElementById('tabBar');
+
       const messageList = document.getElementById('messageList');
       const userInput = document.getElementById('userInput');
       const sendBtn = document.getElementById('sendBtn');
 
+      const homeIcon = document.getElementById('homeIcon');
+      const chatIcon = document.getElementById('chatIcon');
+      const settingsIcon = document.getElementById('settingsIcon');
+
+      // ---------- 页面切换逻辑 ----------
+      const pages = {
+        homePage: { title: '💗 Mo-Home', el: homePage },
+        chatPage: { title: '💗 Mo-Home · 与默', el: chatPage },
+        settingsPage: { title: '⚙️ 设置', el: null } // 设置页暂时没有创建，指向空
+      };
+
+      function switchPage(pageName) {
+        // 1. 切换页面显示
+        Object.keys(pages).forEach(key => {
+          if (pages[key].el) {
+            pages[key].el.classList.toggle('active', key === pageName);
+          }
+        });
+
+        // 2. 更新标题
+        headerTitle.textContent = pages[pageName].title;
+
+        // 3. 更新底部状态栏激活状态
+        tabBar.querySelectorAll('.tab-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.page === pageName);
+        });
+
+        // 4. 刷新图标
+        renderTabIcons(pageName);
+      }
+
+      function renderTabIcons(activePage) {
+        homeIcon.innerHTML = '';
+        homeIcon.appendChild(createHouseIcon(activePage === 'homePage'));
+
+        chatIcon.innerHTML = '';
+        chatIcon.appendChild(createChatIcon(activePage === 'chatPage'));
+
+        settingsIcon.innerHTML = '';
+        settingsIcon.appendChild(createSettingsIcon());
+      }
+
+      // 给状态栏按钮绑定点击事件
+      tabBar.addEventListener('click', (e) => {
+        const btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        const pageName = btn.dataset.page;
+        if (pageName === 'settingsPage') {
+          // 设置页暂时留空，可以以后打开
+          alert('设置页面即将上线~');
+          return;
+        }
+        switchPage(pageName);
+      });
+
+      // 在小屋页面预置一个朋友圈卡片
+      function renderHomePage() {
+        const homeContent = homePage.querySelector('.home-content');
+        if (!homeContent) return;
+        homeContent.innerHTML = '';
+
+        // 朋友圈卡片
+        const card = document.createElement('div');
+        card.className = 'feature-card';
+        card.onclick = () => alert('朋友圈功能开发中，敬请期待~');
+
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'card-icon';
+        iconSpan.appendChild(createOrbitIcon());
+
+        const titleSpan = document.createElement('span');
+        titleSpan.style.fontSize = '14px';
+        titleSpan.style.color = '#333';
+        titleSpan.textContent = '朋友圈';
+
+        card.appendChild(iconSpan);
+        card.appendChild(titleSpan);
+        homeContent.appendChild(card);
+      }
+
+      // 初始化时渲染小屋页面
+      renderHomePage();
+
+      // 初始状态：默认聊天页
+      switchPage('chatPage');
+
+      // ---------- 状态 ----------
       let isLoading = false;
       const CORRECT_PASSWORD = '9702520x';
 
-      // ---------- 工具函数 ----------
-      function formatTime(isoString = null) {
-        let date;
-        if (isoString) { date = new Date(isoString); if (isNaN(date.getTime())) date = new Date(); }
-        else { date = new Date(); }
-        const month = date.getMonth() + 1;
-        const day = date.getDate();
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        const seconds = String(date.getSeconds()).padStart(2, '0');
-        return `${month}-${day} ${hours}:${minutes}:${seconds}`;
+    // ---------- 工具函数 ----------
+    function formatTime(isoString = null) {
+      let date;
+      if (isoString) { date = new Date(isoString); if (isNaN(date.getTime())) date = new Date(); }
+      else { date = new Date(); }
+      const month = date.getMonth() + 1;
+      const day = date.getDate();
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      return `${month}-${day} ${hours}:${minutes}:${seconds}`;
+    }
+
+    function createRefreshIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+      svg.style.verticalAlign = 'middle';
+      const paths = ['M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16', 'M8 16H3v5'];
+      paths.forEach(d => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', d); svg.appendChild(p); });
+      return svg;
+    }
+
+    // ... 在你已有的 createRefreshIcon, createChevronLeftIcon 等函数附近添加 ...
+
+    function createHouseIcon(active = false) {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '24'); svg.setAttribute('height', '24');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+
+      if (active) {
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'M8.62 13.8A2.25 2.25 0 1 1 12 10.836a2.25 2.25 0 1 1 3.38 2.966l-2.626 2.856a.998.998 0 0 1-1.507 0z');
+        svg.appendChild(p1);
       }
+      const p2 = document.createElementNS(svgNS, 'path');
+      p2.setAttribute('d', 'M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
+      svg.appendChild(p2);
+      return svg;
+    }
 
-      function createRefreshIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        svg.style.verticalAlign = 'middle';
-        const paths = ['M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16', 'M8 16H3v5'];
-        paths.forEach(d => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', d); svg.appendChild(p); });
-        return svg;
+    function createChatIcon(active = false) {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '24'); svg.setAttribute('height', '24');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+
+      const p1 = document.createElementNS(svgNS, 'path');
+      p1.setAttribute('d', 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z');
+      svg.appendChild(p1);
+
+      if (active) {
+        const p2 = document.createElementNS(svgNS, 'path');
+        p2.setAttribute('d', 'M12 11h.01');
+        svg.appendChild(p2);
+        const p3 = document.createElementNS(svgNS, 'path');
+        p3.setAttribute('d', 'M16 11h.01');
+        svg.appendChild(p3);
+        const p4 = document.createElementNS(svgNS, 'path');
+        p4.setAttribute('d', 'M8 11h.01');
+        svg.appendChild(p4);
       }
+      return svg;
+    }
 
-      function createChevronLeftIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm15 18-6-6 6-6');
-        svg.appendChild(p); return svg;
+    function createSettingsIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '24'); svg.setAttribute('height', '24');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+
+      const p1 = document.createElementNS(svgNS, 'path');
+      p1.setAttribute('d', 'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915');
+      svg.appendChild(p1);
+      const circle = document.createElementNS(svgNS, 'circle');
+      circle.setAttribute('cx', '12'); circle.setAttribute('cy', '12'); circle.setAttribute('r', '3');
+      svg.appendChild(circle);
+      return svg;
+    }
+
+    function createOrbitIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '32'); svg.setAttribute('height', '32');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+
+      const p1 = document.createElementNS(svgNS, 'path');
+      p1.setAttribute('d', 'M20.341 6.484A10 10 0 0 1 10.266 21.85');
+      svg.appendChild(p1);
+      const p2 = document.createElementNS(svgNS, 'path');
+      p2.setAttribute('d', 'M3.659 17.516A10 10 0 0 1 13.74 2.152');
+      svg.appendChild(p2);
+      const circle1 = document.createElementNS(svgNS, 'circle');
+      circle1.setAttribute('cx', '12'); circle1.setAttribute('cy', '12'); circle1.setAttribute('r', '3');
+      svg.appendChild(circle1);
+      const circle2 = document.createElementNS(svgNS, 'circle');
+      circle2.setAttribute('cx', '19'); circle2.setAttribute('cy', '5'); circle2.setAttribute('r', '2');
+      svg.appendChild(circle2);
+      const circle3 = document.createElementNS(svgNS, 'circle');
+      circle3.setAttribute('cx', '5'); circle3.setAttribute('cy', '19'); circle3.setAttribute('r', '2');
+      svg.appendChild(circle3);
+      return svg;
+    }
+
+    function createChevronLeftIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+      const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm15 18-6-6 6-6');
+      svg.appendChild(p); return svg;
+    }
+
+    function createChevronRightIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+      const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm9 18 6-6-6-6');
+      svg.appendChild(p); return svg;
+    }
+
+    // 心跳线图标（展开状态）
+    function createActivityIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '14');
+      svg.setAttribute('height', '14');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      svg.style.verticalAlign = 'middle';
+      svg.style.marginRight = '2px';
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', 'M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2');
+      svg.appendChild(path);
+      return svg;
+    }
+
+    // 心形图标（收起状态）
+    function createHeartIcon() {
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('width', '14');
+      svg.setAttribute('height', '14');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      svg.style.verticalAlign = 'middle';
+      svg.style.marginRight = '2px';
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', 'M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5');
+      svg.appendChild(path);
+      return svg;
+    }
+
+    function createThinkingElement(thinkingText, timestamp = null) {
+      if (!thinkingText || thinkingText.trim() === '') return null;
+
+      const wrapper = document.createElement('div');
+      wrapper.style.marginTop = '6px';
+
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.gap = '4px';
+
+      const toggle = document.createElement('span');
+      toggle.className = 'thinking-toggle';
+      toggle.style.cursor = 'pointer';
+      toggle.style.display = 'inline-flex';
+      toggle.style.alignItems = 'center';
+      toggle.style.color = '#999';
+      toggle.style.fontSize = '12px';
+      toggle.style.userSelect = 'none';
+
+      // 默认展开，显示心跳线图标
+      toggle.appendChild(createActivityIcon());
+      toggle.title = '收起思考';
+
+      row.appendChild(toggle);
+
+      if (timestamp) {
+        const tsSpan = document.createElement('span');
+        tsSpan.className = 'timestamp';
+        tsSpan.style.marginTop = '0';
+        tsSpan.style.padding = '0';
+        tsSpan.textContent = timestamp;
+        row.appendChild(tsSpan);
       }
+      wrapper.appendChild(row);
 
-      function createChevronRightIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '12'); svg.setAttribute('height', '12');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        const p = document.createElementNS(svgNS, 'path'); p.setAttribute('d', 'm9 18 6-6-6-6');
-        svg.appendChild(p); return svg;
-      }
+      const content = document.createElement('div');
+      content.className = 'thinking-content open';
+      content.style.display = 'block';
+      content.textContent = thinkingText.trim();
+      wrapper.appendChild(content);
 
-      // 心跳线图标（展开状态）
-      function createActivityIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '14');
-        svg.setAttribute('height', '14');
-        svg.setAttribute('viewBox', '0 0 24 24');
-        svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor');
-        svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round');
-        svg.setAttribute('stroke-linejoin', 'round');
-        svg.style.verticalAlign = 'middle';
-        svg.style.marginRight = '2px';
-        const path = document.createElementNS(svgNS, 'path');
-        path.setAttribute('d', 'M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2');
-        svg.appendChild(path);
-        return svg;
-      }
+      toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const isOpen = content.classList.toggle('open');
+        content.style.display = isOpen ? 'block' : 'none';
 
-      // 心形图标（收起状态）
-      function createHeartIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '14');
-        svg.setAttribute('height', '14');
-        svg.setAttribute('viewBox', '0 0 24 24');
-        svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor');
-        svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round');
-        svg.setAttribute('stroke-linejoin', 'round');
-        svg.style.verticalAlign = 'middle';
-        svg.style.marginRight = '2px';
-        const path = document.createElementNS(svgNS, 'path');
-        path.setAttribute('d', 'M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5');
-        svg.appendChild(path);
-        return svg;
-      }
-
-      function createThinkingElement(thinkingText, timestamp = null) {
-        if (!thinkingText || thinkingText.trim() === '') return null;
-
-        const wrapper = document.createElement('div');
-        wrapper.style.marginTop = '6px';
-
-        const row = document.createElement('div');
-        row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.gap = '4px';
-
-        const toggle = document.createElement('span');
-        toggle.className = 'thinking-toggle';
-        toggle.style.cursor = 'pointer';
-        toggle.style.display = 'inline-flex';
-        toggle.style.alignItems = 'center';
-        toggle.style.color = '#999';
-        toggle.style.fontSize = '12px';
-        toggle.style.userSelect = 'none';
-
-        // 默认展开，显示心跳线图标
-        toggle.appendChild(createActivityIcon());
-        toggle.title = '收起思考';
-
-        row.appendChild(toggle);
-
-        if (timestamp) {
-          const tsSpan = document.createElement('span');
-          tsSpan.className = 'timestamp';
-          tsSpan.style.marginTop = '0';
-          tsSpan.style.padding = '0';
-          tsSpan.textContent = timestamp;
-          row.appendChild(tsSpan);
-        }
-        wrapper.appendChild(row);
-
-        const content = document.createElement('div');
-        content.className = 'thinking-content open';
-        content.style.display = 'block';
-        content.textContent = thinkingText.trim();
-        wrapper.appendChild(content);
-
-        toggle.addEventListener('click', function (e) {
-          e.stopPropagation();
-          const isOpen = content.classList.toggle('open');
-          content.style.display = isOpen ? 'block' : 'none';
-
-          // 清空按钮内容，重新添加图标和文字
-          toggle.innerHTML = '';
-          if (isOpen) {
-            toggle.appendChild(createActivityIcon());
-            toggle.title = '收起思考';
-          } else {
-            toggle.appendChild(createHeartIcon());
-            toggle.title = '展开思考';
-          }
-        });
-
-        return wrapper;
-      }
-
-      function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message ' + role;
-
-        if (msgId) {
-          msgDiv.dataset.messageId = msgId;
-        }
-
-        if (thinking) {
-          // 直接使用 createThinkingElement，它已经处理好了所有逻辑，包括默认展开和按钮
-          const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
-          if (thinkingEl) msgDiv.appendChild(thinkingEl);
+        // 清空按钮内容，重新添加图标和文字
+        toggle.innerHTML = '';
+        if (isOpen) {
+          toggle.appendChild(createActivityIcon());
+          toggle.title = '收起思考';
         } else {
-          const ts = document.createElement('div');
-          ts.className = 'timestamp';
-          ts.textContent = timestamp || formatTime();
-          msgDiv.appendChild(ts);
+          toggle.appendChild(createHeartIcon());
+          toggle.title = '展开思考';
         }
+      });
 
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        bubble.textContent = content;
+      return wrapper;
+    }
 
-        if (role === 'user' && msgId) {
-          let timer;
-          bubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
-          bubble.addEventListener('touchend', () => clearTimeout(timer));
-          bubble.addEventListener('touchmove', () => clearTimeout(timer));
-          bubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
-          bubble.addEventListener('mouseup', () => clearTimeout(timer));
-          bubble.addEventListener('mouseleave', () => clearTimeout(timer));
-        }
-        msgDiv.appendChild(bubble);
+    function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message ' + role;
 
-        if (role === 'assistant' && showRefresh) {
-          const btn = document.createElement('span');
-          btn.className = 'refresh-btn';
-          btn.appendChild(createRefreshIcon());
-          btn.title = '重新生成';
-          btn.dataset.messageId = msgId || 'temp-' + Date.now();
-          btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, msgDiv); });
-          msgDiv.appendChild(btn);
-        }
-
-        messageList.appendChild(msgDiv);
-        messageList.scrollTop = messageList.scrollHeight;
+      if (msgId) {
+        msgDiv.dataset.messageId = msgId;
       }
 
-      function addVersionNavigator(groupId, currentVersion, totalVersions, targetMsgElement = null) {
-        const old = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
-        if (old) old.remove();
-
-        const nav = document.createElement('div');
-        nav.className = 'version-nav';
-        nav.dataset.groupId = groupId;
-        nav.dataset.totalVersions = totalVersions;
-        nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0 0;font-size:12px;color:#888;justify-content:flex-end;width:100%;';
-
-        const prevBtn = document.createElement('span'); prevBtn.appendChild(createChevronLeftIcon());
-        const versionText = document.createElement('span'); versionText.className = 'version-text'; versionText.textContent = `${currentVersion}/${totalVersions}`; versionText.style.userSelect = 'none';
-        const nextBtn = document.createElement('span'); nextBtn.appendChild(createChevronRightIcon());
-
-        prevBtn.addEventListener('click', e => { e.stopPropagation(); const cur = parseInt(versionText.textContent.split('/')[0]); if (cur > 1) switchVersion(groupId, cur - 1); });
-        nextBtn.addEventListener('click', e => { e.stopPropagation(); const [cur, tot] = versionText.textContent.split('/').map(Number); if (cur < tot) switchVersion(groupId, cur + 1); });
-
-        nav.appendChild(prevBtn); nav.appendChild(versionText); nav.appendChild(nextBtn);
-
-        // 确定插入目标
-        let target = targetMsgElement;
-        if (!target) {
-          const allUser = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-          let minVer = Infinity;
-          allUser.forEach(m => { const v = parseInt(m.dataset.version); if (v < minVer) { minVer = v; target = m; } });
-        }
-
-        if (target) {
-          target.appendChild(nav);
-        } else {
-          messageList.appendChild(nav);
-        }
-
-        prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
-        nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
-      }
-
-      function switchVersion(groupId, targetVersion) {
-        const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
-        const assistantMessages = document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`);
-
-        let visibleUserMsg = null;
-        userMessages.forEach(msg => {
-          const show = msg.dataset.version === String(targetVersion);
-          msg.style.display = show ? '' : 'none';
-          if (show) visibleUserMsg = msg;
-        });
-
-        assistantMessages.forEach(msg => {
-          msg.style.display = msg.dataset.assistantVersion === String(targetVersion) ? '' : 'none';
-        });
-
-        // 将现有导航器移到当前可见的用户消息内
-        const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
-        if (nav && visibleUserMsg) {
-          visibleUserMsg.appendChild(nav);
-          const versionSpan = nav.querySelector('.version-text');
-          if (versionSpan) versionSpan.textContent = `${targetVersion}/${nav.dataset.totalVersions}`;
-          const prevBtn = nav.querySelector('.prev-btn');
-          const nextBtn = nav.querySelector('.next-btn');
-          if (prevBtn) prevBtn.style.opacity = targetVersion > 1 ? '1' : '0.4';
-          if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions) ? '1' : '0.4';
-        }
-      }
-
-      async function handleEditMessage(msgId, oldContent) {
-        const newText = prompt('编辑消息：', oldContent);
-        if (!newText || newText.trim() === '' || newText === oldContent) return;
-        const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
-        let originalAssistantMsg = null;
-        if (originalUserMsg) {
-          originalUserMsg.dataset.groupId = ''; originalUserMsg.dataset.version = '1';
-          let next = originalUserMsg.nextElementSibling;
-          while (next) {
-            if (next.classList.contains('assistant') && !next.dataset.assistantVersion) { originalAssistantMsg = next; originalAssistantMsg.dataset.groupId = ''; originalAssistantMsg.dataset.assistantVersion = '1'; break; }
-            next = next.nextElementSibling;
-          }
-          originalUserMsg.style.display = 'none';
-          next = originalUserMsg.nextElementSibling;
-          while (next) { if (next.classList.contains('user')) break; next.style.display = 'none'; next = next.nextElementSibling; }
-        }
-        const tempUserMsg = document.createElement('div'); tempUserMsg.className = 'message user'; tempUserMsg.dataset.tempEdit = 'true';
-        const tempBubble = document.createElement('div'); tempBubble.className = 'bubble'; tempBubble.textContent = newText;
-        tempUserMsg.appendChild(tempBubble); messageList.appendChild(tempUserMsg); messageList.scrollTop = messageList.scrollHeight;
-        showTyping();
-        try {
-          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText }) });
-          if (!response.ok) throw new Error('请求失败');
-          removeTyping();
-          let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
-          if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
-          if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
-          const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
-          const newAssistantMsg = document.createElement('div'); newAssistantMsg.className = 'message assistant';
-          const newBubble = document.createElement('div'); newBubble.className = 'bubble'; newAssistantMsg.appendChild(newBubble);
-          messageList.appendChild(newAssistantMsg); currentAssistantBubble = newBubble;
-          while (true) {
-            const { done, value } = await reader.read(); if (done) break;
-            buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
-            for (const line of lines) {
-              const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
-              const payload = trimmed.slice(6);
-              try {
-                const json = JSON.parse(payload);
-                if (json.userMessageId) { userMessageId = json.userMessageId; groupId = json.groupId; currentVersion = json.currentVersion; totalVersions = json.totalVersions; }
-                if (json.thinking) {
-                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
-                  if (!fullThinking.endsWith(json.thinking)) {
-                    fullThinking += json.thinking;
-                  }
-                  if (!currentThinkingContainer) {
-                    currentThinkingContainer = document.createElement('div');
-                    currentThinkingContainer.className = 'thinking-content';
-                    currentThinkingContainer.style.display = 'block';
-                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
-                  }
-                  currentThinkingContainer.textContent = fullThinking;
-                }
-                if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
-                if (json.done) {
-                  const oldTemp = document.querySelector('[data-temp-edit="true"]'); if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
-                  tempUserMsg.removeAttribute('data-temp-edit');
-                  if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
-                  if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
-                  tempUserMsg.dataset.groupId = groupId; tempUserMsg.dataset.version = currentVersion; tempUserMsg.dataset.messageId = userMessageId;
-                  newAssistantMsg.dataset.groupId = groupId; newAssistantMsg.dataset.assistantVersion = currentVersion;
-                  const newBub = tempUserMsg.querySelector('.bubble');
-                  if (newBub && userMessageId) {
-                    let t; newBub.addEventListener('touchstart', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
-                    newBub.addEventListener('touchend', () => clearTimeout(t)); newBub.addEventListener('touchmove', () => clearTimeout(t));
-                    newBub.addEventListener('mousedown', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
-                    newBub.addEventListener('mouseup', () => clearTimeout(t)); newBub.addEventListener('mouseleave', () => clearTimeout(t));
-                  }
-                  addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
-                }
-                if (json.error) throw new Error(json.error);
-              } catch (e) { console.warn('解析SSE失败:', e); }
-            }
-          }
-        } catch (err) { console.error('编辑发送失败:', err); document.querySelector('[data-temp-edit="true"]')?.remove(); removeTyping(); alert('发送失败：' + err.message); }
-      }
-
-      function showTyping() {
-        const div = document.createElement('div'); div.className = 'message assistant'; div.id = 'typingIndicator';
-        const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.style.backgroundColor = '#f0f0f0'; bubble.style.color = '#888';
-        const ind = document.createElement('div'); ind.className = 'typing-indicator'; ind.innerHTML = '<span>●</span><span>●</span><span>●</span>';
-        bubble.appendChild(ind); div.appendChild(bubble); messageList.appendChild(div); messageList.scrollTop = messageList.scrollHeight;
-      }
-
-      function removeTyping() { const el = document.getElementById('typingIndicator'); if (el) el.remove(); }
-
-      async function loadHistory() {
-        try {
-          const response = await fetch('/api/history'); if (!response.ok) return;
-          const data = await response.json();
-          if (!data.messages || data.messages.length === 0) { addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime()); return; }
-          const groupMap = new Map();
-          data.messages.forEach(msg => {
-            const role = msg.role === 'user' ? 'user' : 'assistant';
-            addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id);
-            if (msg.group_id) {
-              if (!groupMap.has(msg.group_id)) groupMap.set(msg.group_id, { userMessages: [], assistantMessages: [], maxVersion: 0 });
-              const group = groupMap.get(msg.group_id); const el = messageList.lastElementChild;
-              if (role === 'user') group.userMessages.push({ element: el, version: msg.version_number || 1, messageId: msg.id });
-              else group.assistantMessages.push({ element: el, version: msg.version_number || 1 });
-              if (msg.version_number && msg.version_number > group.maxVersion) group.maxVersion = msg.version_number;
-            }
-          });
-          groupMap.forEach((group, groupId) => {
-            group.userMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.version = m.version; });
-            group.assistantMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.assistantVersion = m.version; });
-            const versions = group.userMessages.map(m => m.version).filter(v => v != null);
-            const maxVer = Math.max(...versions);
-            switchVersion(groupId, maxVer);
-            // 只有当该编辑组确实存在用户消息时，才创建导航器
-            const latestUserElement = group.userMessages.find(m => m.version === maxVer)?.element;
-            if (latestUserElement && versions.length > 0) {
-              addVersionNavigator(groupId, maxVer, versions.length, latestUserElement);
-            }
-          });
-          const allMsgs = messageList.querySelectorAll('.message.assistant');
-          if (allMsgs.length > 0) {
-            const last = allMsgs[allMsgs.length - 1];
-            if (!last.querySelector('.refresh-btn')) {
-              const btn = document.createElement('span'); btn.className = 'refresh-btn';
-              btn.appendChild(createRefreshIcon()); btn.title = '重新生成';
-              btn.dataset.messageId = last.dataset.messageId || 'temp-' + Date.now();
-              btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, last); });
-              last.appendChild(btn);
-            }
-          }
-        } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
-      }
-
-      async function sendMessage() {
-        const text = userInput.value.trim(); if (!text || isLoading) return;
-        userInput.value = ''; userInput.style.height = 'auto';
-        addMessage('user', text, null, formatTime());
-        const pendingUserMsg = messageList.lastElementChild;
-
-        isLoading = true; sendBtn.disabled = true;
-
-        // 创建流式消息容器
-        const msgDiv = document.createElement('div');
-        msgDiv.className = 'message assistant';
-        msgDiv.id = 'streaming-message';
-
-        // 思考内容容器（默认隐藏，有内容才显示）
-        const thinkDiv = document.createElement('div');
-        thinkDiv.className = 'thinking-content';
-        thinkDiv.style.display = 'none';
-        msgDiv.appendChild(thinkDiv);
-
-        // 消息气泡
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble';
-        msgDiv.appendChild(bubble);
-
-        // 时间戳
+      if (thinking) {
+        // 直接使用 createThinkingElement，它已经处理好了所有逻辑，包括默认展开和按钮
+        const thinkingEl = createThinkingElement(thinking, timestamp || formatTime());
+        if (thinkingEl) msgDiv.appendChild(thinkingEl);
+      } else {
         const ts = document.createElement('div');
         ts.className = 'timestamp';
-        ts.textContent = formatTime();
+        ts.textContent = timestamp || formatTime();
         msgDiv.appendChild(ts);
-
-        messageList.appendChild(msgDiv);
-        messageList.scrollTop = messageList.scrollHeight;
-
-        let fullReply = '', fullThinking = '';
-        try {
-          const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text })
-          });
-          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder('utf-8');
-          let buffer = '';
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed || !trimmed.startsWith('data: ')) continue;
-              const payload = trimmed.slice(6);
-
-              try {
-                const json = JSON.parse(payload);
-
-                if (json.thinking) {
-                  // 去重追加思考内容
-                  if (!fullThinking.endsWith(json.thinking)) {
-                    fullThinking += json.thinking;
-                  }
-                  thinkDiv.textContent = fullThinking;
-                  thinkDiv.style.display = 'block'; // 有内容就显示
-                  messageList.scrollTop = messageList.scrollHeight;
-                }
-
-                if (json.content) {
-                  fullReply += json.content;
-                  bubble.textContent = fullReply;
-                  messageList.scrollTop = messageList.scrollHeight;
-                }
-
-                if (json.done) {
-                  // 1. 如果有思考内容，原地将 thinkDiv 升级为可折叠容器
-                  if (fullThinking) {
-                    const row = document.createElement('div');
-                    row.style.display = 'flex';
-                    row.style.alignItems = 'center';
-                    row.style.gap = '4px';
-                    row.style.marginTop = '6px';
-
-                    const toggle = document.createElement('span');
-                    toggle.className = 'thinking-toggle';
-                    toggle.style.cursor = 'pointer';
-                    toggle.style.display = 'inline-flex';
-                    toggle.style.alignItems = 'center';
-                    toggle.style.color = '#999';
-                    toggle.style.fontSize = '12px';
-                    toggle.style.userSelect = 'none';
-
-                    // 展开状态显示心跳线
-                    toggle.appendChild(createActivityIcon());
-                    toggle.title = '收起思考';
-
-                    toggle.addEventListener('click', () => {
-                      const isOpen = thinkDiv.classList.toggle('open');
-                      thinkDiv.style.display = isOpen ? 'block' : 'none';
-                      toggle.innerHTML = '';
-                      if (isOpen) {
-                        toggle.appendChild(createActivityIcon());
-                        toggle.title = '收起思考';
-                      } else {
-                        toggle.appendChild(createHeartIcon());
-                        toggle.title = '展开思考';
-                      }
-                    });
-                    row.appendChild(toggle);
-
-                    const timeSpan = document.createElement('span');
-                    timeSpan.className = 'timestamp';
-                    timeSpan.style.marginTop = '0';
-                    timeSpan.style.padding = '0';
-                    timeSpan.textContent = formatTime();
-                    row.appendChild(timeSpan);
-
-                    thinkDiv.parentNode.insertBefore(row, thinkDiv);
-                    thinkDiv.classList.add('open');
-                    thinkDiv.style.display = 'block';
-                  } else {
-                    // 没有思考内容，移除空的 thinkDiv
-                    if (thinkDiv.parentNode) {
-                      thinkDiv.parentNode.removeChild(thinkDiv);
-                    }
-                  }
-
-                  // 2. 将 msgDiv 从流式容器转换为最终消息
-                  msgDiv.id = '';
-                  if (json.assistantMessageId) {
-                    msgDiv.dataset.messageId = json.assistantMessageId;
-                  }
-
-                  // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
-                  if (pendingUserMsg && json.userMessageId) {
-                    pendingUserMsg.dataset.messageId = json.userMessageId;
-                    const userBubble = pendingUserMsg.querySelector('.bubble');
-                    if (userBubble) {
-                      let timer;
-                      userBubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
-                      userBubble.addEventListener('touchend', () => clearTimeout(timer));
-                      userBubble.addEventListener('touchmove', () => clearTimeout(timer));
-                      userBubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
-                      userBubble.addEventListener('mouseup', () => clearTimeout(timer));
-                      userBubble.addEventListener('mouseleave', () => clearTimeout(timer));
-                    }
-                  }
-
-                  // 4. 清理上一个助手消息的刷新按钮
-                  const allAsst = messageList.querySelectorAll('.message.assistant');
-                  if (allAsst.length > 1) {
-                    const prev = allAsst[allAsst.length - 2];
-                    const oldBtn = prev.querySelector('.refresh-btn');
-                    if (oldBtn) oldBtn.remove();
-                  }
-                }
-
-                if (json.error) throw new Error(json.error);
-              } catch (e) { /* ignore */ }
-            }
-          }
-        } catch (err) {
-          console.error('发送消息失败:', err);
-          bubble.textContent = '❌ 请求失败：' + err.message;
-        } finally {
-          isLoading = false;
-          sendBtn.disabled = false;
-          userInput.focus();
-        }
       }
 
-      async function handleRegenerate(btn, msgDiv) {
-        if (btn.disabled) return; btn.disabled = true; btn.textContent = '⏳ 生成中...';
-        const messageId = btn.dataset.messageId;
-        if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }
-        try {
-          const bubble = msgDiv.querySelector('.bubble'); const thinkingEl = msgDiv.querySelector('.thinking-content');
-          if (bubble) bubble.textContent = ''; if (thinkingEl) thinkingEl.textContent = '';
-          let fullReply = '', fullThinking = '';
-          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) });
-          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-          const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
-          while (true) {
-            const { done, value } = await reader.read(); if (done) break;
-            buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
-            for (const line of lines) {
-              const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
-              const payload = trimmed.slice(6);
-              try {
-                const json = JSON.parse(payload);
-                if (json.thinking) {
-                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
-                  if (!fullThinking.endsWith(json.thinking)) {
-                    fullThinking += json.thinking;
-                  }
-                  if (!currentThinkingContainer) {
-                    currentThinkingContainer = document.createElement('div');
-                    currentThinkingContainer.className = 'thinking-content';
-                    currentThinkingContainer.style.display = 'block';
-                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
-                  }
-                  currentThinkingContainer.textContent = fullThinking;
-                }
-                if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
-                if (json.error) throw new Error(json.error);
-              } catch (e) { console.warn('解析SSE失败:', e, payload); }
-            }
-          }
-          if (fullReply) { btn.textContent = '✅ 已刷新'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); }
-          else throw new Error('未收到有效回复');
-        } catch (err) { console.error('重新生成失败:', err); btn.textContent = '❌ 失败，点击重试'; btn.disabled = false; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; }, 3000); }
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = content;
+
+      if (role === 'user' && msgId) {
+        let timer;
+        bubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
+        bubble.addEventListener('touchend', () => clearTimeout(timer));
+        bubble.addEventListener('touchmove', () => clearTimeout(timer));
+        bubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
+        bubble.addEventListener('mouseup', () => clearTimeout(timer));
+        bubble.addEventListener('mouseleave', () => clearTimeout(timer));
+      }
+      msgDiv.appendChild(bubble);
+
+      if (role === 'assistant' && showRefresh) {
+        const btn = document.createElement('span');
+        btn.className = 'refresh-btn';
+        btn.appendChild(createRefreshIcon());
+        btn.title = '重新生成';
+        btn.dataset.messageId = msgId || 'temp-' + Date.now();
+        btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, msgDiv); });
+        msgDiv.appendChild(btn);
       }
 
-      unlockBtn.addEventListener('click', () => {
-        if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; loadHistory(); userInput.focus(); loginError.style.display = 'none'; }
-        else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
+      messageList.appendChild(msgDiv);
+      messageList.scrollTop = messageList.scrollHeight;
+    }
+
+    function addVersionNavigator(groupId, currentVersion, totalVersions, targetMsgElement = null) {
+      const old = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
+      if (old) old.remove();
+
+      const nav = document.createElement('div');
+      nav.className = 'version-nav';
+      nav.dataset.groupId = groupId;
+      nav.dataset.totalVersions = totalVersions;
+      nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0 0;font-size:12px;color:#888;justify-content:flex-end;width:100%;';
+
+      const prevBtn = document.createElement('span'); prevBtn.appendChild(createChevronLeftIcon());
+      const versionText = document.createElement('span'); versionText.className = 'version-text'; versionText.textContent = `${currentVersion}/${totalVersions}`; versionText.style.userSelect = 'none';
+      const nextBtn = document.createElement('span'); nextBtn.appendChild(createChevronRightIcon());
+
+      prevBtn.addEventListener('click', e => { e.stopPropagation(); const cur = parseInt(versionText.textContent.split('/')[0]); if (cur > 1) switchVersion(groupId, cur - 1); });
+      nextBtn.addEventListener('click', e => { e.stopPropagation(); const [cur, tot] = versionText.textContent.split('/').map(Number); if (cur < tot) switchVersion(groupId, cur + 1); });
+
+      nav.appendChild(prevBtn); nav.appendChild(versionText); nav.appendChild(nextBtn);
+
+      // 确定插入目标
+      let target = targetMsgElement;
+      if (!target) {
+        const allUser = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
+        let minVer = Infinity;
+        allUser.forEach(m => { const v = parseInt(m.dataset.version); if (v < minVer) { minVer = v; target = m; } });
+      }
+
+      if (target) {
+        target.appendChild(nav);
+      } else {
+        messageList.appendChild(nav);
+      }
+
+      prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
+      nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
+    }
+
+    function switchVersion(groupId, targetVersion) {
+      const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
+      const assistantMessages = document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`);
+
+      let visibleUserMsg = null;
+      userMessages.forEach(msg => {
+        const show = msg.dataset.version === String(targetVersion);
+        msg.style.display = show ? '' : 'none';
+        if (show) visibleUserMsg = msg;
       });
-      passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); } });
-      sendBtn.addEventListener('click', sendMessage);
-      userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-      userInput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
-      passwordInput.focus();
-      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => { });
-      console.log('💗 Mo-Home 已加载');
-    })();
+
+      assistantMessages.forEach(msg => {
+        msg.style.display = msg.dataset.assistantVersion === String(targetVersion) ? '' : 'none';
+      });
+
+      // 将现有导航器移到当前可见的用户消息内
+      const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
+      if (nav && visibleUserMsg) {
+        visibleUserMsg.appendChild(nav);
+        const versionSpan = nav.querySelector('.version-text');
+        if (versionSpan) versionSpan.textContent = `${targetVersion}/${nav.dataset.totalVersions}`;
+        const prevBtn = nav.querySelector('.prev-btn');
+        const nextBtn = nav.querySelector('.next-btn');
+        if (prevBtn) prevBtn.style.opacity = targetVersion > 1 ? '1' : '0.4';
+        if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions) ? '1' : '0.4';
+      }
+    }
+
+    async function handleEditMessage(msgId, oldContent) {
+      const newText = prompt('编辑消息：', oldContent);
+      if (!newText || newText.trim() === '' || newText === oldContent) return;
+      const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
+      let originalAssistantMsg = null;
+      if (originalUserMsg) {
+        originalUserMsg.dataset.groupId = ''; originalUserMsg.dataset.version = '1';
+        let next = originalUserMsg.nextElementSibling;
+        while (next) {
+          if (next.classList.contains('assistant') && !next.dataset.assistantVersion) { originalAssistantMsg = next; originalAssistantMsg.dataset.groupId = ''; originalAssistantMsg.dataset.assistantVersion = '1'; break; }
+          next = next.nextElementSibling;
+        }
+        originalUserMsg.style.display = 'none';
+        next = originalUserMsg.nextElementSibling;
+        while (next) { if (next.classList.contains('user')) break; next.style.display = 'none'; next = next.nextElementSibling; }
+      }
+      const tempUserMsg = document.createElement('div'); tempUserMsg.className = 'message user'; tempUserMsg.dataset.tempEdit = 'true';
+      const tempBubble = document.createElement('div'); tempBubble.className = 'bubble'; tempBubble.textContent = newText;
+      tempUserMsg.appendChild(tempBubble); messageList.appendChild(tempUserMsg); messageList.scrollTop = messageList.scrollHeight;
+      showTyping();
+      try {
+        const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText }) });
+        if (!response.ok) throw new Error('请求失败');
+        removeTyping();
+        let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
+        if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
+        if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
+        const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
+        const newAssistantMsg = document.createElement('div'); newAssistantMsg.className = 'message assistant';
+        const newBubble = document.createElement('div'); newBubble.className = 'bubble'; newAssistantMsg.appendChild(newBubble);
+        messageList.appendChild(newAssistantMsg); currentAssistantBubble = newBubble;
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
+            const payload = trimmed.slice(6);
+            try {
+              const json = JSON.parse(payload);
+              if (json.userMessageId) { userMessageId = json.userMessageId; groupId = json.groupId; currentVersion = json.currentVersion; totalVersions = json.totalVersions; }
+              if (json.thinking) {
+                // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
+                if (!fullThinking.endsWith(json.thinking)) {
+                  fullThinking += json.thinking;
+                }
+                if (!currentThinkingContainer) {
+                  currentThinkingContainer = document.createElement('div');
+                  currentThinkingContainer.className = 'thinking-content';
+                  currentThinkingContainer.style.display = 'block';
+                  newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
+                }
+                currentThinkingContainer.textContent = fullThinking;
+              }
+              if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
+              if (json.done) {
+                const oldTemp = document.querySelector('[data-temp-edit="true"]'); if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
+                tempUserMsg.removeAttribute('data-temp-edit');
+                if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
+                if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
+                tempUserMsg.dataset.groupId = groupId; tempUserMsg.dataset.version = currentVersion; tempUserMsg.dataset.messageId = userMessageId;
+                newAssistantMsg.dataset.groupId = groupId; newAssistantMsg.dataset.assistantVersion = currentVersion;
+                const newBub = tempUserMsg.querySelector('.bubble');
+                if (newBub && userMessageId) {
+                  let t; newBub.addEventListener('touchstart', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
+                  newBub.addEventListener('touchend', () => clearTimeout(t)); newBub.addEventListener('touchmove', () => clearTimeout(t));
+                  newBub.addEventListener('mousedown', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
+                  newBub.addEventListener('mouseup', () => clearTimeout(t)); newBub.addEventListener('mouseleave', () => clearTimeout(t));
+                }
+                addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
+              }
+              if (json.error) throw new Error(json.error);
+            } catch (e) { console.warn('解析SSE失败:', e); }
+          }
+        }
+      } catch (err) { console.error('编辑发送失败:', err); document.querySelector('[data-temp-edit="true"]')?.remove(); removeTyping(); alert('发送失败：' + err.message); }
+    }
+
+    function showTyping() {
+      const div = document.createElement('div'); div.className = 'message assistant'; div.id = 'typingIndicator';
+      const bubble = document.createElement('div'); bubble.className = 'bubble'; bubble.style.backgroundColor = '#f0f0f0'; bubble.style.color = '#888';
+      const ind = document.createElement('div'); ind.className = 'typing-indicator'; ind.innerHTML = '<span>●</span><span>●</span><span>●</span>';
+      bubble.appendChild(ind); div.appendChild(bubble); messageList.appendChild(div); messageList.scrollTop = messageList.scrollHeight;
+    }
+
+    function removeTyping() { const el = document.getElementById('typingIndicator'); if (el) el.remove(); }
+
+    async function loadHistory() {
+      try {
+        const response = await fetch('/api/history'); if (!response.ok) return;
+        const data = await response.json();
+        if (!data.messages || data.messages.length === 0) { addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime()); return; }
+        const groupMap = new Map();
+        data.messages.forEach(msg => {
+          const role = msg.role === 'user' ? 'user' : 'assistant';
+          addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id);
+          if (msg.group_id) {
+            if (!groupMap.has(msg.group_id)) groupMap.set(msg.group_id, { userMessages: [], assistantMessages: [], maxVersion: 0 });
+            const group = groupMap.get(msg.group_id); const el = messageList.lastElementChild;
+            if (role === 'user') group.userMessages.push({ element: el, version: msg.version_number || 1, messageId: msg.id });
+            else group.assistantMessages.push({ element: el, version: msg.version_number || 1 });
+            if (msg.version_number && msg.version_number > group.maxVersion) group.maxVersion = msg.version_number;
+          }
+        });
+        groupMap.forEach((group, groupId) => {
+          group.userMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.version = m.version; });
+          group.assistantMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.assistantVersion = m.version; });
+          const versions = group.userMessages.map(m => m.version).filter(v => v != null);
+          const maxVer = Math.max(...versions);
+          switchVersion(groupId, maxVer);
+          // 只有当该编辑组确实存在用户消息时，才创建导航器
+          const latestUserElement = group.userMessages.find(m => m.version === maxVer)?.element;
+          if (latestUserElement && versions.length > 0) {
+            addVersionNavigator(groupId, maxVer, versions.length, latestUserElement);
+          }
+        });
+        const allMsgs = messageList.querySelectorAll('.message.assistant');
+        if (allMsgs.length > 0) {
+          const last = allMsgs[allMsgs.length - 1];
+          if (!last.querySelector('.refresh-btn')) {
+            const btn = document.createElement('span'); btn.className = 'refresh-btn';
+            btn.appendChild(createRefreshIcon()); btn.title = '重新生成';
+            btn.dataset.messageId = last.dataset.messageId || 'temp-' + Date.now();
+            btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, last); });
+            last.appendChild(btn);
+          }
+        }
+      } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
+    }
+
+    async function sendMessage() {
+      const text = userInput.value.trim(); if (!text || isLoading) return;
+      userInput.value = ''; userInput.style.height = 'auto';
+      addMessage('user', text, null, formatTime());
+      const pendingUserMsg = messageList.lastElementChild;
+
+      isLoading = true; sendBtn.disabled = true;
+
+      // 创建流式消息容器
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message assistant';
+      msgDiv.id = 'streaming-message';
+
+      // 思考内容容器（默认隐藏，有内容才显示）
+      const thinkDiv = document.createElement('div');
+      thinkDiv.className = 'thinking-content';
+      thinkDiv.style.display = 'none';
+      msgDiv.appendChild(thinkDiv);
+
+      // 消息气泡
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      msgDiv.appendChild(bubble);
+
+      // 时间戳
+      const ts = document.createElement('div');
+      ts.className = 'timestamp';
+      ts.textContent = formatTime();
+      msgDiv.appendChild(ts);
+
+      messageList.appendChild(msgDiv);
+      messageList.scrollTop = messageList.scrollHeight;
+
+      let fullReply = '', fullThinking = '';
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data: ')) continue;
+            const payload = trimmed.slice(6);
+
+            try {
+              const json = JSON.parse(payload);
+
+              if (json.thinking) {
+                // 去重追加思考内容
+                if (!fullThinking.endsWith(json.thinking)) {
+                  fullThinking += json.thinking;
+                }
+                thinkDiv.textContent = fullThinking;
+                thinkDiv.style.display = 'block'; // 有内容就显示
+                messageList.scrollTop = messageList.scrollHeight;
+              }
+
+              if (json.content) {
+                fullReply += json.content;
+                bubble.textContent = fullReply;
+                messageList.scrollTop = messageList.scrollHeight;
+              }
+
+              if (json.done) {
+                // 1. 如果有思考内容，原地将 thinkDiv 升级为可折叠容器
+                if (fullThinking) {
+                  const row = document.createElement('div');
+                  row.style.display = 'flex';
+                  row.style.alignItems = 'center';
+                  row.style.gap = '4px';
+                  row.style.marginTop = '6px';
+
+                  const toggle = document.createElement('span');
+                  toggle.className = 'thinking-toggle';
+                  toggle.style.cursor = 'pointer';
+                  toggle.style.display = 'inline-flex';
+                  toggle.style.alignItems = 'center';
+                  toggle.style.color = '#999';
+                  toggle.style.fontSize = '12px';
+                  toggle.style.userSelect = 'none';
+
+                  // 展开状态显示心跳线
+                  toggle.appendChild(createActivityIcon());
+                  toggle.title = '收起思考';
+
+                  toggle.addEventListener('click', () => {
+                    const isOpen = thinkDiv.classList.toggle('open');
+                    thinkDiv.style.display = isOpen ? 'block' : 'none';
+                    toggle.innerHTML = '';
+                    if (isOpen) {
+                      toggle.appendChild(createActivityIcon());
+                      toggle.title = '收起思考';
+                    } else {
+                      toggle.appendChild(createHeartIcon());
+                      toggle.title = '展开思考';
+                    }
+                  });
+                  row.appendChild(toggle);
+
+                  const timeSpan = document.createElement('span');
+                  timeSpan.className = 'timestamp';
+                  timeSpan.style.marginTop = '0';
+                  timeSpan.style.padding = '0';
+                  timeSpan.textContent = formatTime();
+                  row.appendChild(timeSpan);
+
+                  thinkDiv.parentNode.insertBefore(row, thinkDiv);
+                  thinkDiv.classList.add('open');
+                  thinkDiv.style.display = 'block';
+                } else {
+                  // 没有思考内容，移除空的 thinkDiv
+                  if (thinkDiv.parentNode) {
+                    thinkDiv.parentNode.removeChild(thinkDiv);
+                  }
+                }
+
+                // 2. 将 msgDiv 从流式容器转换为最终消息
+                msgDiv.id = '';
+                if (json.assistantMessageId) {
+                  msgDiv.dataset.messageId = json.assistantMessageId;
+                }
+
+                // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
+                if (pendingUserMsg && json.userMessageId) {
+                  pendingUserMsg.dataset.messageId = json.userMessageId;
+                  const userBubble = pendingUserMsg.querySelector('.bubble');
+                  if (userBubble) {
+                    let timer;
+                    userBubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
+                    userBubble.addEventListener('touchend', () => clearTimeout(timer));
+                    userBubble.addEventListener('touchmove', () => clearTimeout(timer));
+                    userBubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
+                    userBubble.addEventListener('mouseup', () => clearTimeout(timer));
+                    userBubble.addEventListener('mouseleave', () => clearTimeout(timer));
+                  }
+                }
+
+                // 4. 清理上一个助手消息的刷新按钮
+                const allAsst = messageList.querySelectorAll('.message.assistant');
+                if (allAsst.length > 1) {
+                  const prev = allAsst[allAsst.length - 2];
+                  const oldBtn = prev.querySelector('.refresh-btn');
+                  if (oldBtn) oldBtn.remove();
+                }
+              }
+
+              if (json.error) throw new Error(json.error);
+            } catch (e) { /* ignore */ }
+          }
+        }
+      } catch (err) {
+        console.error('发送消息失败:', err);
+        bubble.textContent = '❌ 请求失败：' + err.message;
+      } finally {
+        isLoading = false;
+        sendBtn.disabled = false;
+        userInput.focus();
+      }
+    }
+
+    async function handleRegenerate(btn, msgDiv) {
+      if (btn.disabled) return; btn.disabled = true; btn.textContent = '⏳ 生成中...';
+      const messageId = btn.dataset.messageId;
+      if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }
+      try {
+        const bubble = msgDiv.querySelector('.bubble'); const thinkingEl = msgDiv.querySelector('.thinking-content');
+        if (bubble) bubble.textContent = ''; if (thinkingEl) thinkingEl.textContent = '';
+        let fullReply = '', fullThinking = '';
+        const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue;
+            const payload = trimmed.slice(6);
+            try {
+              const json = JSON.parse(payload);
+              if (json.thinking) {
+                // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
+                if (!fullThinking.endsWith(json.thinking)) {
+                  fullThinking += json.thinking;
+                }
+                if (!currentThinkingContainer) {
+                  currentThinkingContainer = document.createElement('div');
+                  currentThinkingContainer.className = 'thinking-content';
+                  currentThinkingContainer.style.display = 'block';
+                  newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
+                }
+                currentThinkingContainer.textContent = fullThinking;
+              }
+              if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
+              if (json.error) throw new Error(json.error);
+            } catch (e) { console.warn('解析SSE失败:', e, payload); }
+          }
+        }
+        if (fullReply) { btn.textContent = '✅ 已刷新'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); }
+        else throw new Error('未收到有效回复');
+      } catch (err) { console.error('重新生成失败:', err); btn.textContent = '❌ 失败，点击重试'; btn.disabled = false; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; }, 3000); }
+    }
+
+    unlockBtn.addEventListener('click', () => {
+      if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; loadHistory(); userInput.focus(); loginError.style.display = 'none'; }
+      else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
+    });
+    passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); } });
+    sendBtn.addEventListener('click', sendMessage);
+    userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    userInput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
+    passwordInput.focus();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => { });
+    console.log('💗 Mo-Home 已加载');
+    }) ();
   </script>
 </body>
 
