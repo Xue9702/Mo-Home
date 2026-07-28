@@ -418,6 +418,46 @@
         return `${month}-${day} ${hours}:${minutes}:${seconds}`;
       }
 
+      // 心跳线图标（展开状态）
+      function createActivityIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '14');
+        svg.setAttribute('height', '14');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.style.verticalAlign = 'middle';
+        svg.style.marginRight = '2px';
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('d', 'M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2');
+        svg.appendChild(path);
+        return svg;
+      }
+
+      // 心形图标（收起状态）
+      function createHeartIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '14');
+        svg.setAttribute('height', '14');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.style.verticalAlign = 'middle';
+        svg.style.marginRight = '2px';
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('d', 'M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5');
+        svg.appendChild(path);
+        return svg;
+      }
+
       function createRefreshIcon() {
         const svgNS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(svgNS, 'svg');
@@ -455,27 +495,62 @@
 
       function createThinkingElement(thinkingText, timestamp = null) {
         if (!thinkingText || thinkingText.trim() === '') return null;
-        const wrapper = document.createElement('div'); wrapper.style.marginTop = '6px';
-        const row = document.createElement('div'); row.style.display = 'flex'; row.style.alignItems = 'center'; row.style.gap = '6px';
-        const toggle = document.createElement('span'); toggle.className = 'thinking-toggle'; toggle.textContent = '💭 收起';
+
+        const wrapper = document.createElement('div');
+        wrapper.style.marginTop = '6px';
+
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '4px';
+
+        const toggle = document.createElement('span');
+        toggle.className = 'thinking-toggle';
+        toggle.style.cursor = 'pointer';
+        toggle.style.display = 'inline-flex';
+        toggle.style.alignItems = 'center';
+        toggle.style.color = '#999';
+        toggle.style.fontSize = '12px';
+        toggle.style.userSelect = 'none';
+
+        // 默认展开，显示心跳线图标
+        toggle.appendChild(createActivityIcon());
+        toggle.appendChild(document.createTextNode(' 思考中'));
+
         row.appendChild(toggle);
+
         if (timestamp) {
-          const tsSpan = document.createElement('span'); tsSpan.className = 'timestamp';
-          tsSpan.style.marginTop = '0'; tsSpan.style.padding = '0'; tsSpan.textContent = timestamp;
+          const tsSpan = document.createElement('span');
+          tsSpan.className = 'timestamp';
+          tsSpan.style.marginTop = '0';
+          tsSpan.style.padding = '0';
+          tsSpan.textContent = timestamp;
           row.appendChild(tsSpan);
         }
         wrapper.appendChild(row);
+
         const content = document.createElement('div');
         content.className = 'thinking-content open';
         content.style.display = 'block';
         content.textContent = thinkingText.trim();
         wrapper.appendChild(content);
+
         toggle.addEventListener('click', function (e) {
           e.stopPropagation();
           const isOpen = content.classList.toggle('open');
           content.style.display = isOpen ? 'block' : 'none';
-          toggle.textContent = isOpen ? '💭 收起' : '💭 思考';
+
+          // 清空按钮内容，重新添加图标和文字
+          toggle.innerHTML = '';
+          if (isOpen) {
+            toggle.appendChild(createActivityIcon());
+            toggle.appendChild(document.createTextNode(' 思考中'));
+          } else {
+            toggle.appendChild(createHeartIcon());
+            toggle.appendChild(document.createTextNode(' 思考'));
+          }
         });
+
         return wrapper;
       }
 
@@ -812,24 +887,39 @@
                 if (json.done) {
                   // 1. 如果有思考内容，原地将 thinkDiv 升级为可折叠容器
                   if (fullThinking) {
-                    // 创建折叠按钮行
                     const row = document.createElement('div');
                     row.style.display = 'flex';
                     row.style.alignItems = 'center';
-                    row.style.gap = '6px';
+                    row.style.gap = '4px';
                     row.style.marginTop = '6px';
 
                     const toggle = document.createElement('span');
                     toggle.className = 'thinking-toggle';
-                    toggle.textContent = '💭 收起';
+                    toggle.style.cursor = 'pointer';
+                    toggle.style.display = 'inline-flex';
+                    toggle.style.alignItems = 'center';
+                    toggle.style.color = '#999';
+                    toggle.style.fontSize = '12px';
+                    toggle.style.userSelect = 'none';
+
+                    // 展开状态显示心跳线
+                    toggle.appendChild(createActivityIcon());
+                    toggle.appendChild(document.createTextNode(' 思考中'));
+
                     toggle.addEventListener('click', () => {
                       const isOpen = thinkDiv.classList.toggle('open');
                       thinkDiv.style.display = isOpen ? 'block' : 'none';
-                      toggle.textContent = isOpen ? '💭 收起' : '💭 思考';
+                      toggle.innerHTML = '';
+                      if (isOpen) {
+                        toggle.appendChild(createActivityIcon());
+                        toggle.appendChild(document.createTextNode(' 思考中'));
+                      } else {
+                        toggle.appendChild(createHeartIcon());
+                        toggle.appendChild(document.createTextNode(' 思考'));
+                      }
                     });
                     row.appendChild(toggle);
 
-                    // 添加时间戳
                     const timeSpan = document.createElement('span');
                     timeSpan.className = 'timestamp';
                     timeSpan.style.marginTop = '0';
@@ -837,10 +927,7 @@
                     timeSpan.textContent = formatTime();
                     row.appendChild(timeSpan);
 
-                    // 将按钮行插入到 thinkDiv 前面
                     thinkDiv.parentNode.insertBefore(row, thinkDiv);
-
-                    // 确保 thinkDiv 展开
                     thinkDiv.classList.add('open');
                     thinkDiv.style.display = 'block';
                   } else {
