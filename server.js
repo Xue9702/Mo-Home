@@ -457,6 +457,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // 【提前】解析并移除 post_moment 工具调用标签
+    let momentPostResult = null;
     const postMomentRegex = /\[POST_MOMENT\](\{[\s\S]*?\})\s*$/;
     const postMomentMatch = fullReply.match(postMomentRegex);
     if (postMomentMatch) {
@@ -698,23 +699,6 @@ app.post('/api/regenerate', async (req, res) => {
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
       return;
-    }
-
-    // 解析并执行 post_moment 工具调用
-    let momentPostResult = null;
-    const postMomentMatch = fullReply.match(/\[POST_MOMENT\]({[\s\S]*?})\n?/);
-    if (postMomentMatch) {
-      try {
-        const toolParams = JSON.parse(postMomentMatch[1]);
-        momentPostResult = await saveMoMoment(
-          toolParams.content || '',
-          toolParams.context_note || ''
-        );
-        // 从回复中移除工具调用标签
-        fullReply = fullReply.replace(/\[POST_MOMENT\][\s\S]*?\n?/, '').trim();
-      } catch (e) {
-        console.error('[Moments] 解析 post_moment 失败:', e.message);
-      }
     }
 
     // 4. 更新数据库中的回复
