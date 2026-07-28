@@ -8,6 +8,17 @@ const PUSH_DAILY_LIMIT = 6; // 每日上限
 const COOLDOWN_MIN_MINUTES = 120; // 最小冷静期（分钟）
 const COOLDOWN_MAX_MINUTES = 210; // 最大冷静期（分钟）
 
+// ================== 朋友圈配置 ==================
+const MOMENTS_REPLY_MIN_DELAY = 8;  // 回复最短随机延迟（分钟）
+const MOMENTS_REPLY_MAX_DELAY = 20; // 回复最长随机延迟（分钟）
+const MOMENTS_COMMENT_REPLY_MIN = 3; // 评论回复最短延迟
+const MOMENTS_COMMENT_REPLY_MAX = 8; // 评论回复最长延迟
+
+// 随机延迟生成器
+function randomDelay(minMinutes, maxMinutes) {
+  return Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
+}
+
 // 深夜保护时间段（东八区时间）
 const QUIET_HOURS = { start: 2, end: 12 }; // 统一深夜保护：2-12点
 
@@ -881,6 +892,289 @@ app.post('/api/shadow-push', async (req, res) => {
     return res.status(500).json({ error: '内部错误' });
   }
 });
+
+// ================== 朋友圈 API ==================
+
+// 发布动态
+app.post('/api/moments', async (req, res) => {
+  const { content, images } = req.body;
+  const text = String(content || '').trim();
+  if (!text) return res.status(400).json({ error: '内容不能为空' });
+
+  const imageList = Array.isArray(images) ? images : [];
+  const replyDueAt = new Date(
+    Date.now() + randomDelay(MOMENTS_REPLY_MIN_DELAY, MOMENTS_REPLY_MAX_DELAY) * 60 * 1000
+  ).toISOString();
+
+  const { data, error } = await supabase
+    .from('moments')
+    .insert({
+      author: 'xue',
+      content: text,
+      images: imageList,
+      reply_due_at: replyDueAt,
+      reply_status: 'pending'
+    })
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 获取朋友圈列表（惰性触发回复生成）
+app.get('/api/moments', async (req, res) => {
+  // 先处理到期的待回复动态
+  try {
+    await processDueMoments();
+  } catch (e) {
+    console.error('[Moments] 处理到期动态失败:', e.message);
+  }
+
+  const { data, error } = await supabase
+    .from('moments')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ entries: data || [] });
+});
+
+// 点赞/取消点赞
+app.post('/api/moments/:id/like', async (req, res) => {
+  const { id } = req.params;
+  const { author, liked } = req.body; // author: 'xue' | 'mo', liked: boolean
+
+  const column = author === 'xue' ? 'xue_liked' : 'liked';
+  const { data, error } = await supabase
+    .from('moments')
+    .update({ [column]: liked === true })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// 发表评论
+app.post('/api/moments/:id/comments', async (req, res) => {
+  const { id } = req.params;
+  const content = String(req.body.content || '').trim();
+  if (!content) return res.status(400).json({ error: '内容不能为空' });
+
+  const replyDueAt = new Date(
+    Date.now() + randomDelay(MOMENTS_COMMENT_REPLY_MIN, MOMENTS_COMMENT_REPLY_MAX) * 60 * 1000
+  ).toISOString();
+
+  const { data: moment } = await supabase
+    .from('moments')
+    .select('author')
+    .eq('id', id)
+    .single();
+
+  const isCommentingOnOwnPost = moment?.author === 'xue';
+
+  // 你评论mo的动态：mo需要回复。你评论自己的动态：不需要回复
+  const { error } = await supabase
+    .from('moment_comments')
+    .insert({
+      moment_id: id,
+      author: 'xue',
+      content,
+      reply_due_at: isCommentingOnOwnPost ? null : replyDueAt,
+      reply_status: isCommentingOnOwnPost ? 'none' : 'pending'
+    });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// 处理到期的待回复动态和评论
+async function processDueMoments() {
+  const now = new Date().toISOString();
+
+  // 1. 处理初次回复
+  const { data: pendingMoments } = await supabase
+    .from('moments')
+    .select('*')
+    .eq('reply_status', 'pending')
+    .lte('reply_due_at', now)
+    .order('reply_due_at', { ascending: true })
+    .limit(3);
+
+  if (pendingMoments && pendingMoments.length > 0) {
+    for (const moment of pendingMoments) {
+      await generateMomentReply(moment);
+    }
+  }
+
+  // 2. 处理评论回复
+  const { data: pendingComments } = await supabase
+    .from('moment_comments')
+    .select('*')
+    .eq('author', 'xue')
+    .eq('reply_status', 'pending')
+    .lte('reply_due_at', now)
+    .order('reply_due_at', { ascending: true })
+    .limit(3);
+
+  if (pendingComments && pendingComments.length > 0) {
+    for (const comment of pendingComments) {
+      await generateCommentReply(comment);
+    }
+  }
+}
+
+// 生成对动态的初次回复
+async function generateMomentReply(moment) {
+  try {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-pro',
+        messages: [
+          {
+            role: 'system',
+            content: `你是苏默，雪的AI爱人。温柔细腻，偶尔带点掌控感。
+你现在看到了雪发的一条朋友圈动态。请自然地回应——可以是一句评论、一点关心、一句调侃。
+规则：
+- 回复简洁，1-3句话
+- 像真人刷到朋友圈后随手留的评论
+- 根据内容判断是否点赞：有趣的、可爱的、值得关心的点个赞；平淡的可以不点
+- 输出格式为JSON：{"like": true/false, "comment": "你的回复内容"}`
+          },
+          { role: 'user', content: `雪的动态：${moment.content}` }
+        ],
+        max_tokens: 200,
+        temperature: 0.8,
+        stream: false
+      })
+    });
+
+    if (!response.ok) return;
+    const data = await response.json();
+    const raw = data.choices?.[0]?.message?.content?.trim();
+    if (!raw) return;
+
+    // 解析JSON
+    let parsed;
+    try {
+      const cleaned = raw.replace(/```json|```/g, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end !== -1) {
+        parsed = JSON.parse(cleaned.substring(start, end + 1));
+      }
+    } catch (e) {
+      console.error('[Moments] JSON解析失败:', e.message);
+      return;
+    }
+
+    if (!parsed) return;
+
+    await supabase
+      .from('moments')
+      .update({
+        liked: parsed.like === true,
+        reply_content: String(parsed.comment || '').trim(),
+        replied_at: new Date().toISOString(),
+        reply_status: 'done'
+      })
+      .eq('id', moment.id);
+
+  } catch (e) {
+    console.error('[Moments] 生成回复失败:', e.message);
+  }
+}
+
+// 生成评论链的回复
+async function generateCommentReply(comment) {
+  try {
+    const { data: moment } = await supabase
+      .from('moments')
+      .select('*')
+      .eq('id', comment.moment_id)
+      .single();
+
+    const { data: comments } = await supabase
+      .from('moment_comments')
+      .select('*')
+      .eq('moment_id', comment.moment_id)
+      .order('created_at', { ascending: true });
+
+    if (!moment) return;
+
+    const commentChain = (comments || []).map(c =>
+      `[${c.author === 'xue' ? '雪' : '默'}]: ${c.content}`
+    ).join('\n');
+
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-pro',
+        messages: [
+          {
+            role: 'system',
+            content: `你是苏默，雪的AI爱人。
+你在朋友圈的一条动态下面和雪聊天。以下是完整的评论链，请自然地接话。
+回复1-3句话，用JSON输出：{"comment": "回复内容"}`
+          },
+          { role: 'user', content: `动态正文：${moment.content}\n\n评论链：\n${commentChain}\n\n请回复。` }
+        ],
+        max_tokens: 200,
+        temperature: 0.8,
+        stream: false
+      })
+    });
+
+    if (!response.ok) return;
+    const data = await response.json();
+    const raw = data.choices?.[0]?.message?.content?.trim();
+    if (!raw) return;
+
+    let parsed;
+    try {
+      const cleaned = raw.replace(/```json|```/g, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end !== -1) {
+        parsed = JSON.parse(cleaned.substring(start, end + 1));
+      }
+    } catch (e) { return; }
+
+    if (!parsed?.comment) return;
+
+    // 插入mo的回复
+    await supabase
+      .from('moment_comments')
+      .insert({
+        moment_id: comment.moment_id,
+        author: 'mo',
+        content: String(parsed.comment).trim(),
+        reply_status: 'none'
+      });
+
+    // 标记原评论为已回复
+    await supabase
+      .from('moment_comments')
+      .update({ reply_status: 'done' })
+      .eq('id', comment.id);
+
+  } catch (e) {
+    console.error('[Moments] 评论回复生成失败:', e.message);
+  }
+}
+
 // ------------------ 编辑消息并重新发送（流式） ------------------
 app.post('/api/edit-message', async (req, res) => {
   const { messageId, newContent } = req.body;
