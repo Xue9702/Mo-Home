@@ -467,9 +467,15 @@
         wrapper.appendChild(row);
         const content = document.createElement('div');
         content.className = 'thinking-content open';
+        content.style.display = 'block';
         content.textContent = thinkingText.trim();
         wrapper.appendChild(content);
-        toggle.addEventListener('click', (e) => { e.stopPropagation(); content.classList.toggle('open'); toggle.textContent = content.classList.contains('open') ? '💭 收起' : '💭 思考'; });
+        toggle.addEventListener('click', function (e) {
+          e.stopPropagation();
+          const isOpen = content.classList.toggle('open');
+          content.style.display = isOpen ? 'block' : 'none';
+          toggle.textContent = isOpen ? '💭 收起' : '💭 思考';
+        });
         return wrapper;
       }
 
