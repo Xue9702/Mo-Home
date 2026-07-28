@@ -453,7 +453,11 @@ app.post('/api/chat', async (req, res) => {
           toolParams.context_note || ''
         );
         // 从回复中彻底移除标签及之后的内容
-        fullReply = fullReply.replace(postMomentRegex, '').trim();
+        // 从标签开始位置截断，只保留标签之前的内容
+        const matchIndex = fullReply.search(postMomentRegex);
+        if (matchIndex !== -1) {
+          fullReply = fullReply.substring(0, matchIndex).trim();
+        }
       } catch (e) {
         console.error('[Moments] 解析 post_moment 失败:', e.message);
       }
@@ -700,7 +704,11 @@ app.post('/api/regenerate', async (req, res) => {
           toolParams.context_note || ''
         );
         // 从回复中彻底移除标签及之后的内容
-        fullReply = fullReply.replace(postMomentRegex, '').trim();
+        // 从标签开始位置截断，只保留标签之前的内容
+        const matchIndex = fullReply.search(postMomentRegex);
+        if (matchIndex !== -1) {
+          fullReply = fullReply.substring(0, matchIndex).trim();
+        }
       } catch (e) {
         console.error('[Moments] 解析 post_moment 失败:', e.message);
       }
@@ -1479,7 +1487,11 @@ app.post('/api/edit-message', async (req, res) => {
           toolParams.context_note || ''
         );
         // 从回复中彻底移除标签及之后的内容
-        fullReply = fullReply.replace(postMomentRegex, '').trim();
+        // 从标签开始位置截断，只保留标签之前的内容
+        const matchIndex = fullReply.search(postMomentRegex);
+        if (matchIndex !== -1) {
+          fullReply = fullReply.substring(0, matchIndex).trim();
+        }
       } catch (e) {
         console.error('[Moments] 解析 post_moment 失败:', e.message);
       }
