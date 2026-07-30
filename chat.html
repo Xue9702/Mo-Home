@@ -649,23 +649,6 @@
         switchPage(pageName);
       });
 
-      async function loadPrompt() {
-        const res = await fetch('/api/system-prompt');
-        const data = await res.json();
-        document.getElementById('promptEditor').value = data.prompt || '';
-      }
-
-      async function savePrompt() {
-        const prompt = document.getElementById('promptEditor').value.trim();
-        if (!prompt) return alert('Prompt 不能为空');
-        await fetch('/api/system-prompt', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt })
-        });
-        document.getElementById('promptStatus').textContent = '✅ 已保存，下次对话生效';
-      }
-
       // 创建设置页图标
       function createUserPenIcon() {
         const svgNS = 'http://www.w3.org/2000/svg';
@@ -708,11 +691,13 @@
       function openPromptEditor() {
         document.getElementById('promptEditorOverlay').style.display = 'flex';
         loadPrompt();
+         window.openPromptEditor = openPromptEditor; 
       }
 
       // 关闭 Prompt 编辑器
       function closePromptEditor() {
         document.getElementById('promptEditorOverlay').style.display = 'none';
+         window.openPromptEditor = openPromptEditor; 
       }
 
       // 从后端加载当前 prompt
@@ -727,6 +712,7 @@
         } catch (e) {
           console.error('加载 Prompt 失败:', e);
         }
+         window.openPromptEditor = openPromptEditor; 
       }
 
       // 保存 prompt 到后端
@@ -749,6 +735,7 @@
         } catch (e) {
           status.textContent = '❌ 保存失败，请重试';
         }
+         window.openPromptEditor = openPromptEditor; 
       }
 
       // 在小屋页面预置一个朋友圈卡片
