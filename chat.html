@@ -505,6 +505,21 @@
       </div>
     </div>
 
+    <div id="settingsPage" style="display:none; flex-direction: column; height: 100%;">
+      <div style="padding: 20px;">
+        <h3 style="margin-bottom: 12px;">System Prompt 编辑</h3>
+        <textarea id="promptEditor"
+          style="width: 100%; height: 400px; font-family: monospace; font-size: 13px; padding: 12px; border: 1px solid #ddd; border-radius: 8px;"></textarea>
+        <div style="margin-top: 12px; display: flex; gap: 8px;">
+          <button onclick="loadPrompt()"
+            style="padding: 8px 16px; border: 1px solid #ddd; border-radius: 8px; background: #fff; cursor: pointer;">重新加载</button>
+          <button onclick="savePrompt()"
+            style="padding: 8px 16px; border: none; border-radius: 8px; background: #1e90ff; color: #fff; cursor: pointer;">保存</button>
+        </div>
+        <p id="promptStatus" style="margin-top: 8px; font-size: 13px; color: #888;"></p>
+      </div>
+    </div>
+
     <!-- 底部状态栏 -->
     <div class="tab-bar" id="tabBar">
       <button class="tab-btn" data-page="homePage" aria-label="小屋">
@@ -586,12 +601,28 @@
         if (!btn) return;
         const pageName = btn.dataset.page;
         if (pageName === 'settingsPage') {
-          // 设置页暂时留空，可以以后打开
-          alert('设置页面即将上线~');
+          switchPage('settingsPage');
           return;
         }
         switchPage(pageName);
       });
+
+      async function loadPrompt() {
+        const res = await fetch('/api/system-prompt');
+        const data = await res.json();
+        document.getElementById('promptEditor').value = data.prompt || '';
+      }
+
+      async function savePrompt() {
+        const prompt = document.getElementById('promptEditor').value.trim();
+        if (!prompt) return alert('Prompt 不能为空');
+        await fetch('/api/system-prompt', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt })
+        });
+        document.getElementById('promptStatus').textContent = '✅ 已保存，下次对话生效';
+      }
 
       // 在小屋页面预置一个朋友圈卡片
       function renderHomePage() {

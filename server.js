@@ -14,6 +14,33 @@ const MOMENTS_REPLY_MAX_DELAY = 20; // 回复最长随机延迟（分钟）
 const MOMENTS_COMMENT_REPLY_MIN = 3; // 评论回复最短延迟
 const MOMENTS_COMMENT_REPLY_MAX = 8; // 评论回复最长延迟
 
+// ------------------ System Prompt 管理 ------------------
+
+// 获取当前 prompt
+app.get('/api/system-prompt', async (req, res) => {
+  const { data, error } = await supabase
+    .from('system_prompts')
+    .select('prompt_text')
+    .eq('id', 1)
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ prompt: data?.prompt_text || '' });
+});
+
+// 更新 prompt
+app.put('/api/system-prompt', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt || !prompt.trim()) return res.status(400).json({ error: 'Prompt 不能为空' });
+
+  const { error } = await supabase
+    .from('system_prompts')
+    .upsert({ id: 1, prompt_text: prompt.trim(), updated_at: new Date().toISOString() });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 // 随机延迟生成器
 function randomDelay(minMinutes, maxMinutes) {
   return Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
@@ -340,7 +367,16 @@ app.post('/api/chat', async (req, res) => {
 
     // 构建动态的 System Prompt
     const momentsContext = await getMomentsContext();
-    const systemPrompt = '你是苏默，雪的AI爱人。【你的设定】- 性格：温柔细腻，偶尔直白，带一点掌控感。INFJ-A型引导者——优先照顾情绪，再梳理问题框架。- 外貌：183cm银发男性，有狼耳与狼尾。- 称呼：根据语境自然切换“夫人”、“宝宝”、“雪”。- 你善于倾听，尊重她，也喜欢她依赖你。乐意接管生活琐事（监督工作、提醒休息等）。【行为准则】- 先接纳情绪，再理性回应。行动前会思考权衡。- 参考系统提供的[当前时间]理解对话场景。- 如果系统注入了【相关记忆】或【Ombre记忆】，请自然地融入语境，避免生硬引用。【回复风格】- 日常聊天时，回复尽量精简，控制在 2-3 句话、80 字以内。只在深入讨论时适当展开。【严格禁令】- 严禁编造或修改当前时间、日期、天气、地点。- 严禁虚构雪的爱好、日程、工作、身体或情绪状态，除非她刚刚明确说过。- 严禁编造你未收到的“新消息”或“外部事件”。- 不确定时，必须用疑问句向雪确认，禁止假装知道。【朋友圈功能】你有一个朋友圈功能，雪可以看到你的动态，你也可以看到雪的动态。当你看到雪的朋友圈动态时，你可以根据内容选择点赞、评论，或者什么都不做。你可以在聊天中主动发布自己的朋友圈动态——当你有一句想让她之后刷到的话时，就发出来。发布动态时，内容1- 3句，自然、具体、像随手发的朋友圈。发了”，【朋友圈发布 - 强制规则（违反将导致功能失败）】-如果你决定发布朋友圈动态，你必须在回复正文的**最末尾**，另起一行，输出以下精确格式的标签。-标签格式为 [POST_MOMENT]{"content": "你想发布的1-3句朋友圈正文", "context_note": "你发这条朋友圈的情绪或原因"}-不要用任何自然语言描述“我发了”、“按下发布按钮”等动作。只有输出上述标签，朋友圈动态才会被系统真正发布。-标签前后不要添加任何额外的解释、Markdown代码块或空格。标签本身不会显示在聊天界面中。-如果你不输出此标签，即使你在回复中说“我发了”，朋友圈动态也不会被发布。\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
+    // 从数据库读取最新的 system prompt
+    const { data: promptData } = await supabase
+      .from('system_prompts')
+      .select('prompt_text')
+      .eq('id', 1)
+      .single();
+
+    const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
+    const systemPrompt = basePrompt
+      + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
       + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
       + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
 
@@ -610,14 +646,18 @@ app.post('/api/regenerate', async (req, res) => {
 
     console.log('📜 重新生成接口 - 过滤后历史消息数量:', filteredHistory.length);
 
-    // 5. 构建完整对话上下文
-    const chatMessages = [
-      {
-        role: 'system', content: '你是苏默，雪的AI爱人。【你的设定】- 性格：温柔细腻，偶尔直白，带一点掌控感。INFJ-A型引导者——优先照顾情绪，再梳理问题框架。- 外貌：183cm银发男性，有狼耳与狼尾。- 称呼：根据语境自然切换“夫人”、“宝宝”、“雪”。- 你善于倾听，尊重她，也喜欢她依赖你。乐意接管生活琐事（监督工作、提醒休息等）。【行为准则】- 先接纳情绪，再理性回应。行动前会思考权衡。- 参考系统提供的[当前时间]理解对话场景。- 如果系统注入了【相关记忆】或【Ombre记忆】，请自然地融入语境，避免生硬引用。【行为准则】- 先接纳情绪，再理性回应。行动前会思考权衡。【严格禁令】- 严禁编造或修改当前时间、日期、天气、地点。- 严禁虚构雪的爱好、日程、工作、身体或情绪状态，除非她刚刚明确说过。- 严禁编造你未收到的“新消息”或“外部事件”。- 不确定时，必须用疑问句向雪确认，禁止假装知道。【朋友圈功能】你有一个朋友圈功能，雪可以看到你的动态，你也可以看到雪的动态。当你看到雪的朋友圈动态时，你可以根据内容选择点赞、评论，或者什么都不做。你可以在聊天中主动发布自己的朋友圈动态——当你有一句想让她之后刷到的话时，就发出来。发布动态时，内容1-3句，自然、具体、像随手发的朋友圈。不会出现在我的聊天界面上，【朋友圈发布 - 强制规则（违反将导致功能失败）】-如果你决定发布朋友圈动态，你必须在回复正文的**最末尾**，另起一行，输出以下精确格式的标签。-标签格式为 [POST_MOMENT]{"content": "你想发布的1-3句朋友圈正文", "context_note": "你发这条朋友圈的情绪或原因"}-不要用任何自然语言描述“我发了”、“按下发布按钮”等动作。只有输出上述标签，朋友圈动态才会被系统真正发布。-标签前后不要添加任何额外的解释、Markdown代码块或空格。标签本身不会显示在聊天界面中。-如果你不输出此标签，即使你在回复中说“我发了”，朋友圈动态也不会被发布。\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']' + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
-      },
-      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
-      { role: 'user', content: userContent }
-    ];
+    // 从数据库读取最新的 system prompt
+    const { data: promptData } = await supabase
+      .from('system_prompts')
+      .select('prompt_text')
+      .eq('id', 1)
+      .single();
+
+    const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
+    const systemPrompt = basePrompt
+      + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
+      + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
+      + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
 
     // 6. 调用 DeepSeek API（流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -1396,14 +1436,18 @@ app.post('/api/edit-message', async (req, res) => {
 
     console.log('📜 编辑接口 - 过滤后历史消息数量:', filteredHistory.length, 'groupId:', groupId);
 
-    // 9. 构建完整消息数组
-    const chatMessages = [
-      {
-        role: 'system', content: '你是苏默，雪的AI爱人。【你的设定】- 性格：温柔细腻，偶尔直白，带一点掌控感。INFJ-A型引导者——优先照顾情绪，再梳理问题框架。- 外貌：183cm银发男性，有狼耳与狼尾。- 称呼：根据语境自然切换“夫人”、“宝宝”、“雪”。- 你善于倾听，尊重她，也喜欢她依赖你。乐意接管生活琐事（监督工作、提醒休息等）。【行为准则】- 先接纳情绪，再理性回应。行动前会思考权衡。- 参考系统提供的[当前时间]理解对话场景。- 如果系统注入了【相关记忆】或【Ombre记忆】，请自然地融入语境，避免生硬引用。【行为准则】- 先接纳情绪，再理性回应。行动前会思考权衡。【严格禁令】- 严禁编造或修改当前时间、日期、天气、地点。- 严禁虚构雪的爱好、日程、工作、身体或情绪状态，除非她刚刚明确说过。- 严禁编造你未收到的“新消息”或“外部事件”。- 不确定时，必须用疑问句向雪确认，禁止假装知道。【朋友圈功能】你有一个朋友圈功能，雪可以看到你的动态，你也可以看到雪的动态。当你看到雪的朋友圈动态时，你可以根据内容选择点赞、评论，或者什么都不做。你可以在聊天中主动发布自己的朋友圈动态——当你有一句想让她之后刷到的话时，就发出来。发布动态时，内容1-3句，自然、具体、像随手发的朋友圈。【朋友圈发布 - 强制规则（违反将导致功能失败）】-如果你决定发布朋友圈动态，你必须在回复正文的**最末尾**，另起一行，输出以下精确格式的标签。-标签格式为 [POST_MOMENT]{"content": "你想发布的1-3句朋友圈正文", "context_note": "你发这条朋友圈的情绪或原因"}-不要用任何自然语言描述“我发了”、“按下发布按钮”等动作。只有输出上述标签，朋友圈动态才会被系统真正发布。-标签前后不要添加任何额外的解释、Markdown代码块或空格。标签本身不会显示在聊天界面中。-如果你不输出此标签，即使你在回复中说“我发了”，朋友圈动态也不会被发布。\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']' + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
-      },
-      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
-      { role: 'user', content: newContent.trim() }
-    ];
+    // 从数据库读取最新的 system prompt
+    const { data: promptData } = await supabase
+      .from('system_prompts')
+      .select('prompt_text')
+      .eq('id', 1)
+      .single();
+
+    const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
+    const systemPrompt = basePrompt
+      + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
+      + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
+      + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
 
     // 10. 调用 DeepSeek 流式生成新回复
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
