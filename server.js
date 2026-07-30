@@ -247,6 +247,8 @@ function getTimeInfo() {
   };
 }
 
+console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
+
 async function shouldPush() {
   const { hour } = getTimeInfo();
 
