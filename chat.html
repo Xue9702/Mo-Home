@@ -590,34 +590,42 @@
       const pages = {
         homePage: { title: '💗 Mo-Home', el: homePage },
         chatPage: { title: '💗 Mo-Home · 与默', el: chatPage },
-        settingsPage: { title: '⚙️ 设置', el: document.getElementById('settingsPage') }
+        settingsPage: { title: '设置', el: document.getElementById('settingsPage') }
       };
 
       function switchPage(pageName) {
-        // 1. 切换页面显示
-        Object.keys(pages).forEach(key => {
-          if (pages[key].el) {
-            pages[key].el.classList.toggle('active', key === pageName);
-          }
+        // 隐藏所有页面
+        document.querySelectorAll('.page').forEach(p => {
+          p.classList.remove('active');
         });
 
-        // 2. 更新标题
-        headerTitle.textContent = pages[pageName].title;
+        // 显示目标页面
+        const targetPage = document.getElementById(pageName);
+        if (targetPage) {
+          targetPage.classList.add('active');
+        }
 
-        // 3. 更新底部状态栏激活状态
+        // 更新标题
+        if (pages[pageName]) {
+          headerTitle.textContent = pages[pageName].title;
+        }
+
+        // 更新底部状态栏激活状态
         tabBar.querySelectorAll('.tab-btn').forEach(btn => {
           btn.classList.toggle('active', btn.dataset.page === pageName);
         });
 
-        // 3.1【新增】如果切换到设置页面，初始化图标并加载 prompt
-        if (pageName === 'settingsPage') {
-          initSettingsPage();
-        }
-
-        // 4. 刷新图标
+        // 刷新图标
         renderTabIcons(pageName);
-      }
 
+        // 如果切换到设置页面，初始化图标
+        if (pageName === 'settingsPage') {
+          setTimeout(() => {
+            initSettingsPage();
+          }, 50);
+        }
+      }
+      
       function renderTabIcons(activePage) {
         homeIcon.innerHTML = '';
         homeIcon.appendChild(createHouseIcon(activePage === 'homePage'));
@@ -662,20 +670,29 @@
       function createUserPenIcon() {
         const svgNS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        const paths = [
-          'M11.5 15H7a4 4 0 0 0-4 4v2',
-          'M21.378 16.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z',
-          'M10 7a4 4 0 1 0 8 0 4 4 0 1 0-16 0'
-        ];
-        paths.forEach(d => {
-          const p = document.createElementNS(svgNS, 'path');
-          p.setAttribute('d', d);
-          svg.appendChild(p);
-        });
+        svg.setAttribute('width', '20');
+        svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+
+        const path1 = document.createElementNS(svgNS, 'path');
+        path1.setAttribute('d', 'M11.5 15H7a4 4 0 0 0-4 4v2');
+
+        const path2 = document.createElementNS(svgNS, 'path');
+        path2.setAttribute('d', 'M21.378 16.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z');
+
+        const circle = document.createElementNS(svgNS, 'circle');
+        circle.setAttribute('cx', '10');
+        circle.setAttribute('cy', '7');
+        circle.setAttribute('r', '4');
+
+        svg.appendChild(path1);
+        svg.appendChild(path2);
+        svg.appendChild(circle);
         return svg;
       }
 
