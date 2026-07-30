@@ -691,14 +691,14 @@
       function openPromptEditor() {
         document.getElementById('promptEditorOverlay').style.display = 'flex';
         loadPrompt();
-         window.openPromptEditor = openPromptEditor; 
       }
+      window.openPromptEditor = openPromptEditor;
 
       // 关闭 Prompt 编辑器
       function closePromptEditor() {
         document.getElementById('promptEditorOverlay').style.display = 'none';
-         window.openPromptEditor = openPromptEditor; 
       }
+      window.closePromptEditor = closePromptEditor;
 
       // 从后端加载当前 prompt
       async function loadPrompt() {
@@ -712,8 +712,8 @@
         } catch (e) {
           console.error('加载 Prompt 失败:', e);
         }
-         window.openPromptEditor = openPromptEditor; 
       }
+      window.loadPrompt = loadPrompt;
 
       // 保存 prompt 到后端
       async function savePrompt() {
@@ -735,8 +735,8 @@
         } catch (e) {
           status.textContent = '❌ 保存失败，请重试';
         }
-         window.openPromptEditor = openPromptEditor; 
       }
+      window.savePrompt = savePrompt;
 
       // 在小屋页面预置一个朋友圈卡片
       function renderHomePage() {
