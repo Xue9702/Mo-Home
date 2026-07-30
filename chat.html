@@ -505,7 +505,7 @@
       </div>
     </div>
 
-    <div id="settingsPage" style="display:none; flex-direction: column; height: 100%;">
+    <div id="settingsPage" class="page" style="display:none; flex-direction: column; height: 100%;">
       <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
         <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 500;">Settings</h3>
 
@@ -590,7 +590,7 @@
       const pages = {
         homePage: { title: '💗 Mo-Home', el: homePage },
         chatPage: { title: '💗 Mo-Home · 与默', el: chatPage },
-        settingsPage: { title: '⚙️ 设置', el: null } // 设置页暂时没有创建，指向空
+        settingsPage: { title: '⚙️ 设置', el: document.getElementById('settingsPage') }
       };
 
       function switchPage(pageName) {
