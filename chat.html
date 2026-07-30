@@ -506,17 +506,46 @@
     </div>
 
     <div id="settingsPage" style="display:none; flex-direction: column; height: 100%;">
-      <div style="padding: 20px;">
-        <h3 style="margin-bottom: 12px;">System Prompt 编辑</h3>
-        <textarea id="promptEditor"
-          style="width: 100%; height: 400px; font-family: monospace; font-size: 13px; padding: 12px; border: 1px solid #ddd; border-radius: 8px;"></textarea>
-        <div style="margin-top: 12px; display: flex; gap: 8px;">
-          <button onclick="loadPrompt()"
-            style="padding: 8px 16px; border: 1px solid #ddd; border-radius: 8px; background: #fff; cursor: pointer;">重新加载</button>
-          <button onclick="savePrompt()"
-            style="padding: 8px 16px; border: none; border-radius: 8px; background: #1e90ff; color: #fff; cursor: pointer;">保存</button>
+      <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
+        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 500;">Settings</h3>
+
+        <!-- 功能卡片列表 -->
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+
+          <!-- System Prompt 按钮（圆角卡片） -->
+          <div id="promptSettingBtn" onclick="openPromptEditor()"
+            style="background: #fff; border: 1px solid #e9e9e9; border-radius: 16px; padding: 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+            <span id="userPenIcon"></span>
+            <span style="font-size: 15px; font-weight: 500;">Prompt</span>
+            <span style="margin-left: auto; color: #ccc; font-size: 14px;">›</span>
+          </div>
+
+          <!-- 以后可以在这里继续添加更多设置项，比如“记忆管理”、“模型设置”等 -->
+
         </div>
-        <p id="promptStatus" style="margin-top: 8px; font-size: 13px; color: #888;"></p>
+      </div>
+
+      <!-- Prompt 编辑浮层（默认隐藏） -->
+      <div id="promptEditorOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); z-index: 100; flex-direction: column;">
+        <div
+          style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #eee;">
+          <button onclick="closePromptEditor()"
+            style="background: none; border: none; font-size: 16px; cursor: pointer; color: #1e90ff;">← 返回</button>
+          <h3 style="margin: 0; font-size: 16px; font-weight: 500;">编辑 System Prompt</h3>
+          <div style="width: 40px;"></div>
+        </div>
+        <textarea id="promptEditor"
+          style="flex: 1; width: 100%; font-family: monospace; font-size: 13px; padding: 16px; border: none; outline: none; resize: none; box-sizing: border-box;"></textarea>
+        <div
+          style="padding: 12px 20px; border-top: 1px solid #eee; display: flex; gap: 10px; justify-content: flex-end;">
+          <button onclick="closePromptEditor()"
+            style="padding: 8px 16px; border: 1px solid #ddd; border-radius: 20px; background: #fff; cursor: pointer;">取消</button>
+          <button onclick="savePrompt()"
+            style="padding: 8px 20px; border: none; border-radius: 20px; background: #1e90ff; color: #fff; cursor: pointer;">保存</button>
+        </div>
+        <p id="promptStatus" style="text-align: center; font-size: 13px; color: #888; padding: 4px 0 12px; margin: 0;">
+        </p>
       </div>
     </div>
 
@@ -580,6 +609,12 @@
           btn.classList.toggle('active', btn.dataset.page === pageName);
         });
 
+        // 3.1【新增】如果切换到设置页面，初始化图标并加载 prompt
+        if (pageName === 'settingsPage') {
+          initSettingsPage();
+        }
+      }
+
         // 4. 刷新图标
         renderTabIcons(pageName);
       }
@@ -622,6 +657,82 @@
           body: JSON.stringify({ prompt })
         });
         document.getElementById('promptStatus').textContent = '✅ 已保存，下次对话生效';
+      }
+
+      // 创建设置页图标
+      function createUserPenIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const paths = [
+          'M11.5 15H7a4 4 0 0 0-4 4v2',
+          'M21.378 16.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z',
+          'M10 7a4 4 0 1 0 8 0 4 4 0 1 0-16 0'
+        ];
+        paths.forEach(d => {
+          const p = document.createElementNS(svgNS, 'path');
+          p.setAttribute('d', d);
+          svg.appendChild(p);
+        });
+        return svg;
+      }
+
+      // 在设置页加载时填充图标
+      function initSettingsPage() {
+        const iconSpan = document.getElementById('userPenIcon');
+        if (iconSpan && !iconSpan.hasChildNodes()) {
+          iconSpan.appendChild(createUserPenIcon());
+        }
+      }
+
+      // 打开 Prompt 编辑器
+      function openPromptEditor() {
+        document.getElementById('promptEditorOverlay').style.display = 'flex';
+        loadPrompt();
+      }
+
+      // 关闭 Prompt 编辑器
+      function closePromptEditor() {
+        document.getElementById('promptEditorOverlay').style.display = 'none';
+      }
+
+      // 从后端加载当前 prompt
+      async function loadPrompt() {
+        try {
+          const res = await fetch('/api/system-prompt');
+          const data = await res.json();
+          const editor = document.getElementById('promptEditor');
+          if (editor) {
+            editor.value = data.prompt || '';
+          }
+        } catch (e) {
+          console.error('加载 Prompt 失败:', e);
+        }
+      }
+
+      // 保存 prompt 到后端
+      async function savePrompt() {
+        const editor = document.getElementById('promptEditor');
+        const status = document.getElementById('promptStatus');
+        const prompt = editor.value.trim();
+        if (!prompt) {
+          status.textContent = '❌ Prompt 不能为空';
+          return;
+        }
+        try {
+          await fetch('/api/system-prompt', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt })
+          });
+          status.textContent = '✅ 已保存，下次对话生效';
+          setTimeout(() => { status.textContent = ''; }, 2000);
+        } catch (e) {
+          status.textContent = '❌ 保存失败，请重试';
+        }
       }
 
       // 在小屋页面预置一个朋友圈卡片
