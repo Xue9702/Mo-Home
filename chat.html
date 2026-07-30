@@ -642,12 +642,7 @@
       tabBar.addEventListener('click', (e) => {
         const btn = e.target.closest('.tab-btn');
         if (!btn) return;
-        const pageName = btn.dataset.page;
-        if (pageName === 'settingsPage') {
-          switchPage('settingsPage');
-          return;
-        }
-        switchPage(pageName);
+        switchPage(btn.dataset.page);
       });
 
       // 创建设置页图标
