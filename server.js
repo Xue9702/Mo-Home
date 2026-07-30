@@ -355,8 +355,6 @@ app.post('/api/chat', async (req, res) => {
       + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
       + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
 
-    console.log('📋 [PROMPT] 当前使用的 System Prompt 前 300 字:', systemPrompt.substring(0, 300));
-
     // 调用 DeepSeek API（开启流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
