@@ -349,6 +349,8 @@ app.post('/api/chat', async (req, res) => {
       .eq('id', 1)
       .single();
 
+    console.log('📋 [PROMPT] 当前使用的 System Prompt 前 300 字:', systemPrompt.substring(0, 300));
+    
     const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
     const systemPrompt = basePrompt
       + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
