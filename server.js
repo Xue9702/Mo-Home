@@ -16,31 +16,6 @@ const MOMENTS_COMMENT_REPLY_MAX = 8; // 评论回复最长延迟
 
 // ------------------ System Prompt 管理 ------------------
 
-// 获取当前 prompt
-app.get('/api/system-prompt', async (req, res) => {
-  const { data, error } = await supabase
-    .from('system_prompts')
-    .select('prompt_text')
-    .eq('id', 1)
-    .single();
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ prompt: data?.prompt_text || '' });
-});
-
-// 更新 prompt
-app.put('/api/system-prompt', async (req, res) => {
-  const { prompt } = req.body;
-  if (!prompt || !prompt.trim()) return res.status(400).json({ error: 'Prompt 不能为空' });
-
-  const { error } = await supabase
-    .from('system_prompts')
-    .upsert({ id: 1, prompt_text: prompt.trim(), updated_at: new Date().toISOString() });
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true });
-});
-
 // 随机延迟生成器
 function randomDelay(minMinutes, maxMinutes) {
   return Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
@@ -1644,6 +1619,31 @@ async function getMomentsContext() {
     return '';
   }
 }
+
+// 获取当前 prompt
+app.get('/api/system-prompt', async (req, res) => {
+  const { data, error } = await supabase
+    .from('system_prompts')
+    .select('prompt_text')
+    .eq('id', 1)
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ prompt: data?.prompt_text || '' });
+});
+
+// 更新 prompt
+app.put('/api/system-prompt', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt || !prompt.trim()) return res.status(400).json({ error: 'Prompt 不能为空' });
+
+  const { error } = await supabase
+    .from('system_prompts')
+    .upsert({ id: 1, prompt_text: prompt.trim(), updated_at: new Date().toISOString() });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
 
 // 启动服务
 app.listen(port, () => {
