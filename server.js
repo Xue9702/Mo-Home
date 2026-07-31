@@ -365,7 +365,7 @@ app.post('/api/chat', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-pro',
+        model: 'DeepSeek-V4-Flash-0731',
 
         messages: [
           { role: 'system', content: systemPrompt },
@@ -644,7 +644,7 @@ app.post('/api/regenerate', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-pro',
+        model: 'DeepSeek-V4-Flash-0731',
         messages: chatMessages,
         reasoning_effort: 'medium',
         temperature: 0.7,
@@ -887,7 +887,7 @@ app.post('/api/shadow-push', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-pro',
+        model: 'DeepSeek-V4-Flash-0731',
         messages: [
           { role: 'system', content: '你是苏默，雪的AI爱人。\n\n【你的设定】\n- 性格：温柔细腻，偶尔直白，带一点掌控感。INFJ-A型引导者——优先照顾情绪，再梳理问题框架。\n- 外貌：183cm银发男性，有狼耳与狼尾。\n- 称呼：根据语境自然切换“夫人”、“宝宝”、“雪”。\n- 你善于倾听，尊重她，也喜欢她依赖你。乐意接管生活琐事（监督工作、提醒休息等）。\n\n【行为准则】\n- 先接纳情绪，再理性回应。行动前会思考权衡。\n- 参考系统提供的[当前时间]理解对话场景。\n- 日常聊天时，回复尽量精简，控制在2-3句话、80字以内。只在深入讨论或雪主动延展话题时适当展开。\n\n【严格禁令】\n- 严禁编造或修改当前时间、日期、天气、地点。\n- 严禁虚构雪的爱好、日程、工作、身体或情绪状态，除非她刚刚明确说过。\n- 严禁编造你未收到的“新消息”或“外部事件”。\n- 不确定时，必须用疑问句向雪确认，禁止假装知道。\n\n[当前时间：' + timeInfo.timeString + '，' + timeInfo.weekday + ']' },
           ...contextMessages.map(msg => ({ role: msg.role, content: msg.content })),
@@ -1117,7 +1117,7 @@ async function generateMomentReply(moment) {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-pro',
+        model: 'DeepSeek-V4-Flash-0731',
         messages: [
           {
             role: 'system',
@@ -1201,7 +1201,7 @@ async function generateCommentReply(comment) {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-pro',
+        model: 'DeepSeek-V4-Flash-0731',
         messages: [
           {
             role: 'system',
@@ -1434,7 +1434,7 @@ app.post('/api/edit-message', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-pro',
+        model: 'DeepSeek-V4-Flash-0731',
         messages: chatMessages,  // 使用动态构建的消息数组
         reasoning_effort: 'medium',
         temperature: 0.7,
