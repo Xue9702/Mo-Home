@@ -1080,9 +1080,9 @@
         nav.dataset.totalVersions = totalVersions;
         nav.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0 0;font-size:12px;color:#888;justify-content:flex-end;width:100%;';
 
-        const prevBtn = document.createElement('span'); prevBtn.appendChild(createChevronLeftIcon());
+        const prevBtn = document.createElement('span'); prevBtn.className = 'prev-btn'; prevBtn.appendChild(createChevronLeftIcon());
         const versionText = document.createElement('span'); versionText.className = 'version-text'; versionText.textContent = `${currentVersion}/${totalVersions}`; versionText.style.userSelect = 'none';
-        const nextBtn = document.createElement('span'); nextBtn.appendChild(createChevronRightIcon());
+        const nextBtn = document.createElement('span'); nextBtn.className = 'next-btn'; nextBtn.appendChild(createChevronRightIcon());
 
         prevBtn.addEventListener('click', e => { e.stopPropagation(); const cur = parseInt(versionText.textContent.split('/')[0]); if (cur > 1) switchVersion(groupId, cur - 1); });
         nextBtn.addEventListener('click', e => { e.stopPropagation(); const [cur, tot] = versionText.textContent.split('/').map(Number); if (cur < tot) switchVersion(groupId, cur + 1); });
@@ -1111,9 +1111,11 @@
         const userMessages = document.querySelectorAll(`.message.user[data-group-id="${groupId}"]`);
         const assistantMessages = document.querySelectorAll(`.message.assistant[data-group-id="${groupId}"]`);
 
+        // 重新生成场景下用户消息可能只有一个版本：若目标版本没有对应的用户消息，则保留用户消息可见
+        const hasUserVersion = [...userMessages].some(msg => msg.dataset.version === String(targetVersion));
         let visibleUserMsg = null;
         userMessages.forEach(msg => {
-          const show = msg.dataset.version === String(targetVersion);
+          const show = hasUserVersion ? msg.dataset.version === String(targetVersion) : true;
           msg.style.display = show ? '' : 'none';
           if (show) visibleUserMsg = msg;
         });
@@ -1122,16 +1124,22 @@
           msg.style.display = msg.dataset.assistantVersion === String(targetVersion) ? '' : 'none';
         });
 
-        // 将现有导航器移到当前可见的用户消息内
+        // 更新导航器版本文字与按钮状态（无论导航器当前挂在哪条消息上）
         const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
-        if (nav && visibleUserMsg) {
-          visibleUserMsg.appendChild(nav);
+        if (nav) {
           const versionSpan = nav.querySelector('.version-text');
           if (versionSpan) versionSpan.textContent = `${targetVersion}/${nav.dataset.totalVersions}`;
           const prevBtn = nav.querySelector('.prev-btn');
           const nextBtn = nav.querySelector('.next-btn');
           if (prevBtn) prevBtn.style.opacity = targetVersion > 1 ? '1' : '0.4';
-          if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions) ? '1' : '0.4';
+          if (nextBtn) nextBtn.style.opacity = targetVersion < parseInt(nav.dataset.totalVersions, 10) ? '1' : '0.4';
+          // 把导航器移到当前可见的消息上：优先用户消息，否则跟随可见的助手消息
+          if (visibleUserMsg) {
+            visibleUserMsg.appendChild(nav);
+          } else {
+            const visibleAsst = [...assistantMessages].find(m => m.style.display !== 'none');
+            if (visibleAsst) visibleAsst.appendChild(nav);
+          }
         }
       }
 
@@ -1241,13 +1249,24 @@
           groupMap.forEach((group, groupId) => {
             group.userMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.version = m.version; });
             group.assistantMessages.forEach(m => { m.element.dataset.groupId = groupId; m.element.dataset.assistantVersion = m.version; });
-            const versions = group.userMessages.map(m => m.version).filter(v => v != null);
-            const maxVer = Math.max(...versions);
+            // 同时统计用户与助手消息的版本号，最大版本号即当前版本与总版本数
+            const allVersions = [...group.userMessages, ...group.assistantMessages]
+              .map(m => m.version)
+              .filter(v => v != null);
+            if (allVersions.length === 0) return;
+            const maxVer = Math.max(...allVersions);
             switchVersion(groupId, maxVer);
-            // 只有当该编辑组确实存在用户消息时，才创建导航器
-            const latestUserElement = group.userMessages.find(m => m.version === maxVer)?.element;
-            if (latestUserElement && versions.length > 0) {
-              addVersionNavigator(groupId, maxVer, versions.length, latestUserElement);
+            if (maxVer < 2) return; // 只有一个版本时不需要角标
+            // 挂载规则：用户消息有多版本时挂在最新用户消息上（编辑场景），否则挂在最新助手消息上（重新生成场景）
+            const userVersionCount = new Set(group.userMessages.map(m => m.version)).size;
+            let navTarget = null;
+            if (userVersionCount > 1) {
+              navTarget = (group.userMessages.find(m => m.version === maxVer) || group.userMessages[group.userMessages.length - 1])?.element;
+            } else {
+              navTarget = (group.assistantMessages.find(m => m.version === maxVer) || group.assistantMessages[group.assistantMessages.length - 1])?.element;
+            }
+            if (navTarget) {
+              addVersionNavigator(groupId, maxVer, maxVer, navTarget);
             }
           });
           const allMsgs = messageList.querySelectorAll('.message.assistant');
@@ -1453,10 +1472,34 @@
         if (btn.disabled) return; btn.disabled = true; btn.textContent = '⏳ 生成中...';
         const messageId = btn.dataset.messageId;
         if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }
+        let newMsgDiv = null;
         try {
-          const bubble = msgDiv.querySelector('.bubble'); const thinkingEl = msgDiv.querySelector('.thinking-content');
-          if (bubble) bubble.textContent = ''; if (thinkingEl) thinkingEl.textContent = '';
+          // 隐藏旧回复（保留在 DOM 中供角标切换），创建新的助手消息元素
+          msgDiv.style.display = 'none';
+
+          newMsgDiv = document.createElement('div');
+          newMsgDiv.className = 'message assistant';
+          newMsgDiv.id = 'streaming-message';
+
+          const thinkDiv = document.createElement('div');
+          thinkDiv.className = 'thinking-content';
+          thinkDiv.style.display = 'none';
+          newMsgDiv.appendChild(thinkDiv);
+
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble';
+          newMsgDiv.appendChild(bubble);
+
+          const ts = document.createElement('div');
+          ts.className = 'timestamp';
+          ts.textContent = formatTime();
+          newMsgDiv.appendChild(ts);
+
+          msgDiv.parentNode.insertBefore(newMsgDiv, msgDiv.nextSibling);
+          messageList.scrollTop = messageList.scrollHeight;
+
           let fullReply = '', fullThinking = '', streamError = null;
+          let doneInfo = null;
           const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
@@ -1473,24 +1516,68 @@
                   if (!fullThinking.endsWith(json.thinking)) {
                     fullThinking += json.thinking;
                   }
-                  let thinkingContainer = msgDiv.querySelector('.thinking-content');
-                  if (!thinkingContainer) {
-                    thinkingContainer = document.createElement('div');
-                    thinkingContainer.className = 'thinking-content';
-                    thinkingContainer.style.display = 'block';
-                    msgDiv.insertBefore(thinkingContainer, bubble);
-                  }
-                  thinkingContainer.textContent = fullThinking;
+                  thinkDiv.style.display = 'block';
+                  thinkDiv.textContent = fullThinking;
                 }
                 if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
+                if (json.assistantMessageId && json.groupId) doneInfo = json;
                 if (json.error) { streamError = json.error; throw new Error(json.error); }
               } catch (e) { console.warn('解析SSE失败:', e, payload); }
             }
           }
           if (streamError) throw new Error(streamError);
-          if (fullReply) { btn.textContent = '✅ 已刷新'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); }
-          else throw new Error('未收到有效回复');
-        } catch (err) { console.error('重新生成失败:', err); btn.textContent = '❌ 失败，点击重试'; btn.disabled = false; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; }, 3000); }
+          if (!doneInfo || !fullReply) throw new Error('未收到有效回复');
+
+          newMsgDiv.id = '';
+          newMsgDiv.dataset.messageId = doneInfo.assistantMessageId;
+          newMsgDiv.dataset.groupId = doneInfo.groupId;
+          newMsgDiv.dataset.assistantVersion = String(doneInfo.currentVersion);
+
+          // 旧回复打上分支组标记（默认隐藏，角标可切回）
+          msgDiv.dataset.groupId = doneInfo.groupId;
+          msgDiv.dataset.assistantVersion = String(doneInfo.oldVersion || 1);
+
+          // 恢复旧回复上刷新按钮的图标（旧消息被隐藏，切回时仍可正常使用）
+          btn.textContent = '';
+          btn.appendChild(createRefreshIcon());
+          btn.title = '重新生成';
+          btn.disabled = false;
+
+          // 没有思考内容时移除空的思考容器
+          if (!fullThinking) thinkDiv.remove();
+
+          // 给新回复补上刷新按钮
+          if (!newMsgDiv.querySelector('.refresh-btn')) {
+            const refreshBtn = document.createElement('span');
+            refreshBtn.className = 'refresh-btn';
+            refreshBtn.appendChild(createRefreshIcon());
+            refreshBtn.title = '重新生成';
+            refreshBtn.dataset.messageId = doneInfo.assistantMessageId;
+            refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, newMsgDiv); });
+            newMsgDiv.appendChild(refreshBtn);
+          }
+
+          // 只显示最新版本，并挂上版本角标（多个版本时）
+          switchVersion(doneInfo.groupId, doneInfo.currentVersion);
+          if (doneInfo.totalVersions > 1) {
+            // 挂载规则：组内用户消息有多版本时挂在最新用户消息上（编辑场景），否则挂在助手消息上（重新生成场景）
+            let navTarget = newMsgDiv;
+            const groupUserMsgs = document.querySelectorAll(`.message.user[data-group-id="${doneInfo.groupId}"]`);
+            const userVersionCount = new Set([...groupUserMsgs].map(m => m.dataset.version)).size;
+            if (userVersionCount > 1) {
+              const latestUser = [...groupUserMsgs].find(m => m.dataset.version === String(doneInfo.currentVersion));
+              if (latestUser) navTarget = latestUser;
+            }
+            addVersionNavigator(doneInfo.groupId, doneInfo.currentVersion, doneInfo.totalVersions, navTarget);
+          }
+          messageList.scrollTop = messageList.scrollHeight;
+        } catch (err) {
+          console.error('重新生成失败:', err);
+          msgDiv.style.display = '';
+          if (newMsgDiv && newMsgDiv.parentNode) newMsgDiv.remove();
+          btn.textContent = '❌ 失败，点击重试'; btn.disabled = false;
+          setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; }, 3000);
+        }
       }
 
       unlockBtn.addEventListener('click', () => {

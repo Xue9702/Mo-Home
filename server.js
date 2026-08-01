@@ -272,6 +272,48 @@ async function shouldPush() {
   return true;
 }
 
+// ------------------ 分支版本工具 ------------------
+// 加载可见历史消息，按分支组（group_id + role）只保留版本号最大的最新消息；
+// 无 group_id 的普通消息全部保留；按时间正序返回最近 limit 条。
+async function loadLatestHistory(sessionId, limit = 50) {
+  try {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id, role, content, group_id, version_number, created_at')
+      .eq('session_id', sessionId)
+      .eq('visible', true)
+      .order('created_at', { ascending: false })
+      .limit(Math.max(limit * 3, 150));
+
+    if (error || !data) {
+      console.error('加载历史消息失败:', error);
+      return [];
+    }
+
+    // 同组同角色只保留版本号最大的一条
+    const latestByGroup = new Map();
+    const plainMessages = [];
+    for (const msg of data) {
+      if (!msg.group_id) {
+        plainMessages.push(msg);
+        continue;
+      }
+      const key = `${msg.group_id}|${msg.role}`;
+      const existing = latestByGroup.get(key);
+      if (!existing || (msg.version_number || 0) > (existing.version_number || 0)) {
+        latestByGroup.set(key, msg);
+      }
+    }
+
+    return [...plainMessages, ...latestByGroup.values()]
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .slice(-limit);
+  } catch (err) {
+    console.error('加载历史消息出错:', err.message);
+    return [];
+  }
+}
+
 // ------------------ 对话接口（流式响应） ------------------
 app.post('/api/chat', async (req, res) => {
   const { message } = req.body;
@@ -295,22 +337,11 @@ app.post('/api/chat', async (req, res) => {
   };
 
   try {
-    // 加载历史消息（50条）
-    const { data: history, error: historyError } = await supabase
-      .from('messages')
-      .select('role, content')
-      .eq('session_id', 1)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (historyError) {
-      console.error('加载历史消息失败:', historyError);
-    }
-
-    const historyMessages = history ? history.reverse().map(msg => ({
+    // 加载历史消息（50条，按分支组去重，只保留每个分支的最新版本）
+    const historyMessages = (await loadLatestHistory(1, 50)).map(msg => ({
       role: msg.role,
       content: msg.content
-    })) : [];
+    }));
 
     // 保存用户消息到 Supabase
     const userMessage = {
@@ -559,7 +590,7 @@ app.post('/api/regenerate', async (req, res) => {
     // 1. 查找原消息
     const { data: targetMsg, error: findError } = await supabase
       .from('messages')
-      .select('session_id, content, role, group_id')
+      .select('session_id, content, role, group_id, version_number')
       .eq('id', messageId)
       .single();
 
@@ -579,7 +610,7 @@ app.post('/api/regenerate', async (req, res) => {
     // 2. 查找对应的用户消息
     const { data: userMsg, error: userError } = await supabase
       .from('messages')
-      .select('content')
+      .select('id, content')
       .eq('session_id', targetMsg.session_id)
       .eq('role', 'user')
       .lt('id', messageId)
@@ -593,33 +624,45 @@ app.post('/api/regenerate', async (req, res) => {
       return;
     }
 
+    const userMsgId = userMsg[0].id;
     const userContent = userMsg[0].content;
     console.log('✅ 找到对应的用户消息:', userContent);
 
-    // 3. 加载历史消息（获取完整上下文）
-    const { data: history, error: historyError } = await supabase
-      .from('messages')
-      .select('role, content, group_id, version_number, id')
-      .eq('session_id', targetMsg.session_id)
-      .eq('visible', true)
-      .order('created_at', { ascending: true });
-
-    if (historyError) {
-      console.error('加载历史消息失败:', historyError);
+    // 2.5 建立/复用分支组：确保用户消息与目标回复有 group_id 和版本号 v1
+    const targetGroupId = targetMsg.group_id;
+    const groupId = targetGroupId || `regen-${userMsgId}-${Date.now()}`;
+    if (!targetGroupId) {
+      await supabase
+        .from('messages')
+        .update({ group_id: groupId, version_number: 1 })
+        .eq('id', userMsgId)
+        .is('group_id', null);
+      await supabase
+        .from('messages')
+        .update({ group_id: groupId, version_number: 1 })
+        .eq('id', messageId)
+        .is('group_id', null);
     }
 
-    // 4. 过滤历史消息：排除属于同一编辑组的旧版本，并确保不包含当前要重新生成的消息本身
-    const targetGroupId = targetMsg.group_id;
-    const filteredHistory = history
-      ? history.filter(msg => {
+    // 3. 计算新版本号：组内最大版本 + 1
+    const { data: groupVersions } = await supabase
+      .from('messages')
+      .select('version_number')
+      .eq('group_id', groupId);
+    const nextVersion = (groupVersions && groupVersions.length > 0)
+      ? Math.max(...groupVersions.map(v => v.version_number || 0)) + 1
+      : 1;
+
+    // 4. 加载历史消息（按分支组去重，只保留每个分支的最新版本）
+    const latestHistory = await loadLatestHistory(targetMsg.session_id, 200);
+    const filteredHistory = latestHistory.filter(msg => {
         // 排除当前要重新生成的消息本身
-        if (msg.id === targetMsg.id) return false;
-        // 如果有 group_id，且与当前消息属于同一组，则排除（旧版本）
-        if (targetGroupId && msg.group_id === targetGroupId) return false;
+        if (msg.id === messageId) return false;
+        // 排除当前分支组（其用户消息会在消息列表中单独追加）
+        if (msg.group_id === groupId) return false;
         // 保留其他所有可见消息
         return true;
-      })
-      : [];
+      });
 
     console.log('📜 重新生成接口 - 过滤后历史消息数量:', filteredHistory.length);
 
@@ -650,14 +693,10 @@ app.post('/api/regenerate', async (req, res) => {
       + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
-    const lastFilteredMsg = filteredHistory[filteredHistory.length - 1];
-    const userAlreadyIncluded = lastFilteredMsg
-      && lastFilteredMsg.role === 'user'
-      && lastFilteredMsg.content === userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
       ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
-      ...(userAlreadyIncluded ? [] : [{ role: 'user', content: userContent }])
+      { role: 'user', content: userContent }
     ];
 
     // 6. 调用 DeepSeek API（流式）
@@ -760,25 +799,47 @@ app.post('/api/regenerate', async (req, res) => {
       fullReply = fullReply.substring(0, markerIndex).trim();
     }
 
-    // 4. 更新数据库中的回复
-    const { error: updateError } = await supabase
+    // 4.5 分支截断：隐藏该回复之后、且不属于当前分支组的消息（新分支语义）
+    await supabase
       .from('messages')
-      .update({
+      .update({ visible: false })
+      .eq('session_id', targetMsg.session_id)
+      .gt('id', messageId)
+      .or(`group_id.is.null,group_id.neq.${groupId}`);
+
+    // 5. 保存新版本回复（旧版本保留，供角标切换查看）
+    const { data: insertedAssistant, error: insertError } = await supabase
+      .from('messages')
+      .insert({
+        session_id: targetMsg.session_id,
+        role: 'assistant',
         content: fullReply,
         reasoning_content: fullThinking || null,
-        updated_at: new Date().toISOString()
+        group_id: groupId,
+        version_number: nextVersion,
+        visible: true,
+        created_at: new Date().toISOString()
       })
-      .eq('id', messageId);
+      .select();
 
-    if (updateError) {
-      console.error('❌ 更新消息失败:', updateError);
-      sendSSE({ error: '更新消息失败' });
+    if (insertError || !insertedAssistant || insertedAssistant.length === 0) {
+      console.error('❌ 插入新版本消息失败:', insertError);
+      sendSSE({ error: '保存新版本失败' });
       res.end();
       return;
     }
 
-    console.log('✅ 消息更新成功，messageId:', messageId);
-    sendSSE({ done: true, reply: fullReply, thinking: fullThinking });
+    console.log(`✅ 新版本回复已保存 v${nextVersion}，messageId: ${insertedAssistant[0].id}`);
+    sendSSE({
+      done: true,
+      reply: fullReply,
+      thinking: fullThinking,
+      assistantMessageId: insertedAssistant[0].id,
+      groupId: groupId,
+      currentVersion: nextVersion,
+      totalVersions: nextVersion,
+      oldVersion: targetMsg.version_number || 1
+    });
     res.end();
 
   } catch (err) {
@@ -862,22 +923,8 @@ app.post('/api/shadow-push', async (req, res) => {
       return res.json({ status: 'skipped', reason: 'daily_limit' });
     }
 
-    // 6. 加载最近对话历史（最近16条可见消息）
-    const { data: recentHistory, error: historyError } = await supabase
-      .from('messages')
-      .select('role, content')
-      .eq('session_id', 1)
-      .eq('visible', true)
-      .order('created_at', { ascending: false })
-      .limit(16);
-
-    if (historyError) {
-      console.error('加载历史消息失败:', historyError);
-      isPushInProgress = false;
-      return res.status(500).json({ error: '历史消息加载失败' });
-    }
-
-    const contextMessages = recentHistory ? recentHistory.reverse() : [];
+    // 6. 加载最近对话历史（最近16条，按分支组去重，只保留最新版本）
+    const contextMessages = (await loadLatestHistory(1, 16)).map(m => ({ role: m.role, content: m.content }));
 
     // 7. 构建影子消息
     const timeDesc = timeInfo.hour < 6 ? '凌晨' :
@@ -1337,15 +1384,16 @@ app.post('/api/edit-message', async (req, res) => {
       .eq('session_id', originalMsg.session_id)
       .eq('role', 'assistant')
       .gt('id', messageId)
-      .is('group_id', null)
       .order('id', { ascending: true })
       .limit(1);
 
     if (nearbyAssistant && nearbyAssistant.length > 0) {
-      await supabase
-        .from('messages')
-        .update({ group_id: groupId, version_number: 1, visible: true })
-        .eq('id', nearbyAssistant[0].id);
+      if (!nearbyAssistant[0].group_id) {
+        await supabase
+          .from('messages')
+          .update({ group_id: groupId, version_number: 1, visible: true })
+          .eq('id', nearbyAssistant[0].id);
+      }
     }
 
     // 3. 计算新版本号：查找该 group 内已存在的最大版本号，+1
@@ -1367,13 +1415,15 @@ app.post('/api/edit-message', async (req, res) => {
       ? (existingVersions[0].version_number || 1) + 1
       : 2; // 如果原消息是版本1，则新版本为2
 
-    // 4. 将原始消息之后的所有消息（包括助手回复等）标记为不可见
-    //    范围：同 session，且 id 大于当前消息
+    // 4. 分支截断：隐藏编辑点之后、且不属于当前分支组（group_id）的消息；
+    //    紧随其后的旧助手回复保留可见，供角标刷新后切换查看
+    const cutPointId = (nearbyAssistant && nearbyAssistant.length > 0) ? nearbyAssistant[0].id : messageId;
     await supabase
       .from('messages')
       .update({ visible: false })
       .eq('session_id', originalMsg.session_id)
-      .gt('id', messageId);
+      .gt('id', cutPointId)
+      .or(`group_id.is.null,group_id.neq.${groupId}`);
 
     // 5. 插入新版本的用户消息
     const newUserMsg = {
@@ -1410,30 +1460,11 @@ app.post('/api/edit-message', async (req, res) => {
       totalVersions: totalVersions
     });
 
-    // 7. 调用 DeepSeek 流式生成新回复（逻辑与 /api/chat 一致）
-    // 7. 加载历史消息（排除被隐藏的和当前编辑组的旧版本）
-    const { data: history, error: historyError } = await supabase
-      .from('messages')
-      .select('role, content, group_id, version_number')
-      .eq('session_id', originalMsg.session_id)
-      .eq('visible', true)
-      .order('created_at', { ascending: true });
+    // 7. 加载历史消息（按分支组去重，只保留每个分支的最新版本）
+    const latestHistory = await loadLatestHistory(originalMsg.session_id, 200);
 
-    if (historyError) {
-      console.error('加载历史消息失败:', historyError);
-    }
-
-    // 8. 过滤历史消息：排除属于同一 group_id 的旧版本（避免重复上下文）
-    const filteredHistory = history
-      ? history.filter(msg => {
-        // 保留无 group_id 的消息（普通消息）
-        if (!msg.group_id) return true;
-        // 排除与当前编辑组相同 group_id 的消息（旧版本用户消息和助手回复）
-        if (msg.group_id === groupId) return false;
-        // 保留其他 group_id 的消息（不同编辑组）
-        return true;
-      })
-      : [];
+    // 8. 过滤历史消息：排除当前编辑组（其编辑后的内容会在消息列表中单独追加）
+    const filteredHistory = latestHistory.filter(msg => msg.group_id !== groupId);
 
     console.log('📜 编辑接口 - 过滤后历史消息数量:', filteredHistory.length, 'groupId:', groupId);
 
