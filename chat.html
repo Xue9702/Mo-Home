@@ -1581,7 +1581,7 @@
         tempUserMsg.appendChild(tempBubble); messageList.appendChild(tempUserMsg); messageList.scrollTop = messageList.scrollHeight;
         showTyping();
         try {
-          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText }) });
+          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText, city: localStorage.getItem('moWeatherCity') || '' }) });
           if (!response.ok) throw new Error('请求失败');
           removeTyping();
           let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
@@ -1769,7 +1769,7 @@
           const response = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, image: sentImage, file: sentFile })
+            body: JSON.stringify({ message: text, image: sentImage, file: sentFile, city: localStorage.getItem('moWeatherCity') || '' })
           });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
@@ -1922,7 +1922,7 @@
           let currentMsgDiv = newMsgDiv, currentThinkDiv = thinkDiv, currentBubble = bubble, currentThinkBody = null;
           let searchPhaseActive = false;
           let doneInfo = null;
-          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) });
+          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId, city: localStorage.getItem('moWeatherCity') || '' }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
           while (true) {

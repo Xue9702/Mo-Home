@@ -44,6 +44,73 @@
             border: none;
         }
 
+        /* 天气卡片 */
+        .weather-card {
+            margin: 14px 16px 4px;
+            padding: 16px 18px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, #e8f4ff, #fdf2f6);
+            border: 1px solid #e3ecf5;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+        }
+
+        .weather-loading {
+            font-size: 14px;
+            color: #999;
+            text-align: center;
+            padding: 8px 0;
+        }
+
+        .weather-city {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 15px;
+            font-weight: 500;
+            color: #333;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+
+        .weather-switch {
+            font-size: 12px;
+            color: #1e90ff;
+            font-weight: 400;
+            border: 1px solid #1e90ff;
+            border-radius: 12px;
+            padding: 1px 8px;
+        }
+
+        .weather-main {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .weather-icon {
+            font-size: 40px;
+            line-height: 1;
+        }
+
+        .weather-temp {
+            font-size: 36px;
+            font-weight: 600;
+            color: #1e90ff;
+        }
+
+        .weather-info {
+            font-size: 13px;
+            color: #555;
+            line-height: 1.7;
+        }
+
+        .weather-meta {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #aaa;
+            text-align: right;
+        }
+
         /* 发帖区 */
         .post-box {
             margin: 16px;
@@ -225,6 +292,11 @@
         <div></div>
     </div>
 
+    <!-- 天气卡片 -->
+    <div class="weather-card" id="weatherCard">
+        <div class="weather-loading">天气加载中…</div>
+    </div>
+
     <!-- 发帖区 -->
     <div class="post-box">
         <textarea id="postContent" placeholder="说点什么吧…" rows="2"></textarea>
@@ -238,6 +310,42 @@
 
     <script>
         const API = '';
+
+        // 页面加载时自动拉取天气（默认晋江，点城市名可切换）
+        async function loadWeather() {
+            const card = document.getElementById('weatherCard');
+            const city = localStorage.getItem('moWeatherCity') || '';
+            try {
+                const res = await fetch(`/api/weather${city ? '?city=' + encodeURIComponent(city) : ''}`);
+                if (!res.ok) throw new Error('bad');
+                const w = await res.json();
+                const updated = new Date(w.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+                card.innerHTML = `
+                    <div class="weather-city" onclick="switchCity()">
+                        ${escapeHtml(w.cityDisplay)}<span class="weather-switch">切换城市</span>
+                    </div>
+                    <div class="weather-main">
+                        <span class="weather-icon">${w.current.icon}</span>
+                        <span class="weather-temp">${w.current.temp}°</span>
+                        <div class="weather-info">
+                            <div>${escapeHtml(w.current.desc)} · 体感 ${w.current.feelsLike}°</div>
+                            <div>最高 ${w.daily.max}° / 最低 ${w.daily.min}° · 湿度 ${w.current.humidity}%</div>
+                        </div>
+                    </div>
+                    <div class="weather-meta">更新于 ${updated}</div>
+                `;
+            } catch (e) {
+                card.innerHTML = '<div class="weather-loading">天气加载失败，请稍后刷新</div>';
+            }
+        }
+
+        // 切换城市：保存在浏览器本地，聊天页与天气卡片共用
+        async function switchCity() {
+            const city = prompt('切换城市（常见城市可直接输入中文，如：北京、上海、厦门）：');
+            if (!city || !city.trim()) return;
+            localStorage.setItem('moWeatherCity', city.trim());
+            await loadWeather();
+        }
 
         // 页面加载时自动拉取朋友圈列表
         async function loadMoments() {
@@ -419,6 +527,7 @@
                     }
                 });
             }
+            loadWeather();
             loadMoments();
         });
 

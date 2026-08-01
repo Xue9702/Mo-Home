@@ -257,7 +257,7 @@ function getTimeInfo() {
 
 // 构建系统提示词：把权威的当前时间放在最前面，并清理 prompt 里可能残留的旧时间占位，
 // 避免默读到合并人设时写死的静态时间
-function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '') {
+function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '') {
   const timeInfo = getTimeInfo();
   const cleanedPrompt = String(basePrompt || '')
     .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
@@ -268,6 +268,7 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '') 
     ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，先调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
+    + (weatherContext ? `\n\n${weatherContext}` : '')
     + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
     + (momentsContext ? `\n\n【朋友圈动态】\n${momentsContext}` : '')
     + searchInstruction;
@@ -501,6 +502,139 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE }) {
 
   if (second.error) return { error: second.error };
   return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking };
+}
+
+// ================== 天气感知（Open-Meteo，免注册） ==================
+const WEATHER_DEFAULT_CITY = '晋江';
+const WEATHER_CACHE_TTL = 30 * 60 * 1000; // 天气缓存 30 分钟
+let weatherCache = null; // { city, data, fetchedAt }
+
+// 常用城市坐标表（Open-Meteo 地理编码对中文支持差，内置常见城市避免搜索失败）
+const WEATHER_CITY_PRESETS = {
+  '晋江': { lat: 24.81978, lon: 118.57415, name: '晋江' },
+  '泉州': { lat: 24.87, lon: 118.68, name: '泉州' },
+  '厦门': { lat: 24.48, lon: 118.09, name: '厦门' },
+  '福州': { lat: 26.07, lon: 119.30, name: '福州' },
+  '北京': { lat: 39.90, lon: 116.40, name: '北京' },
+  '上海': { lat: 31.23, lon: 121.47, name: '上海' },
+  '广州': { lat: 23.13, lon: 113.26, name: '广州' },
+  '深圳': { lat: 22.55, lon: 114.06, name: '深圳' },
+  '杭州': { lat: 30.27, lon: 120.16, name: '杭州' },
+  '成都': { lat: 30.57, lon: 104.07, name: '成都' },
+  '重庆': { lat: 29.56, lon: 106.55, name: '重庆' },
+  '武汉': { lat: 30.59, lon: 114.31, name: '武汉' },
+  '南京': { lat: 32.06, lon: 118.80, name: '南京' },
+  '苏州': { lat: 31.30, lon: 120.58, name: '苏州' },
+  '天津': { lat: 39.08, lon: 117.20, name: '天津' },
+  '西安': { lat: 34.34, lon: 108.94, name: '西安' },
+  '长沙': { lat: 28.23, lon: 112.94, name: '长沙' },
+  '青岛': { lat: 36.07, lon: 120.38, name: '青岛' },
+  '大连': { lat: 38.91, lon: 121.61, name: '大连' },
+  '昆明': { lat: 25.04, lon: 102.71, name: '昆明' },
+  '郑州': { lat: 34.75, lon: 113.63, name: '郑州' },
+  '合肥': { lat: 31.82, lon: 117.23, name: '合肥' },
+  '南昌': { lat: 28.68, lon: 115.86, name: '南昌' },
+  '南宁': { lat: 22.82, lon: 108.32, name: '南宁' },
+  '贵阳': { lat: 26.65, lon: 106.63, name: '贵阳' },
+  '海口': { lat: 20.04, lon: 110.34, name: '海口' },
+  '三亚': { lat: 18.25, lon: 109.51, name: '三亚' },
+  '兰州': { lat: 36.06, lon: 103.83, name: '兰州' },
+  '太原': { lat: 37.87, lon: 112.55, name: '太原' },
+  '沈阳': { lat: 41.80, lon: 123.43, name: '沈阳' },
+  '哈尔滨': { lat: 45.80, lon: 126.53, name: '哈尔滨' },
+  '长春': { lat: 43.82, lon: 125.32, name: '长春' },
+  '石家庄': { lat: 38.04, lon: 114.51, name: '石家庄' },
+  '济南': { lat: 36.65, lon: 117.12, name: '济南' },
+  '香港': { lat: 22.32, lon: 114.17, name: '香港' },
+  '澳门': { lat: 22.20, lon: 113.55, name: '澳门' },
+  '台北': { lat: 25.03, lon: 121.57, name: '台北' }
+};
+
+// WMO 天气代码 -> [中文描述, 图标]
+const WMO_INFO = {
+  0: ['晴', '☀️'], 1: ['大致晴朗', '🌤️'], 2: ['多云', '⛅'], 3: ['阴', '☁️'],
+  45: ['雾', '🌫️'], 48: ['雾凇', '🌫️'],
+  51: ['小毛毛雨', '🌦️'], 53: ['毛毛雨', '🌦️'], 55: ['浓毛毛雨', '🌧️'],
+  61: ['小雨', '🌧️'], 63: ['中雨', '🌧️'], 65: ['大雨', '🌧️'],
+  71: ['小雪', '🌨️'], 73: ['中雪', '🌨️'], 75: ['大雪', '❄️'], 77: ['雪粒', '🌨️'],
+  80: ['小阵雨', '🌦️'], 81: ['阵雨', '🌧️'], 82: ['强阵雨', '⛈️'],
+  85: ['小阵雪', '🌨️'], 86: ['阵雪', '❄️'],
+  95: ['雷暴', '⛈️'], 96: ['雷暴伴小冰雹', '⛈️'], 99: ['雷暴伴冰雹', '⛈️']
+};
+
+function getWmoInfo(code) {
+  const [desc, icon] = WMO_INFO[code] || ['未知', '🌡️'];
+  return { desc, icon };
+}
+
+// 解析城市坐标：先查内置表，再尝试 Open-Meteo 地理编码（支持拼音/英文名）
+async function resolveCityGeo(city) {
+  const preset = WEATHER_CITY_PRESETS[city];
+  if (preset) return preset;
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error('城市解析失败');
+  const data = await res.json();
+  const hit = data.results && data.results[0];
+  if (!hit) throw new Error('未找到城市');
+  return { lat: hit.latitude, lon: hit.longitude, name: hit.name || city };
+}
+
+// 获取指定城市的实况天气（带 30 分钟缓存）
+async function getWeatherData(city, force = false) {
+  const cityName = (city || WEATHER_DEFAULT_CITY).trim() || WEATHER_DEFAULT_CITY;
+  if (!force && weatherCache && weatherCache.city === cityName && Date.now() - weatherCache.fetchedAt < WEATHER_CACHE_TTL) {
+    return weatherCache.data;
+  }
+  try {
+    const geo = await resolveCityGeo(cityName);
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FShanghai&forecast_days=1`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error('天气接口失败');
+    const data = await res.json();
+    const cur = data.current || {};
+    const daily = data.daily || {};
+    const curInfo = getWmoInfo(cur.weather_code);
+    const todayInfo = getWmoInfo(daily.weather_code && daily.weather_code[0]);
+    const result = {
+      city: cityName,
+      cityDisplay: geo.name || cityName,
+      updatedAt: new Date().toISOString(),
+      current: {
+        temp: Math.round(cur.temperature_2m ?? 0),
+        feelsLike: Math.round(cur.apparent_temperature ?? 0),
+        humidity: Math.round(cur.relative_humidity_2m ?? 0),
+        precipitation: cur.precipitation ?? 0,
+        windSpeed: Math.round(cur.wind_speed_10m ?? 0),
+        isDay: !!cur.is_day,
+        desc: curInfo.desc,
+        icon: curInfo.icon
+      },
+      daily: {
+        desc: todayInfo.desc,
+        icon: todayInfo.icon,
+        max: Math.round(daily.temperature_2m_max?.[0] ?? 0),
+        min: Math.round(daily.temperature_2m_min?.[0] ?? 0),
+        sunrise: (daily.sunrise && daily.sunrise[0]) || null,
+        sunset: (daily.sunset && daily.sunset[0]) || null
+      }
+    };
+    weatherCache = { city: cityName, data: result, fetchedAt: Date.now() };
+    return result;
+  } catch (err) {
+    console.error('❌ 获取天气失败:', err.message);
+    if (weatherCache && weatherCache.city === cityName) return weatherCache.data;
+    return null;
+  }
+}
+
+// 生成注入默提示词的天气段落（带时段引导，让默在早晚安时主动聊天气）
+async function getWeatherContext(city) {
+  const w = await getWeatherData(city);
+  if (!w) return '';
+  const hour = getTimeInfo().hour;
+  const dayPhase = hour < 6 ? '凌晨' : hour < 9 ? '早晨' : hour < 12 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 22 ? '晚上' : '深夜';
+  return `【当前天气】${w.cityDisplay}：${w.current.desc} ${w.current.icon}，气温${w.current.temp}°C（体感${w.current.feelsLike}°C），最高${w.daily.max}°C / 最低${w.daily.min}°C，湿度${w.current.humidity}%，风速${w.current.windSpeed}km/h。现在是${dayPhase}；当雪醒来、或与你问候早晚安、或问起天气时，请自然地告诉她今天的天气，并给出贴心的穿衣/出行建议。`;
 }
 
 console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
@@ -779,10 +913,12 @@ app.post('/api/chat', async (req, res) => {
       .eq('id', 1)
       .single();
 
+    const weatherContext = await getWeatherContext(req.body.city || '');
     const systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
-      momentsContext
+      momentsContext,
+      weatherContext
     );
 
     // 当前这条用户消息（含图片描述/文件内容）作为对话上下文的最后一条用户消息
@@ -1119,10 +1255,12 @@ app.post('/api/regenerate', async (req, res) => {
       .eq('id', 1)
       .single();
 
+    const weatherContext = await getWeatherContext(req.body.city || '');
     const systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
-      momentsContext
+      momentsContext,
+      weatherContext
     );
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
@@ -1931,10 +2069,12 @@ app.post('/api/edit-message', async (req, res) => {
       .eq('id', 1)
       .single();
 
+    const weatherContext = await getWeatherContext(req.body.city || '');
     const systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
-      momentsContext
+      momentsContext,
+      weatherContext
     );
 
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
@@ -2136,6 +2276,21 @@ async function getMomentsContext() {
     return '';
   }
 }
+
+// ================== 天气接口 ==================
+
+// 获取当前天气（供小屋页面顶部展示；city 可指定，默认晋江）
+app.get('/api/weather', async (req, res) => {
+  try {
+    const city = (req.query.city || '').trim() || WEATHER_DEFAULT_CITY;
+    const w = await getWeatherData(city);
+    if (!w) return res.status(502).json({ error: '天气服务暂时不可用' });
+    res.json(w);
+  } catch (err) {
+    console.error('天气接口错误:', err.message);
+    res.status(500).json({ error: '获取天气失败' });
+  }
+});
 
 // 获取当前 prompt
 app.get('/api/system-prompt', async (req, res) => {
