@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>朋友圈 · Mo-Home</title>
+    <link rel="stylesheet" href="/fonts/lxgw-wenkai/lxgwwenkai-regular.css">
     <style>
         * {
             margin: 0;
@@ -13,7 +14,7 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+            font-family: var(--font-en), var(--font-cn), sans-serif;
             background-color: #ffffff;
             min-height: 100vh;
             padding-bottom: 100px;
@@ -247,6 +248,27 @@
 
     <script>
         const API = '';
+
+        // 跟随小屋页面的字体设置（中文/英文分开）
+        (function () {
+            const cnFonts = {
+                'wenkai': '"LXGW WenKai", "KaiTi", "STKaiti", serif',
+                'kaiti': '"KaiTi", "STKaiti", serif',
+                'songti': '"SimSun", "Songti SC", serif',
+                'heiti': '"SimHei", "Heiti SC", sans-serif'
+            };
+            const enFonts = {
+                'wenkai': '"LXGW WenKai", Georgia, serif',
+                'georgia': 'Georgia, "Times New Roman", serif',
+                'times': '"Times New Roman", Times, serif',
+                'verdana': 'Verdana, Geneva, sans-serif'
+            };
+            const cn = cnFonts[localStorage.getItem('moFontCn')] || '"PingFang SC", "Microsoft YaHei", sans-serif';
+            const en = enFonts[localStorage.getItem('moFontEn')] || '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            const style = document.createElement('style');
+            style.textContent = ':root{--font-en:' + en + ';--font-cn:' + cn + ';}';
+            document.head.appendChild(style);
+        })();
 
         // 页面加载时自动拉取朋友圈列表
         async function loadMoments() {
