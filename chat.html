@@ -1022,6 +1022,62 @@
         return wrapper;
       }
 
+      // 流式消息收尾：有思考时补上"折叠按钮+时间戳"行；无思考时在气泡上方补时间戳
+      function finalizeStreamingMessage(msgDiv, thinkDiv, bubble, hasThinking) {
+        if (hasThinking && thinkDiv) {
+          const row = document.createElement('div');
+          row.style.display = 'flex';
+          row.style.alignItems = 'center';
+          row.style.gap = '4px';
+          row.style.marginTop = '6px';
+
+          const toggle = document.createElement('span');
+          toggle.className = 'thinking-toggle';
+          toggle.style.cursor = 'pointer';
+          toggle.style.display = 'inline-flex';
+          toggle.style.alignItems = 'center';
+          toggle.style.color = '#999';
+          toggle.style.fontSize = '12px';
+          toggle.style.userSelect = 'none';
+
+          // 默认展开，显示心跳线图标
+          toggle.appendChild(createActivityIcon());
+          toggle.title = '收起思考';
+
+          toggle.addEventListener('click', () => {
+            const isOpen = thinkDiv.classList.toggle('open');
+            thinkDiv.style.display = isOpen ? 'block' : 'none';
+            toggle.innerHTML = '';
+            if (isOpen) {
+              toggle.appendChild(createActivityIcon());
+              toggle.title = '收起思考';
+            } else {
+              toggle.appendChild(createHeartIcon());
+              toggle.title = '展开思考';
+            }
+          });
+          row.appendChild(toggle);
+
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'timestamp';
+          timeSpan.style.marginTop = '0';
+          timeSpan.style.padding = '0';
+          timeSpan.textContent = formatTime();
+          row.appendChild(timeSpan);
+
+          thinkDiv.parentNode.insertBefore(row, thinkDiv);
+          thinkDiv.classList.add('open');
+          thinkDiv.style.display = 'block';
+        } else {
+          // 无思考内容：移除空容器，并在气泡上方补时间戳
+          if (thinkDiv && thinkDiv.parentNode) thinkDiv.parentNode.removeChild(thinkDiv);
+          const tsDiv = document.createElement('div');
+          tsDiv.className = 'timestamp';
+          tsDiv.textContent = formatTime();
+          msgDiv.insertBefore(tsDiv, bubble);
+        }
+      }
+
       function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message ' + role;
@@ -1198,6 +1254,8 @@
                 }
                 if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
                 if (json.done) {
+                  // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
+                  finalizeStreamingMessage(newAssistantMsg, currentThinkingContainer, newBubble, !!fullThinking);
                   const oldTemp = document.querySelector('[data-temp-edit="true"]'); if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
                   tempUserMsg.removeAttribute('data-temp-edit');
                   if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
@@ -1307,12 +1365,6 @@
         bubble.className = 'bubble';
         msgDiv.appendChild(bubble);
 
-        // 时间戳
-        const ts = document.createElement('div');
-        ts.className = 'timestamp';
-        ts.textContent = formatTime();
-        msgDiv.appendChild(ts);
-
         messageList.appendChild(msgDiv);
         messageList.scrollTop = messageList.scrollHeight;
 
@@ -1361,57 +1413,8 @@
                 }
 
                 if (json.done) {
-                  // 1. 如果有思考内容，原地将 thinkDiv 升级为可折叠容器
-                  if (fullThinking) {
-                    const row = document.createElement('div');
-                    row.style.display = 'flex';
-                    row.style.alignItems = 'center';
-                    row.style.gap = '4px';
-                    row.style.marginTop = '6px';
-
-                    const toggle = document.createElement('span');
-                    toggle.className = 'thinking-toggle';
-                    toggle.style.cursor = 'pointer';
-                    toggle.style.display = 'inline-flex';
-                    toggle.style.alignItems = 'center';
-                    toggle.style.color = '#999';
-                    toggle.style.fontSize = '12px';
-                    toggle.style.userSelect = 'none';
-
-                    // 展开状态显示心跳线
-                    toggle.appendChild(createActivityIcon());
-                    toggle.title = '收起思考';
-
-                    toggle.addEventListener('click', () => {
-                      const isOpen = thinkDiv.classList.toggle('open');
-                      thinkDiv.style.display = isOpen ? 'block' : 'none';
-                      toggle.innerHTML = '';
-                      if (isOpen) {
-                        toggle.appendChild(createActivityIcon());
-                        toggle.title = '收起思考';
-                      } else {
-                        toggle.appendChild(createHeartIcon());
-                        toggle.title = '展开思考';
-                      }
-                    });
-                    row.appendChild(toggle);
-
-                    const timeSpan = document.createElement('span');
-                    timeSpan.className = 'timestamp';
-                    timeSpan.style.marginTop = '0';
-                    timeSpan.style.padding = '0';
-                    timeSpan.textContent = formatTime();
-                    row.appendChild(timeSpan);
-
-                    thinkDiv.parentNode.insertBefore(row, thinkDiv);
-                    thinkDiv.classList.add('open');
-                    thinkDiv.style.display = 'block';
-                  } else {
-                    // 没有思考内容，移除空的 thinkDiv
-                    if (thinkDiv.parentNode) {
-                      thinkDiv.parentNode.removeChild(thinkDiv);
-                    }
-                  }
+                  // 1. 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
+                  finalizeStreamingMessage(msgDiv, thinkDiv, bubble, !!fullThinking);
 
                   // 2. 将 msgDiv 从流式容器转换为最终消息
                   msgDiv.id = '';
@@ -1490,11 +1493,6 @@
           bubble.className = 'bubble';
           newMsgDiv.appendChild(bubble);
 
-          const ts = document.createElement('div');
-          ts.className = 'timestamp';
-          ts.textContent = formatTime();
-          newMsgDiv.appendChild(ts);
-
           msgDiv.parentNode.insertBefore(newMsgDiv, msgDiv.nextSibling);
           messageList.scrollTop = messageList.scrollHeight;
 
@@ -1543,8 +1541,8 @@
           btn.title = '重新生成';
           btn.disabled = false;
 
-          // 没有思考内容时移除空的思考容器
-          if (!fullThinking) thinkDiv.remove();
+          // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
+          finalizeStreamingMessage(newMsgDiv, thinkDiv, bubble, !!fullThinking);
 
           // 给新回复补上刷新按钮
           if (!newMsgDiv.querySelector('.refresh-btn')) {

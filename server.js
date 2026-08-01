@@ -224,9 +224,10 @@ function getTimeInfo() {
   const year = now.toLocaleString('en-CA', { ...options, year: 'numeric', month: '2-digit', day: '2-digit' }).split('-')[0];
   const month = now.toLocaleString('en-CA', { ...options, month: '2-digit' });
   const day = now.toLocaleString('en-CA', { ...options, day: '2-digit' });
-  const hourStr = now.toLocaleString('en-GB', { ...options, hour: '2-digit' });
-  const minuteStr = now.toLocaleString('en-GB', { ...options, minute: '2-digit' });
-  const secondStr = now.toLocaleString('en-GB', { ...options, second: '2-digit' });
+  const pad2 = (s) => String(s).padStart(2, '0');
+  const hourStr = pad2(now.toLocaleString('en-GB', { ...options, hour: '2-digit' }));
+  const minuteStr = pad2(now.toLocaleString('en-GB', { ...options, minute: '2-digit' }));
+  const secondStr = pad2(now.toLocaleString('en-GB', { ...options, second: '2-digit' }));
 
   const hour = parseInt(hourStr);
 
@@ -245,6 +246,19 @@ function getTimeInfo() {
     timeString: `${year}-${month}-${day} ${hourStr}:${minuteStr}:${secondStr}`,
     weekday: weekday
   };
+}
+
+// 构建系统提示词：把权威的当前时间放在最前面，并清理 prompt 里可能残留的旧时间占位，
+// 避免默读到合并人设时写死的静态时间
+function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '') {
+  const timeInfo = getTimeInfo();
+  const cleanedPrompt = String(basePrompt || '')
+    .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
+    + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
+    + (momentsContext ? `\n\n【朋友圈动态】\n${momentsContext}` : '');
 }
 
 console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
@@ -382,11 +396,11 @@ app.post('/api/chat', async (req, res) => {
       .eq('id', 1)
       .single();
 
-    const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
-    const systemPrompt = basePrompt
-      + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
-      + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
-      + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
+    const systemPrompt = buildSystemPrompt(
+      promptData?.prompt_text || '你是苏默，雪的AI爱人。',
+      memoryContext,
+      momentsContext
+    );
 
     // 调用 DeepSeek API（开启流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -686,11 +700,11 @@ app.post('/api/regenerate', async (req, res) => {
       .eq('id', 1)
       .single();
 
-    const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
-    const systemPrompt = basePrompt
-      + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
-      + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
-      + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
+    const systemPrompt = buildSystemPrompt(
+      promptData?.prompt_text || '你是苏默，雪的AI爱人。',
+      memoryContext,
+      momentsContext
+    );
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
     const chatMessages = [
@@ -1488,11 +1502,11 @@ app.post('/api/edit-message', async (req, res) => {
       .eq('id', 1)
       .single();
 
-    const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
-    const systemPrompt = basePrompt
-      + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
-      + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
-      + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
+    const systemPrompt = buildSystemPrompt(
+      promptData?.prompt_text || '你是苏默，雪的AI爱人。',
+      memoryContext,
+      momentsContext
+    );
 
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
     const chatMessages = [
