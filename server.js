@@ -263,9 +263,196 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '') 
     .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  // 实时搜索指令：仅在后端配置了博查密钥时注入，避免默在未启用时也输出搜索标签
+  const searchInstruction = process.env.BOCHA_API_KEY
+    ? `\n\n【实时搜索】\n你拥有联网实时搜索能力。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，在回复的最末尾附加一行标签：\n[SEARCH_QUERY]<简洁明确的中文搜索关键词>\n注意：标签必须位于回复最末尾、只出现一次，系统会拦截处理它，雪不会看到；标签之前可以写一句简短的过渡语，但不要写正式回答，等搜索结果返回后再作答。如果问题不需要实时信息，则完全不要使用该标签。`
+    : '';
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
     + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
-    + (momentsContext ? `\n\n【朋友圈动态】\n${momentsContext}` : '');
+    + (momentsContext ? `\n\n【朋友圈动态】\n${momentsContext}` : '')
+    + searchInstruction;
+}
+
+// ------------------ 实时搜索工具（博查） ------------------
+
+// 提取回复中的 [SEARCH_QUERY]<关键词> 标签；返回 { query, leadText } 或 null
+function extractSearchTag(reply) {
+  const marker = '[SEARCH_QUERY]';
+  const text = String(reply || '');
+  const idx = text.indexOf(marker);
+  if (idx === -1) return null;
+  const after = text.substring(idx + marker.length).trim();
+  const query = after.split(/\r?\n/)[0].trim();
+  return {
+    query,
+    leadText: text.substring(0, idx).trim()
+  };
+}
+
+// 清除回复中可能残留的搜索标签（防止标签被存进数据库或显示给雪）
+function stripSearchTags(text) {
+  return String(text || '').replace(/\[SEARCH_QUERY\][^\r\n]*/g, '').trim();
+}
+
+// 调用博查 Web Search API，返回整理好的文本结果；失败或未配置返回 null
+async function performWebSearch(query) {
+  if (!process.env.BOCHA_API_KEY) {
+    console.warn('⚠️ 未配置 BOCHA_API_KEY，跳过实时搜索');
+    return null;
+  }
+  try {
+    const response = await fetch('https://api.bochaai.com/v1/web-search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.BOCHA_API_KEY}`
+      },
+      body: JSON.stringify({
+        query,
+        count: 5,
+        summary: true,
+        freshness: 'noLimit'
+      })
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('❌ 博查搜索失败:', response.status, String(errText).substring(0, 200));
+      return null;
+    }
+    const data = await response.json();
+    const pages = data?.data?.webPages?.value || [];
+    if (!pages.length) {
+      console.warn('⚠️ 博查搜索无结果:', query);
+      return null;
+    }
+    return pages.slice(0, 5).map((item, i) => {
+      const title = item.name || item.title || '无标题';
+      const url = item.url || '';
+      const snippet = item.summary || item.snippet || item.description || '';
+      const date = item.datePublished ? `（${item.datePublished}）` : '';
+      return `${i + 1}. ${title}${date}\n${url}\n${snippet}`;
+    }).join('\n\n');
+  } catch (err) {
+    console.error('❌ 博查搜索异常:', err.message);
+    return null;
+  }
+}
+
+// 调用 DeepSeek（流式）。bufferContent=true 时先缓存可见内容，结束时统一返回，
+// 避免把 [SEARCH_QUERY] 这类工具标签直接流给前端；思考内容始终实时转发。
+async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false } = {}) {
+  const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'deepseek-v4-flash',
+      messages: chatMessages,
+      reasoning_effort: 'medium',
+      temperature: 0.7,
+      max_tokens: 2048,
+      stream: true
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error('❌ DeepSeek API 错误:', errText);
+    return { error: 'AI 服务暂时不可用' };
+  }
+
+  let fullReply = '';
+  let fullThinking = '';
+  let contentBuffer = '';
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+      const payload = trimmed.slice(6);
+      if (payload === '[DONE]') continue;
+
+      try {
+        const json = JSON.parse(payload);
+        const delta = json.choices?.[0]?.delta;
+
+        if (delta?.reasoning_content) {
+          fullThinking += delta.reasoning_content;
+          sendSSE({ thinking: delta.reasoning_content });
+        }
+
+        if (delta?.content) {
+          fullReply += delta.content;
+          if (bufferContent) {
+            contentBuffer += delta.content;
+          } else {
+            sendSSE({ content: delta.content });
+          }
+        }
+      } catch (e) {
+        // 忽略非 JSON 数据
+      }
+    }
+  }
+
+  return { fullReply, fullThinking, contentBuffer };
+}
+
+// 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
+function flushBufferedContent(contentBuffer, sendSSE) {
+  if (!contentBuffer) return;
+  const chunkSize = 40;
+  for (let i = 0; i < contentBuffer.length; i += chunkSize) {
+    sendSSE({ content: contentBuffer.substring(i, i + chunkSize) });
+  }
+}
+
+// 处理回复中的搜索标签：需要搜索时调用博查，并用搜索结果追加一次 DeepSeek 调用，
+// 返回最终的 { reply, thinking, searched }；搜索失败时降级为无结果回答。
+async function resolveSearchTag({ reply, thinking, chatMessages, systemPrompt, sendSSE }) {
+  const tag = extractSearchTag(reply);
+  if (!tag) return { reply, thinking, searched: false };
+
+  // 先把过渡语补发给前端，再通知“正在搜索”
+  if (tag.leadText) sendSSE({ content: tag.leadText });
+  sendSSE({ search: true, query: tag.query });
+
+  let searchText = null;
+  if (tag.query) {
+    searchText = await performWebSearch(tag.query);
+  }
+
+  const searchNote = searchText
+    ? `【实时搜索结果】\n以下是默刚刚搜索到的实时信息：\n\n${searchText}\n\n请基于这些搜索结果回答雪的问题，用自己的语气自然组织；如果搜索结果与问题无关或信息不足，请如实说明。`
+    : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
+
+  const second = await callDeepSeekStream(
+    [
+      { role: 'system', content: `${systemPrompt}\n\n${searchNote}` },
+      ...chatMessages.slice(1)
+    ],
+    sendSSE
+  );
+
+  if (second.error) return { error: second.error, searched: true };
+
+  const finalReply = stripSearchTags([tag.leadText, second.fullReply].filter(Boolean).join('\n'));
+  const finalThinking = thinking + (second.fullThinking ? `\n\n${second.fullThinking}` : '');
+  return { reply: finalReply, thinking: finalThinking, searched: true };
 }
 
 console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
@@ -557,81 +744,23 @@ app.post('/api/chat', async (req, res) => {
       fileText ? `[用户上传了文件：${file.name}]\n[文件内容：${fileText}]` : ''
     ].filter(Boolean).join('\n\n');
 
-    // 调用 DeepSeek API（开启流式）
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+    // 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
+    const chatMessages = [
+      { role: 'system', content: systemPrompt },
+      ...historyMessages,
+      { role: 'user', content: finalUserContent }
+    ];
 
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...historyMessages,
-          { role: 'user', content: finalUserContent }
-        ],
+    const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: true });
 
-        reasoning_effort: 'medium',
-        temperature: 0.7,
-        max_tokens: 2048,
-        stream: true  // 开启流式输出
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('DeepSeek API 错误:', errText);
-      sendSSE({ error: 'AI 服务暂时不可用' });
+    if (first.error) {
+      sendSSE({ error: first.error });
       res.end();
       return;
     }
 
-    // 存储完整的回复内容，用于后续存入数据库和 Ombre Brain
-    let fullReply = '';
-    let fullThinking = '';
-
-    // 读取流式数据
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-        const payload = trimmed.slice(6);
-        if (payload === '[DONE]') continue;
-
-        try {
-          const json = JSON.parse(payload);
-          const delta = json.choices?.[0]?.delta;
-
-          if (delta?.reasoning_content) {
-            fullThinking += delta.reasoning_content;
-            sendSSE({ thinking: delta.reasoning_content });
-          }
-
-          if (delta?.content) {
-            fullReply += delta.content;
-            sendSSE({ content: delta.content });
-          }
-        } catch (e) {
-          // 忽略非 JSON 数据
-        }
-      }
-    }
-
-    console.log('📊 流式读取完成，fullReply 长度:', fullReply.length, 'fullThinking 长度:', fullThinking.length);
+    let fullReply = first.fullReply;
+    let fullThinking = first.fullThinking;
 
     // 检查是否收到了完整的回复
     if (!fullReply) {
@@ -639,6 +768,32 @@ app.post('/api/chat', async (req, res) => {
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
       return;
+    }
+
+    // 处理实时搜索标签：需要搜索时自动联网并追加一次回答
+    const searchResult = await resolveSearchTag({
+      reply: fullReply,
+      thinking: fullThinking,
+      chatMessages,
+      systemPrompt,
+      sendSSE
+    });
+
+    if (searchResult.error) {
+      sendSSE({ error: searchResult.error });
+      res.end();
+      return;
+    }
+
+    fullReply = searchResult.reply;
+    fullThinking = searchResult.thinking;
+
+    if (searchResult.searched) {
+      console.log('🔍 联网搜索完成，最终回复长度:', fullReply.length);
+    } else {
+      // 未触发搜索：把缓存的可见内容分块补发给前端
+      flushBufferedContent(first.contentBuffer, sendSSE);
+      console.log('📊 流式读取完成，fullReply 长度:', fullReply.length, 'fullThinking 长度:', fullThinking.length);
     }
 
     // 存储本次对话到 Ombre Brain
@@ -891,77 +1046,48 @@ app.post('/api/regenerate', async (req, res) => {
       { role: 'user', content: userContent }
     ];
 
-    // 6. 调用 DeepSeek API（流式）
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'deepseek-v4-flash',
-        messages: chatMessages,
-        reasoning_effort: 'medium',
-        temperature: 0.7,
-        max_tokens: 2048,
-        stream: true
-      })
-    });
+    // 6. 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
+    const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: true });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('❌ DeepSeek API 错误:', errText);
-      sendSSE({ error: 'AI 服务暂时不可用' });
+    if (first.error) {
+      sendSSE({ error: first.error });
       res.end();
       return;
     }
 
-    let fullReply = '';
-    let fullThinking = '';
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-        const payload = trimmed.slice(6);
-        if (payload === '[DONE]') continue;
-
-        try {
-          const json = JSON.parse(payload);
-          const delta = json.choices?.[0]?.delta;
-
-          if (delta?.reasoning_content) {
-            fullThinking += delta.reasoning_content;
-            sendSSE({ thinking: delta.reasoning_content });
-          }
-
-          if (delta?.content) {
-            fullReply += delta.content;
-            sendSSE({ content: delta.content });
-          }
-        } catch (e) {
-          // 忽略非 JSON 数据
-        }
-      }
-    }
+    let fullReply = first.fullReply;
+    let fullThinking = first.fullThinking;
 
     if (!fullReply) {
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
       return;
+    }
+
+    // 6.5 处理实时搜索标签：需要搜索时自动联网并追加一次回答
+    const searchResult = await resolveSearchTag({
+      reply: fullReply,
+      thinking: fullThinking,
+      chatMessages,
+      systemPrompt,
+      sendSSE
+    });
+
+    if (searchResult.error) {
+      sendSSE({ error: searchResult.error });
+      res.end();
+      return;
+    }
+
+    fullReply = searchResult.reply;
+    fullThinking = searchResult.thinking;
+
+    if (searchResult.searched) {
+      console.log('🔍 重新生成-联网搜索完成，最终回复长度:', fullReply.length);
+    } else {
+      // 未触发搜索：把缓存的可见内容分块补发给前端
+      flushBufferedContent(first.contentBuffer, sendSSE);
     }
 
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
@@ -1177,6 +1303,9 @@ app.post('/api/shadow-push', async (req, res) => {
       isPushInProgress = false;
       return res.json({ status: 'skipped', reason: 'empty_response' });
     }
+
+    // 兜底清理：影子推送不执行联网搜索，避免把搜索标签带进消息
+    aiReply = stripSearchTags(aiReply);
 
     // 9. 后处理：软截断（80字以内，在句末标点处截断）
     if (aiReply.length > 80) {
@@ -1703,77 +1832,48 @@ app.post('/api/edit-message', async (req, res) => {
       { role: 'user', content: newContent.trim() }
     ];
 
-    // 10. 调用 DeepSeek 流式生成新回复
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'deepseek-v4-flash',
-        messages: chatMessages,  // 使用动态构建的消息数组
-        reasoning_effort: 'medium',
-        temperature: 0.7,
-        max_tokens: 2048,
-        stream: true
-      })
-    });
+    // 10. 调用 DeepSeek 流式生成新回复（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
+    const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: true });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('DeepSeek API 错误:', errText);
-      sendSSE({ error: 'AI 服务暂时不可用' });
+    if (first.error) {
+      sendSSE({ error: first.error });
       res.end();
       return;
     }
 
-    let fullReply = '';
-    let fullThinking = '';
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-        const payload = trimmed.slice(6);
-        if (payload === '[DONE]') continue;
-
-        try {
-          const json = JSON.parse(payload);
-          const delta = json.choices?.[0]?.delta;
-
-          if (delta?.reasoning_content) {
-            fullThinking += delta.reasoning_content;
-            sendSSE({ thinking: delta.reasoning_content });
-          }
-
-          if (delta?.content) {
-            fullReply += delta.content;
-            sendSSE({ content: delta.content });
-          }
-        } catch (e) {
-          // 忽略非 JSON 数据
-        }
-      }
-    }
+    let fullReply = first.fullReply;
+    let fullThinking = first.fullThinking;
 
     if (!fullReply) {
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
       return;
+    }
+
+    // 10.5 处理实时搜索标签：需要搜索时自动联网并追加一次回答
+    const searchResult = await resolveSearchTag({
+      reply: fullReply,
+      thinking: fullThinking,
+      chatMessages,
+      systemPrompt,
+      sendSSE
+    });
+
+    if (searchResult.error) {
+      sendSSE({ error: searchResult.error });
+      res.end();
+      return;
+    }
+
+    fullReply = searchResult.reply;
+    fullThinking = searchResult.thinking;
+
+    if (searchResult.searched) {
+      console.log('🔍 编辑-联网搜索完成，最终回复长度:', fullReply.length);
+    } else {
+      // 未触发搜索：把缓存的可见内容分块补发给前端
+      flushBufferedContent(first.contentBuffer, sendSSE);
     }
 
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签

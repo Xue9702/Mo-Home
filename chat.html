@@ -1552,6 +1552,17 @@
                   }
                   currentThinkingContainer.textContent = fullThinking;
                 }
+                if (json.search) {
+                  // 联网搜索进行中：在气泡里补一行提示（后续内容到达时会被覆盖）
+                  if (!currentAssistantBubble.querySelector('.search-indicator')) {
+                    const indicator = document.createElement('span');
+                    indicator.className = 'search-indicator';
+                    indicator.style.cssText = 'display:block;color:#999;font-size:12px;font-style:italic;margin-bottom:4px;';
+                    indicator.textContent = '🔍 正在联网搜索…';
+                    currentAssistantBubble.appendChild(indicator);
+                    messageList.scrollTop = messageList.scrollHeight;
+                  }
+                }
                 if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
                 if (json.done) {
                   // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
@@ -1713,6 +1724,18 @@
                   messageList.scrollTop = messageList.scrollHeight;
                 }
 
+                if (json.search) {
+                  // 联网搜索进行中：在气泡里补一行提示（后续内容到达时会被覆盖）
+                  if (!bubble.querySelector('.search-indicator')) {
+                    const indicator = document.createElement('span');
+                    indicator.className = 'search-indicator';
+                    indicator.style.cssText = 'display:block;color:#999;font-size:12px;font-style:italic;margin-bottom:4px;';
+                    indicator.textContent = '🔍 正在联网搜索…';
+                    bubble.appendChild(indicator);
+                    messageList.scrollTop = messageList.scrollHeight;
+                  }
+                }
+
                 if (json.content) {
                   fullReply += json.content;
                   bubble.textContent = fullReply;
@@ -1823,6 +1846,17 @@
                   }
                   thinkDiv.style.display = 'block';
                   thinkDiv.textContent = fullThinking;
+                }
+                if (json.search) {
+                  // 联网搜索进行中：在气泡里补一行提示（后续内容到达时会被覆盖）
+                  if (bubble && !bubble.querySelector('.search-indicator')) {
+                    const indicator = document.createElement('span');
+                    indicator.className = 'search-indicator';
+                    indicator.style.cssText = 'display:block;color:#999;font-size:12px;font-style:italic;margin-bottom:4px;';
+                    indicator.textContent = '🔍 正在联网搜索…';
+                    bubble.appendChild(indicator);
+                    messageList.scrollTop = messageList.scrollHeight;
+                  }
                 }
                 if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
                 if (json.assistantMessageId && json.groupId) doneInfo = json;
