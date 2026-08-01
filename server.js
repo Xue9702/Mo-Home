@@ -1,6 +1,8 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
+const { PDFParse } = require('pdf-parse');
+const mammoth = require('mammoth');
 // ================== 影子推送配置 ==================
 const SHADOW_PUSH_SECRET = process.env.SHADOW_PUSH_SECRET || 'your-secret-key-change-me';
 const USER_TIMEZONE = 'Asia/Shanghai'; // 目标时区：东八区
@@ -53,7 +55,7 @@ async function updatePushState(lastPushTimeISO, cooldownMinutes) {
 }
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '40mb' }));
 const port = process.env.PORT || 3000;
 
 // ================== 原有 Supabase 配置 ==================
@@ -298,22 +300,31 @@ async function loadLatestHistory(sessionId, limit = 50) {
   try {
     let result = await supabase
       .from('messages')
-      .select('id, role, content, group_id, version_number, created_at, image_alt')
+      .select('id, role, content, group_id, version_number, created_at, image_alt, file_name, file_text')
       .eq('session_id', sessionId)
       .eq('visible', true)
       .order('created_at', { ascending: false })
       .limit(Math.max(limit * 3, 150));
 
     // 兼容尚未添加 image_alt 列的数据库：去掉该列重试
-    if (result.error && /image_alt/.test(result.error.message)) {
-      console.warn('⚠️ image_alt 列不存在，历史上下文暂不含图片描述（请执行 ALTER TABLE 开启）');
+    if (result.error && /image_alt|file_name|file_text/.test(result.error.message)) {
+      console.warn('⚠️ 图片/文件列不存在，历史上下文暂不含附件内容（请执行 ALTER TABLE 开启）');
       result = await supabase
         .from('messages')
-        .select('id, role, content, group_id, version_number, created_at')
+        .select('id, role, content, group_id, version_number, created_at, image_alt')
         .eq('session_id', sessionId)
         .eq('visible', true)
         .order('created_at', { ascending: false })
         .limit(Math.max(limit * 3, 150));
+      if (result.error && /file_name|file_text/.test(result.error.message)) {
+        result = await supabase
+          .from('messages')
+          .select('id, role, content, group_id, version_number, created_at')
+          .eq('session_id', sessionId)
+          .eq('visible', true)
+          .order('created_at', { ascending: false })
+          .limit(Math.max(limit * 3, 150));
+      }
     }
     const { data, error } = result;
 
@@ -343,11 +354,42 @@ async function loadLatestHistory(sessionId, limit = 50) {
       .map(msg => ({
         ...msg,
         // 图片消息在上下文中附带视觉模型生成的描述，让默"看见"图片
-        content: msg.content + (msg.image_alt ? `\n\n[图片描述：${msg.image_alt}]` : '')
+        content: msg.content
+          + (msg.image_alt ? `\n\n[图片描述：${msg.image_alt}]` : '')
+          + (msg.file_name ? `\n\n[用户上传了文件：${msg.file_name}]\n[文件内容：${msg.file_text || '（无法读取）'}]` : '')
       }));
   } catch (err) {
     console.error('加载历史消息出错:', err.message);
     return [];
+  }
+}
+
+// 解析用户上传的文档（PDF / Word / 纯文本），提取文字给默阅读
+async function extractFileText(file) {
+  if (!file || !file.data) return '（文件内容为空）';
+  const name = String(file.name || '').toLowerCase();
+  const base64 = String(file.data).replace(/^data:[^;]+;base64,/, '');
+  const buffer = Buffer.from(base64, 'base64');
+  try {
+    let text = '';
+    if (name.endsWith('.pdf')) {
+      const parser = new PDFParse({ data: buffer });
+      const result = await parser.getText();
+      text = result?.text || '';
+    } else if (name.endsWith('.docx')) {
+      const result = await mammoth.extractRawText({ buffer });
+      text = result?.value || '';
+    } else if (name.endsWith('.txt') || name.endsWith('.md')) {
+      text = buffer.toString('utf8');
+    } else {
+      return '（暂不支持该文件格式，请使用 PDF、Word（.docx）或纯文本）';
+    }
+    const trimmed = (text || '').replace(/\s+/g, ' ').trim();
+    if (!trimmed) return '（未能从文档中提取到文字，可能是扫描件或图片型PDF）';
+    return trimmed.length > 20000 ? trimmed.slice(0, 20000) + '……（内容过长已截断）' : trimmed;
+  } catch (err) {
+    console.error('❌ 文件解析失败:', err.message);
+    return '（文件解析失败，无法读取内容）';
   }
 }
 
@@ -403,10 +445,10 @@ async function describeImage(imageDataUrl, userText = '') {
 
 // ------------------ 对话接口（流式响应） ------------------
 app.post('/api/chat', async (req, res) => {
-  const { message, image } = req.body;
+  const { message, image, file } = req.body;
   const text = (message || '').trim();
 
-  if (!text && !image) {
+  if (!text && !image && !file) {
     return res.status(400).json({ error: '消息不能为空' });
   }
 
@@ -432,6 +474,12 @@ app.post('/api/chat', async (req, res) => {
       if (!imageAlt) imageAlt = '（图片内容解析失败）';
     }
 
+    // 解析上传的文档（如果有）：提取文字，让默能"阅读"文件
+    let fileText = null;
+    if (file) {
+      fileText = await extractFileText(file);
+    }
+
     // 加载历史消息（50条，按分支组去重，只保留每个分支的最新版本）
     const historyMessages = (await loadLatestHistory(1, 50)).map(msg => ({
       role: msg.role,
@@ -445,17 +493,24 @@ app.post('/api/chat', async (req, res) => {
       content: text,
       visible: true,
       created_at: new Date().toISOString(),
-      ...(image ? { image_data: image, image_alt: imageAlt } : {})
+      ...(image ? { image_data: image, image_alt: imageAlt } : {}),
+      ...(file ? { file_name: file.name, file_text: fileText } : {})
     };
 
     // 若 image_data 列尚未在 Supabase 中创建，则降级为纯文本保存，聊天不中断
     let userData = null, userError = null;
     const insertResult = await supabase.from('messages').insert([userMessage]).select();
-    if (insertResult.error && image && /image_data|image_alt/.test(insertResult.error.message)) {
-      console.warn('⚠️ image_data 列不存在，降级为纯文本保存（请在 Supabase 执行 ALTER TABLE 开启图片持久化）');
+    if (insertResult.error && (image || file) && /image_data|image_alt|file_name|file_text/.test(insertResult.error.message)) {
+      console.warn('⚠️ 附件列不存在，降级为纯文本保存（请在 Supabase 执行 ALTER TABLE 开启附件持久化）');
       const fallback = await supabase
         .from('messages')
-        .insert([{ ...userMessage, image_data: undefined, image_alt: undefined }])
+        .insert([{
+          ...userMessage,
+          image_data: undefined,
+          image_alt: undefined,
+          file_name: undefined,
+          file_text: undefined
+        }])
         .select();
       userData = fallback.data;
       userError = fallback.error;
@@ -495,8 +550,12 @@ app.post('/api/chat', async (req, res) => {
       momentsContext
     );
 
-    // 当前这条用户消息（含图片描述）作为对话上下文的最后一条用户消息
-    const finalUserContent = (text + (imageAlt ? `\n\n[用户发来一张图片，图片内容描述：${imageAlt}]` : '')).trim();
+    // 当前这条用户消息（含图片描述/文件内容）作为对话上下文的最后一条用户消息
+    const finalUserContent = [
+      text,
+      imageAlt ? `[用户发来一张图片，图片内容描述：${imageAlt}]` : '',
+      fileText ? `[用户上传了文件：${file.name}]\n[文件内容：${fileText}]` : ''
+    ].filter(Boolean).join('\n\n');
 
     // 调用 DeepSeek API（开启流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -720,7 +779,7 @@ app.post('/api/regenerate', async (req, res) => {
     // 2. 查找对应的用户消息
     let userMsgResult = await supabase
       .from('messages')
-      .select('id, content, image_alt')
+      .select('id, content, image_alt, file_name, file_text')
       .eq('session_id', targetMsg.session_id)
       .eq('role', 'user')
       .lt('id', messageId)
@@ -729,12 +788,22 @@ app.post('/api/regenerate', async (req, res) => {
     if (userMsgResult.error && /image_alt/.test(userMsgResult.error.message)) {
       userMsgResult = await supabase
         .from('messages')
-        .select('id, content')
+        .select('id, content, file_name, file_text')
         .eq('session_id', targetMsg.session_id)
         .eq('role', 'user')
         .lt('id', messageId)
         .order('id', { ascending: false })
         .limit(1);
+      if (userMsgResult.error && /file_name|file_text/.test(userMsgResult.error.message)) {
+        userMsgResult = await supabase
+          .from('messages')
+          .select('id, content')
+          .eq('session_id', targetMsg.session_id)
+          .eq('role', 'user')
+          .lt('id', messageId)
+          .order('id', { ascending: false })
+          .limit(1);
+      }
     }
     const { data: userMsg, error: userError } = userMsgResult;
 
@@ -747,7 +816,8 @@ app.post('/api/regenerate', async (req, res) => {
 
     const userMsgId = userMsg[0].id;
     const userContent = userMsg[0].content
-      + (userMsg[0].image_alt ? `\n\n[图片描述：${userMsg[0].image_alt}]` : '');
+      + (userMsg[0].image_alt ? `\n\n[图片描述：${userMsg[0].image_alt}]` : '')
+      + (userMsg[0].file_name ? `\n\n[用户上传了文件：${userMsg[0].file_name}]\n[文件内容：${userMsg[0].file_text || '（无法读取）'}]` : '');
     console.log('✅ 找到对应的用户消息:', userContent);
 
     // 2.5 建立/复用分支组：确保用户消息与目标回复有 group_id 和版本号 v1
@@ -1559,6 +1629,11 @@ app.post('/api/edit-message', async (req, res) => {
       ...(originalMsg.image_data ? {
         image_data: originalMsg.image_data,
         image_alt: originalMsg.image_alt || null
+      } : {}),
+      // 仅在原消息确实带文件时复制文件名与提取的文本
+      ...(originalMsg.file_name ? {
+        file_name: originalMsg.file_name,
+        file_text: originalMsg.file_text || null
       } : {}),
       visible: true,
       created_at: new Date().toISOString()

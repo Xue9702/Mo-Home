@@ -18,6 +18,8 @@
     "@supabase/supabase-js": "^2.110.0",
     "axios": "^1.18.1",
     "express": "^5.2.1",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
     "ws": "^8.21.0"
   }
 }
