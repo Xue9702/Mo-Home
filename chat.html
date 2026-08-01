@@ -503,49 +503,48 @@
           <!-- 这里以后放朋友圈卡片和其他功能按钮 -->
         </div>
       </div>
-    </div>
+      <!-- 设置页面 -->
+      <div id="settingsPage" class="page">
+        <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
 
-    <div id="settingsPage" class="page" style="flex-direction: column; height: 100%;">
-      <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
-        <h3 style="margin: 0 0 20px; font-size: 18px; font-weight: 500;">Settings</h3>
+          <!-- 功能卡片列表 -->
+          <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
 
-        <!-- 功能卡片列表 -->
-        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px;">
+            <!-- System Prompt 按钮（圆角卡片） -->
+            <div id="promptSettingBtn" onclick="openPromptEditor()"
+              style="background: #fff; border: 1px solid #e9e9e9; border-radius: 16px; padding: 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+              <span id="userPenIcon"></span>
+              <span style="font-size: 15px; font-weight: 500;">Prompt</span>
+              <span style="margin-left: auto; color: #ccc; font-size: 14px;">›</span>
+            </div>
 
-          <!-- System Prompt 按钮（圆角卡片） -->
-          <div id="promptSettingBtn" onclick="openPromptEditor()"
-            style="background: #fff; border: 1px solid #e9e9e9; border-radius: 16px; padding: 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
-            <span id="userPenIcon"></span>
-            <span style="font-size: 15px; font-weight: 500;">Prompt</span>
-            <span style="margin-left: auto; color: #ccc; font-size: 14px;">›</span>
+            <!-- 以后可以在这里继续添加更多设置项，比如“记忆管理”、“模型设置”等 -->
+
           </div>
-
-          <!-- 以后可以在这里继续添加更多设置项，比如“记忆管理”、“模型设置”等 -->
-
         </div>
-      </div>
 
-      <!-- Prompt 编辑浮层（默认隐藏） -->
-      <div id="promptEditorOverlay"
-        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); z-index: 100; flex-direction: column;">
-        <div
-          style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #eee;">
-          <button onclick="closePromptEditor()"
-            style="background: none; border: none; font-size: 16px; cursor: pointer; color: #1e90ff;">← 返回</button>
-          <h3 style="margin: 0; font-size: 16px; font-weight: 500;">编辑 System Prompt</h3>
-          <div style="width: 40px;"></div>
+        <!-- Prompt 编辑浮层（默认隐藏） -->
+        <div id="promptEditorOverlay"
+          style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); z-index: 100; flex-direction: column;">
+          <div
+            style="display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #eee;">
+            <button onclick="closePromptEditor()"
+              style="background: none; border: none; font-size: 16px; cursor: pointer; color: #1e90ff;">← 返回</button>
+            <h3 style="margin: 0; font-size: 16px; font-weight: 500;">编辑 System Prompt</h3>
+            <div style="width: 40px;"></div>
+          </div>
+          <textarea id="promptEditor"
+            style="flex: 1; width: 100%; font-family: monospace; font-size: 13px; padding: 16px; border: none; outline: none; resize: none; box-sizing: border-box;"></textarea>
+          <div
+            style="padding: 12px 20px; border-top: 1px solid #eee; display: flex; gap: 10px; justify-content: flex-end;">
+            <button onclick="closePromptEditor()"
+              style="padding: 8px 16px; border: 1px solid #ddd; border-radius: 20px; background: #fff; cursor: pointer;">取消</button>
+            <button onclick="savePrompt()"
+              style="padding: 8px 20px; border: none; border-radius: 20px; background: #1e90ff; color: #fff; cursor: pointer;">保存</button>
+          </div>
+          <p id="promptStatus" style="text-align: center; font-size: 13px; color: #888; padding: 4px 0 12px; margin: 0;">
+          </p>
         </div>
-        <textarea id="promptEditor"
-          style="flex: 1; width: 100%; font-family: monospace; font-size: 13px; padding: 16px; border: none; outline: none; resize: none; box-sizing: border-box;"></textarea>
-        <div
-          style="padding: 12px 20px; border-top: 1px solid #eee; display: flex; gap: 10px; justify-content: flex-end;">
-          <button onclick="closePromptEditor()"
-            style="padding: 8px 16px; border: 1px solid #ddd; border-radius: 20px; background: #fff; cursor: pointer;">取消</button>
-          <button onclick="savePrompt()"
-            style="padding: 8px 20px; border: none; border-radius: 20px; background: #1e90ff; color: #fff; cursor: pointer;">保存</button>
-        </div>
-        <p id="promptStatus" style="text-align: center; font-size: 13px; color: #888; padding: 4px 0 12px; margin: 0;">
-        </p>
       </div>
     </div>
 
@@ -1401,6 +1400,17 @@
                     msgDiv.dataset.messageId = json.assistantMessageId;
                   }
 
+                  // 2.5 为新生成的助手消息补上刷新（重新生成）按钮
+                  if (json.assistantMessageId && !msgDiv.querySelector('.refresh-btn')) {
+                    const refreshBtn = document.createElement('span');
+                    refreshBtn.className = 'refresh-btn';
+                    refreshBtn.appendChild(createRefreshIcon());
+                    refreshBtn.title = '重新生成';
+                    refreshBtn.dataset.messageId = json.assistantMessageId;
+                    refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, msgDiv); });
+                    msgDiv.appendChild(refreshBtn);
+                  }
+
                   // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
                   if (pendingUserMsg && json.userMessageId) {
                     pendingUserMsg.dataset.messageId = json.userMessageId;
@@ -1446,7 +1456,7 @@
         try {
           const bubble = msgDiv.querySelector('.bubble'); const thinkingEl = msgDiv.querySelector('.thinking-content');
           if (bubble) bubble.textContent = ''; if (thinkingEl) thinkingEl.textContent = '';
-          let fullReply = '', fullThinking = '';
+          let fullReply = '', fullThinking = '', streamError = null;
           const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
@@ -1463,19 +1473,21 @@
                   if (!fullThinking.endsWith(json.thinking)) {
                     fullThinking += json.thinking;
                   }
-                  if (!currentThinkingContainer) {
-                    currentThinkingContainer = document.createElement('div');
-                    currentThinkingContainer.className = 'thinking-content';
-                    currentThinkingContainer.style.display = 'block';
-                    newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
+                  let thinkingContainer = msgDiv.querySelector('.thinking-content');
+                  if (!thinkingContainer) {
+                    thinkingContainer = document.createElement('div');
+                    thinkingContainer.className = 'thinking-content';
+                    thinkingContainer.style.display = 'block';
+                    msgDiv.insertBefore(thinkingContainer, bubble);
                   }
-                  currentThinkingContainer.textContent = fullThinking;
+                  thinkingContainer.textContent = fullThinking;
                 }
                 if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
-                if (json.error) throw new Error(json.error);
+                if (json.error) { streamError = json.error; throw new Error(json.error); }
               } catch (e) { console.warn('解析SSE失败:', e, payload); }
             }
           }
+          if (streamError) throw new Error(streamError);
           if (fullReply) { btn.textContent = '✅ 已刷新'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); }
           else throw new Error('未收到有效回复');
         } catch (err) { console.error('重新生成失败:', err); btn.textContent = '❌ 失败，点击重试'; btn.disabled = false; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; }, 3000); }

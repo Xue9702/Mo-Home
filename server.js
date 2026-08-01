@@ -559,7 +559,7 @@ app.post('/api/regenerate', async (req, res) => {
     // 1. 查找原消息
     const { data: targetMsg, error: findError } = await supabase
       .from('messages')
-      .select('session_id, content, role')
+      .select('session_id, content, role, group_id')
       .eq('id', messageId)
       .single();
 
@@ -623,6 +623,19 @@ app.post('/api/regenerate', async (req, res) => {
 
     console.log('📜 重新生成接口 - 过滤后历史消息数量:', filteredHistory.length);
 
+    // 4.5 检索相关记忆和朋友圈动态（与 /api/chat 保持一致）
+    let memoryContext = '';
+    try {
+      const memoryResult = await callOmbreTool('breath', { text: userContent });
+      if (memoryResult) {
+        memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
+        console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
+      }
+    } catch (memErr) {
+      console.error('记忆检索失败:', memErr.message);
+    }
+    const momentsContext = await getMomentsContext();
+
     // 从数据库读取最新的 system prompt
     const { data: promptData } = await supabase
       .from('system_prompts')
@@ -635,6 +648,17 @@ app.post('/api/regenerate', async (req, res) => {
       + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
       + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
       + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
+
+    // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
+    const lastFilteredMsg = filteredHistory[filteredHistory.length - 1];
+    const userAlreadyIncluded = lastFilteredMsg
+      && lastFilteredMsg.role === 'user'
+      && lastFilteredMsg.content === userContent;
+    const chatMessages = [
+      { role: 'system', content: systemPrompt },
+      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
+      ...(userAlreadyIncluded ? [] : [{ role: 'user', content: userContent }])
+    ];
 
     // 6. 调用 DeepSeek API（流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -1413,6 +1437,19 @@ app.post('/api/edit-message', async (req, res) => {
 
     console.log('📜 编辑接口 - 过滤后历史消息数量:', filteredHistory.length, 'groupId:', groupId);
 
+    // 8.5 检索相关记忆和朋友圈动态（与 /api/chat 保持一致）
+    let memoryContext = '';
+    try {
+      const memoryResult = await callOmbreTool('breath', { text: newContent });
+      if (memoryResult) {
+        memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
+        console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
+      }
+    } catch (memErr) {
+      console.error('记忆检索失败:', memErr.message);
+    }
+    const momentsContext = await getMomentsContext();
+
     // 从数据库读取最新的 system prompt
     const { data: promptData } = await supabase
       .from('system_prompts')
@@ -1425,6 +1462,13 @@ app.post('/api/edit-message', async (req, res) => {
       + '\n\n[当前时间：' + getTimeInfo().timeString + '，' + getTimeInfo().weekday + ']'
       + (memoryContext ? '\n\n【相关记忆】\n' + memoryContext : '')
       + (momentsContext ? '\n\n【朋友圈动态】\n' + momentsContext : '');
+
+    // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
+    const chatMessages = [
+      { role: 'system', content: systemPrompt },
+      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
+      { role: 'user', content: newContent.trim() }
+    ];
 
     // 10. 调用 DeepSeek 流式生成新回复
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
