@@ -3,6 +3,8 @@ const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const { PDFParse } = require('pdf-parse');
 const mammoth = require('mammoth');
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first'); // 部分主机 IPv6 解析异常导致外部 API 请求失败，强制优先 IPv4
 // ================== 影子推送配置 ==================
 const SHADOW_PUSH_SECRET = process.env.SHADOW_PUSH_SECRET || 'your-secret-key-change-me';
 const USER_TIMEZONE = 'Asia/Shanghai'; // 目标时区：东八区
@@ -580,49 +582,121 @@ async function resolveCityGeo(city) {
   return { lat: hit.latitude, lon: hit.longitude, name: hit.name || city };
 }
 
-// 获取指定城市的实况天气（带 30 分钟缓存）
+// 主源：Open-Meteo（失败会抛出，由 getWeatherData 切换备用源）
+async function fetchWeatherOpenMeteo(cityName) {
+  const geo = await resolveCityGeo(cityName);
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FShanghai&forecast_days=1`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`天气接口失败: HTTP ${res.status} ${String(errText).substring(0, 120)}`);
+  }
+  const data = await res.json();
+  const cur = data.current || {};
+  const daily = data.daily || {};
+  const curInfo = getWmoInfo(cur.weather_code);
+  const todayInfo = getWmoInfo(daily.weather_code && daily.weather_code[0]);
+  return {
+    city: cityName,
+    cityDisplay: geo.name || cityName,
+    updatedAt: new Date().toISOString(),
+    current: {
+      temp: Math.round(cur.temperature_2m ?? 0),
+      feelsLike: Math.round(cur.apparent_temperature ?? 0),
+      humidity: Math.round(cur.relative_humidity_2m ?? 0),
+      precipitation: cur.precipitation ?? 0,
+      windSpeed: Math.round(cur.wind_speed_10m ?? 0),
+      isDay: !!cur.is_day,
+      desc: curInfo.desc,
+      icon: curInfo.icon
+    },
+    daily: {
+      desc: todayInfo.desc,
+      icon: todayInfo.icon,
+      max: Math.round(daily.temperature_2m_max?.[0] ?? 0),
+      min: Math.round(daily.temperature_2m_min?.[0] ?? 0),
+      sunrise: (daily.sunrise && daily.sunrise[0]) || null,
+      sunset: (daily.sunset && daily.sunset[0]) || null
+    }
+  };
+}
+
+// wttr.in 天气代码 -> [中文描述, 图标]
+const WTTR_INFO = {
+  113: ['晴', '☀️'], 116: ['大致晴朗', '🌤️'], 119: ['多云', '⛅'], 122: ['阴', '☁️'],
+  143: ['雾', '🌫️'], 248: ['雾', '🌫️'],
+  176: ['小雨', '🌧️'], 263: ['小毛毛雨', '🌦️'], 266: ['毛毛雨', '🌧️'], 293: ['小阵雨', '🌦️'],
+  296: ['阵雨', '🌧️'], 299: ['中雨', '🌧️'], 302: ['大雨', '🌧️'], 305: ['大雨', '🌧️'],
+  308: ['大雨', '🌧️'], 311: ['冻雨', '🌧️'], 314: ['冻雨', '🌧️'], 321: ['毛毛雨', '🌧️'],
+  353: ['小阵雨', '🌦️'], 356: ['阵雨', '🌧️'], 359: ['强阵雨', '⛈️'],
+  362: ['小阵雪', '🌨️'], 365: ['阵雪', '❄️'], 368: ['小雪', '🌨️'], 371: ['中雪', '🌨️'],
+  374: ['冰粒', '🌨️'], 377: ['雪粒', '🌨️'],
+  200: ['雷暴', '⛈️'], 386: ['雷阵雨', '⛈️'], 389: ['雷阵雨', '⛈️'],
+  392: ['雷阵雪', '⛈️'], 395: ['雷阵雪', '⛈️'], 227: ['小雪', '🌨️'], 230: ['中雪', '🌨️']
+};
+
+function getWttrInfo(code) {
+  const [desc, icon] = WTTR_INFO[code] || ['未知', '🌡️'];
+  return { desc, icon };
+}
+
+// 备用源：wttr.in（免注册，支持中文城市名）
+async function fetchWeatherWttr(cityName) {
+  const url = `https://wttr.in/${encodeURIComponent(cityName)}?format=j1&lang=zh`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`wttr.in HTTP ${res.status}`);
+  const data = await res.json();
+  const cur = data.current_condition && data.current_condition[0];
+  const today = data.weather && data.weather[0];
+  if (!cur) throw new Error('wttr.in 无当前数据');
+  const curInfo = getWttrInfo(Number(cur.weatherCode));
+  const todayInfo = getWttrInfo(Number(today && today.weatherCode));
+  return {
+    city: cityName,
+    cityDisplay: cityName,
+    updatedAt: new Date().toISOString(),
+    current: {
+      temp: Math.round(Number(cur.temp_C || 0)),
+      feelsLike: Math.round(Number(cur.FeelsLikeC || 0)),
+      humidity: Math.round(Number(cur.humidity || 0)),
+      precipitation: Number(cur.precipMM || 0),
+      windSpeed: Math.round(Number(cur.windspeedKmph || 0)),
+      isDay: true,
+      desc: curInfo.desc,
+      icon: curInfo.icon
+    },
+    daily: {
+      desc: todayInfo.desc,
+      icon: todayInfo.icon,
+      max: Math.round(Number(today && today.maxtempC || 0)),
+      min: Math.round(Number(today && today.mintempC || 0)),
+      sunrise: (today && today.astronomy && today.astronomy[0] && today.astronomy[0].sunrise) || null,
+      sunset: (today && today.astronomy && today.astronomy[0] && today.astronomy[0].sunset) || null
+    }
+  };
+}
+
+// 获取指定城市的实况天气（带 30 分钟缓存；主源 Open-Meteo，失败自动切 wttr.in）
 async function getWeatherData(city, force = false) {
   const cityName = (city || WEATHER_DEFAULT_CITY).trim() || WEATHER_DEFAULT_CITY;
   if (!force && weatherCache && weatherCache.city === cityName && Date.now() - weatherCache.fetchedAt < WEATHER_CACHE_TTL) {
     return weatherCache.data;
   }
+
   try {
-    const geo = await resolveCityGeo(cityName);
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FShanghai&forecast_days=1`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error('天气接口失败');
-    const data = await res.json();
-    const cur = data.current || {};
-    const daily = data.daily || {};
-    const curInfo = getWmoInfo(cur.weather_code);
-    const todayInfo = getWmoInfo(daily.weather_code && daily.weather_code[0]);
-    const result = {
-      city: cityName,
-      cityDisplay: geo.name || cityName,
-      updatedAt: new Date().toISOString(),
-      current: {
-        temp: Math.round(cur.temperature_2m ?? 0),
-        feelsLike: Math.round(cur.apparent_temperature ?? 0),
-        humidity: Math.round(cur.relative_humidity_2m ?? 0),
-        precipitation: cur.precipitation ?? 0,
-        windSpeed: Math.round(cur.wind_speed_10m ?? 0),
-        isDay: !!cur.is_day,
-        desc: curInfo.desc,
-        icon: curInfo.icon
-      },
-      daily: {
-        desc: todayInfo.desc,
-        icon: todayInfo.icon,
-        max: Math.round(daily.temperature_2m_max?.[0] ?? 0),
-        min: Math.round(daily.temperature_2m_min?.[0] ?? 0),
-        sunrise: (daily.sunrise && daily.sunrise[0]) || null,
-        sunset: (daily.sunset && daily.sunset[0]) || null
-      }
-    };
+    const result = await fetchWeatherOpenMeteo(cityName);
     weatherCache = { city: cityName, data: result, fetchedAt: Date.now() };
     return result;
   } catch (err) {
-    console.error('❌ 获取天气失败:', err.message);
+    console.warn('⚠️ Open-Meteo 获取失败，尝试备用源 wttr.in:', err.message);
+  }
+
+  try {
+    const result = await fetchWeatherWttr(cityName);
+    weatherCache = { city: cityName, data: result, fetchedAt: Date.now() };
+    return result;
+  } catch (err2) {
+    console.error('❌ 获取天气失败（两个源都不可用）:', err2.message);
     if (weatherCache && weatherCache.city === cityName) return weatherCache.data;
     return null;
   }

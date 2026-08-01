@@ -720,7 +720,7 @@
 <body>
   <div id="loginBox">
     <div class="login-card">
-      <div class="login-title">💗 小屋</div>
+      <div class="login-title">小屋</div>
       <div class="login-sub">请输入密码以进入</div>
       <input type="password" id="passwordInput" placeholder="输入密码…">
       <button class="login-btn" id="unlockBtn">进入</button>
@@ -730,7 +730,7 @@
 
   <div id="chatApp">
     <!-- 顶部标题栏 -->
-    <div class="header" id="headerTitle">💗 小屋 · 与默</div>
+    <div class="header" id="headerTitle">默</div>
 
     <!-- 页面容器：用于切换聊天页和小屋页 -->
     <div class="page-container" id="pageContainer">
@@ -880,8 +880,8 @@
 
       // ---------- 页面切换逻辑 ----------
       const pages = {
-        homePage: { title: '💗 小屋', el: homePage },
-        chatPage: { title: '💗 小屋 · 与默', el: chatPage },
+        homePage: { title: '小屋', el: homePage },
+        chatPage: { title: '默', el: chatPage },
         settingsPage: { title: '设置', el: settingsPage } 
       };
 
@@ -1091,10 +1091,22 @@
             <div class="weather-meta">更新于 ${updated}</div>
           `;
         } catch (e) {
-          card.innerHTML = '<div class="weather-loading">天气加载失败，请确认后端已部署最新代码</div>';
+          card.onclick = retryHomeWeather;
+          card.style.cursor = 'pointer';
+          card.innerHTML = '<div class="weather-loading">天气加载失败，点击重试</div>';
         }
       }
       window.loadHomeWeather = loadHomeWeather;
+
+      // 天气加载失败时点击卡片重试
+      function retryHomeWeather() {
+        const card = document.getElementById('homeWeatherCard');
+        if (!card) return;
+        card.onclick = null;
+        card.style.cursor = '';
+        card.innerHTML = '<div class="weather-loading">天气加载中…</div>';
+        loadHomeWeather();
+      }
 
       // 切换城市：保存在浏览器本地，聊天页与天气卡片共用
       async function switchHomeCity() {
