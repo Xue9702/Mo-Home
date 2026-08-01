@@ -294,11 +294,11 @@ function stripSearchTags(text) {
   return String(text || '').replace(/\[SEARCH_QUERY\][^\r\n]*/g, '').trim();
 }
 
-// 调用博查 Web Search API，返回整理好的文本结果；失败或未配置返回 null
+// 调用博查 Web Search API，返回 { text, count }；失败或未配置返回 { text: null, count: 0 }
 async function performWebSearch(query) {
   if (!process.env.BOCHA_API_KEY) {
     console.warn('⚠️ 未配置 BOCHA_API_KEY，跳过实时搜索');
-    return null;
+    return { text: null, count: 0 };
   }
   try {
     const response = await fetch('https://api.bochaai.com/v1/web-search', {
@@ -318,24 +318,28 @@ async function performWebSearch(query) {
     if (!response.ok) {
       const errText = await response.text();
       console.error('❌ 博查搜索失败:', response.status, String(errText).substring(0, 200));
-      return null;
+      return { text: null, count: 0 };
     }
     const data = await response.json();
     const pages = data?.data?.webPages?.value || [];
     if (!pages.length) {
       console.warn('⚠️ 博查搜索无结果:', query);
-      return null;
+      return { text: null, count: 0 };
     }
-    return pages.slice(0, 5).map((item, i) => {
+    const top = pages.slice(0, 5);
+    return {
+      count: top.length,
+      text: top.map((item, i) => {
       const title = item.name || item.title || '无标题';
       const url = item.url || '';
       const snippet = item.summary || item.snippet || item.description || '';
       const date = item.datePublished ? `（${item.datePublished}）` : '';
       return `${i + 1}. ${title}${date}\n${url}\n${snippet}`;
-    }).join('\n\n');
+      }).join('\n\n')
+    };
   } catch (err) {
     console.error('❌ 博查搜索异常:', err.message);
-    return null;
+    return { text: null, count: 0 };
   }
 }
 
@@ -456,10 +460,9 @@ function flushBufferedContent(contentBuffer, sendSSE) {
   }
 }
 
-// 处理回复中的搜索标签：需要搜索时调用博查，并用搜索结果追加一次 DeepSeek 调用，
-// 返回最终的 { reply, thinking, searched }；搜索失败时降级为无结果回答。
-async function resolveSearchTag({ reply, thinking, chatMessages, systemPrompt, sendSSE, toolCalls }) {
-  // 方式一：模型通过 web_search 工具调用声明搜索（最可靠）
+// 提取回复中的搜索意图：优先看模型是否发起了 web_search 工具调用，
+// 其次看是否输出了 [SEARCH_QUERY] 标签；返回 { query, leadText } 或 null
+function extractSearchRequest(reply, toolCalls) {
   if (toolCalls && toolCalls.length > 0) {
     const call = toolCalls[0];
     let query = '';
@@ -468,47 +471,21 @@ async function resolveSearchTag({ reply, thinking, chatMessages, systemPrompt, s
     } catch (e) {
       query = '';
     }
-
-    if (query) {
-      // 先把首轮可见内容（过渡语）补发给前端，再通知“正在搜索”
-      if (reply.trim()) sendSSE({ content: reply.trim() });
-      sendSSE({ search: true, query });
-
-      const searchText = await performWebSearch(query);
-      const searchNote = searchText
-        ? `【实时搜索结果】\n以下是默刚刚搜索到的实时信息：\n\n${searchText}\n\n请基于这些搜索结果回答雪的问题，用自己的语气自然组织；如果搜索结果与问题无关或信息不足，请如实说明。`
-        : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
-
-      const second = await callDeepSeekStream(
-        [
-          { role: 'system', content: `${systemPrompt}\n\n${searchNote}` },
-          ...chatMessages.slice(1),
-          { role: 'assistant', content: reply || null, tool_calls: [call] },
-          { role: 'tool', tool_call_id: call.id || 'web_search', content: searchText || '（联网搜索无结果）' }
-        ],
-        sendSSE
-      );
-
-      if (second.error) return { error: second.error, searched: true };
-
-      const finalReply = stripSearchTags([reply.trim(), second.fullReply].filter(Boolean).join('\n'));
-      const finalThinking = thinking + (second.fullThinking ? `\n\n${second.fullThinking}` : '');
-      return { reply: finalReply, thinking: finalThinking, searched: true };
-    }
+    if (query) return { query, leadText: String(reply || '').trim() };
   }
 
-  // 方式二：模型直接输出 [SEARCH_QUERY] 标签（备选）
   const tag = extractSearchTag(reply);
-  if (!tag) return { reply, thinking, searched: false };
+  if (tag && tag.query) return { query: tag.query, leadText: tag.leadText };
+  return null;
+}
 
-  // 先把过渡语补发给前端，再通知“正在搜索”
-  if (tag.leadText) sendSSE({ content: tag.leadText });
-  sendSSE({ search: true, query: tag.query });
-
-  let searchText = null;
-  if (tag.query) {
-    searchText = await performWebSearch(tag.query);
-  }
+// 执行搜索阶段：调用博查，通知前端搜索结果数量，然后用搜索结果追加一次 DeepSeek 调用。
+// 返回 { reply, thinking }（第二轮正式回答）或 { error }。
+async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE }) {
+  const search = await performWebSearch(query);
+  const searchText = search.text || null;
+  const pageCount = search.count || 0;
+  sendSSE({ searchResult: true, count: pageCount });
 
   const searchNote = searchText
     ? `【实时搜索结果】\n以下是默刚刚搜索到的实时信息：\n\n${searchText}\n\n请基于这些搜索结果回答雪的问题，用自己的语气自然组织；如果搜索结果与问题无关或信息不足，请如实说明。`
@@ -522,11 +499,8 @@ async function resolveSearchTag({ reply, thinking, chatMessages, systemPrompt, s
     sendSSE
   );
 
-  if (second.error) return { error: second.error, searched: true };
-
-  const finalReply = stripSearchTags([tag.leadText, second.fullReply].filter(Boolean).join('\n'));
-  const finalThinking = thinking + (second.fullThinking ? `\n\n${second.fullThinking}` : '');
-  return { reply: finalReply, thinking: finalThinking, searched: true };
+  if (second.error) return { error: second.error };
+  return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking };
 }
 
 console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
@@ -847,26 +821,48 @@ app.post('/api/chat', async (req, res) => {
       return;
     }
 
-    // 处理实时搜索标签：需要搜索时自动联网并追加一次回答
-    const searchResult = await resolveSearchTag({
-      reply: fullReply,
-      thinking: fullThinking,
-      chatMessages,
-      systemPrompt,
-      sendSSE,
-      toolCalls: first.toolCalls
-    });
+    // 检查第一轮回复是否包含搜索意图（工具调用或标签）
+    const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
-    if (searchResult.error) {
-      sendSSE({ error: searchResult.error });
-      res.end();
-      return;
-    }
+    if (searchReq) {
+      // ---- 第一轮：过渡语气泡收尾（作为独立消息入库） ----
+      const preludeText = searchReq.leadText;
+      if (preludeText) {
+        await supabase
+          .from('messages')
+          .insert({
+            session_id: 1,
+            role: 'assistant',
+            content: preludeText,
+            reasoning_content: fullThinking || null,
+            visible: true,
+            created_at: new Date().toISOString()
+          });
+      }
 
-    fullReply = searchResult.reply;
-    fullThinking = searchResult.thinking;
+      // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成（不挂刷新按钮）
+      flushBufferedContent(preludeText, sendSSE);
+      sendSSE({ done: true });
 
-    if (searchResult.searched) {
+      console.log('🔍 默请求联网搜索:', searchReq.query);
+
+      // ---- 第二轮：搜索 + 正式回答（前端会新建一个气泡） ----
+      sendSSE({ searchStart: true, query: searchReq.query });
+      const phase = await runSearchPhase({
+        query: searchReq.query,
+        chatMessages,
+        systemPrompt,
+        sendSSE
+      });
+
+      if (phase.error) {
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
       console.log('🔍 联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
@@ -1158,26 +1154,48 @@ app.post('/api/regenerate', async (req, res) => {
       return;
     }
 
-    // 6.5 处理实时搜索标签：需要搜索时自动联网并追加一次回答
-    const searchResult = await resolveSearchTag({
-      reply: fullReply,
-      thinking: fullThinking,
-      chatMessages,
-      systemPrompt,
-      sendSSE,
-      toolCalls: first.toolCalls
-    });
+    // 6.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
+    const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
-    if (searchResult.error) {
-      sendSSE({ error: searchResult.error });
-      res.end();
-      return;
-    }
+    if (searchReq) {
+      // ---- 第一轮：过渡语气泡收尾（作为普通消息入库，不参与分支版本） ----
+      const preludeText = searchReq.leadText;
+      if (preludeText) {
+        await supabase
+          .from('messages')
+          .insert({
+            session_id: targetMsg.session_id,
+            role: 'assistant',
+            content: preludeText,
+            reasoning_content: fullThinking || null,
+            visible: true,
+            created_at: new Date().toISOString()
+          });
+      }
 
-    fullReply = searchResult.reply;
-    fullThinking = searchResult.thinking;
+      // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成
+      flushBufferedContent(preludeText, sendSSE);
+      sendSSE({ done: true });
 
-    if (searchResult.searched) {
+      console.log('🔍 重新生成-默请求联网搜索:', searchReq.query);
+
+      // ---- 第二轮：搜索 + 正式回答（前端会新建一个气泡） ----
+      sendSSE({ searchStart: true, query: searchReq.query });
+      const phase = await runSearchPhase({
+        query: searchReq.query,
+        chatMessages,
+        systemPrompt,
+        sendSSE
+      });
+
+      if (phase.error) {
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
       console.log('🔍 重新生成-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
@@ -1948,26 +1966,48 @@ app.post('/api/edit-message', async (req, res) => {
       return;
     }
 
-    // 10.5 处理实时搜索标签：需要搜索时自动联网并追加一次回答
-    const searchResult = await resolveSearchTag({
-      reply: fullReply,
-      thinking: fullThinking,
-      chatMessages,
-      systemPrompt,
-      sendSSE,
-      toolCalls: first.toolCalls
-    });
+    // 10.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
+    const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
-    if (searchResult.error) {
-      sendSSE({ error: searchResult.error });
-      res.end();
-      return;
-    }
+    if (searchReq) {
+      // ---- 第一轮：过渡语气泡收尾（作为普通消息入库，不参与分支版本） ----
+      const preludeText = searchReq.leadText;
+      if (preludeText) {
+        await supabase
+          .from('messages')
+          .insert({
+            session_id: originalMsg.session_id,
+            role: 'assistant',
+            content: preludeText,
+            reasoning_content: fullThinking || null,
+            visible: true,
+            created_at: new Date().toISOString()
+          });
+      }
 
-    fullReply = searchResult.reply;
-    fullThinking = searchResult.thinking;
+      // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成
+      flushBufferedContent(preludeText, sendSSE);
+      sendSSE({ done: true });
 
-    if (searchResult.searched) {
+      console.log('🔍 编辑-默请求联网搜索:', searchReq.query);
+
+      // ---- 第二轮：搜索 + 正式回答（前端会新建一个气泡） ----
+      sendSSE({ searchStart: true, query: searchReq.query });
+      const phase = await runSearchPhase({
+        query: searchReq.query,
+        chatMessages,
+        systemPrompt,
+        sendSSE
+      });
+
+      if (phase.error) {
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
       console.log('🔍 编辑-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端

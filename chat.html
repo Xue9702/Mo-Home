@@ -1078,6 +1078,36 @@
         return indicator;
       }
 
+      // 新建一个流式助手消息：思考容器 + 气泡
+      function createAssistantStreamMessage() {
+        const msg = document.createElement('div');
+        msg.className = 'message assistant';
+        msg.id = 'streaming-message';
+        const thinkDiv = document.createElement('div');
+        thinkDiv.className = 'thinking-content';
+        thinkDiv.style.display = 'none';
+        msg.appendChild(thinkDiv);
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        msg.appendChild(bubble);
+        return { msg, thinkDiv, bubble };
+      }
+
+      // 把搜索状态行 + 思考正文容器挂进新消息的思考区（可随思考一起折叠）
+      function setupSearchStatusBlock(thinkDiv) {
+        thinkDiv.style.display = 'block';
+        const statusLine = document.createElement('div');
+        statusLine.className = 'search-status-line';
+        statusLine.style.cssText = 'display:inline-flex;align-items:center;gap:4px;color:#999;font-size:12px;font-style:italic;margin-bottom:4px;';
+        statusLine.appendChild(createGlobeIcon());
+        statusLine.appendChild(document.createTextNode(' 正在联网搜索…'));
+        thinkDiv.appendChild(statusLine);
+        const thinkBody = document.createElement('div');
+        thinkBody.className = 'search-think-body';
+        thinkDiv.appendChild(thinkBody);
+        return { statusLine, thinkBody };
+      }
+
       function createPlusIcon() {
         const svgNS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(svgNS, 'svg');
@@ -1555,12 +1585,13 @@
           if (!response.ok) throw new Error('请求失败');
           removeTyping();
           let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
+          let currentMsgDiv = null, currentThinkBody = null, searchPhaseActive = false;
           if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
           if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
           const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
           const newAssistantMsg = document.createElement('div'); newAssistantMsg.className = 'message assistant';
           const newBubble = document.createElement('div'); newBubble.className = 'bubble'; newAssistantMsg.appendChild(newBubble);
-          messageList.appendChild(newAssistantMsg); currentAssistantBubble = newBubble;
+          messageList.appendChild(newAssistantMsg); currentAssistantBubble = newBubble; currentMsgDiv = newAssistantMsg;
           while (true) {
             const { done, value } = await reader.read(); if (done) break;
             buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
@@ -1581,33 +1612,50 @@
                     currentThinkingContainer.style.display = 'block';
                     newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
                   }
-                  currentThinkingContainer.textContent = fullThinking;
+                  (currentThinkBody || currentThinkingContainer).textContent = fullThinking;
                 }
-                if (json.search) {
-                  // 联网搜索进行中：在气泡里补一行提示（后续内容到达时会被覆盖）
-                  if (!currentAssistantBubble.querySelector('.search-indicator')) {
-                    currentAssistantBubble.appendChild(createSearchIndicator());
-                    messageList.scrollTop = messageList.scrollHeight;
+                if (json.searchStart) {
+                  // 第一轮气泡已收尾：新建一条消息承载“搜索状态 + 第二轮思考 + 正式回答”
+                  const m2 = createAssistantStreamMessage();
+                  currentMsgDiv = m2.msg; currentThinkingContainer = m2.thinkDiv; currentAssistantBubble = m2.bubble;
+                  messageList.appendChild(currentMsgDiv);
+                  const block = setupSearchStatusBlock(currentThinkingContainer);
+                  currentThinkBody = block.thinkBody;
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
+                if (json.searchResult) {
+                  // 搜索完成：状态行保留，更新为“已搜索到 N 个网页”
+                  const statusLine = currentThinkingContainer && currentThinkingContainer.querySelector('.search-status-line');
+                  if (statusLine) {
+                    statusLine.textContent = '';
+                    statusLine.appendChild(createGlobeIcon());
+                    statusLine.appendChild(document.createTextNode(json.count > 0 ? ` 已搜索到 ${json.count} 个网页` : ' 联网搜索没有返回结果'));
                   }
+                  messageList.scrollTop = messageList.scrollHeight;
                 }
                 if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
                 if (json.done) {
                   // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
-                  finalizeStreamingMessage(newAssistantMsg, currentThinkingContainer, newBubble, !!fullThinking);
+                  finalizeStreamingMessage(currentMsgDiv, currentThinkingContainer, currentAssistantBubble, !!fullThinking || searchPhaseActive);
                   const oldTemp = document.querySelector('[data-temp-edit="true"]'); if (oldTemp && oldTemp !== tempUserMsg) oldTemp.remove();
                   tempUserMsg.removeAttribute('data-temp-edit');
                   if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
                   if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
                   tempUserMsg.dataset.groupId = groupId; tempUserMsg.dataset.version = currentVersion; tempUserMsg.dataset.messageId = userMessageId;
-                  newAssistantMsg.dataset.groupId = groupId; newAssistantMsg.dataset.assistantVersion = currentVersion;
-                  const newBub = tempUserMsg.querySelector('.bubble');
-                  if (newBub && userMessageId) {
-                    let t; newBub.addEventListener('touchstart', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
-                    newBub.addEventListener('touchend', () => clearTimeout(t)); newBub.addEventListener('touchmove', () => clearTimeout(t));
-                    newBub.addEventListener('mousedown', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
-                    newBub.addEventListener('mouseup', () => clearTimeout(t)); newBub.addEventListener('mouseleave', () => clearTimeout(t));
+                  // 只在最终回复上登记分支版本（第一轮的过渡语气泡不参与版本切换）
+                  if (json.assistantMessageId) {
+                    currentMsgDiv.dataset.groupId = groupId; currentMsgDiv.dataset.assistantVersion = currentVersion;
+                    const newBub = tempUserMsg.querySelector('.bubble');
+                    if (newBub && userMessageId) {
+                      let t; newBub.addEventListener('touchstart', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
+                      newBub.addEventListener('touchend', () => clearTimeout(t)); newBub.addEventListener('touchmove', () => clearTimeout(t));
+                      newBub.addEventListener('mousedown', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
+                      newBub.addEventListener('mouseup', () => clearTimeout(t)); newBub.addEventListener('mouseleave', () => clearTimeout(t));
+                    }
+                    addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
                   }
-                  addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
                 }
                 if (json.error) throw new Error(json.error);
               } catch (e) { console.warn('解析SSE失败:', e); }
@@ -1714,6 +1762,9 @@
         messageList.scrollTop = messageList.scrollHeight;
 
         let fullReply = '', fullThinking = '';
+        // 当前活跃的流式消息元素（联网搜索时会把“搜索状态 + 正式回答”切到一条新消息上）
+        let currentMsgDiv = msgDiv, currentThinkDiv = thinkDiv, currentBubble = bubble, currentThinkBody = null;
+        let searchPhaseActive = false;
         try {
           const response = await fetch('/api/chat', {
             method: 'POST',
@@ -1746,44 +1797,59 @@
                   if (!fullThinking.endsWith(json.thinking)) {
                     fullThinking += json.thinking;
                   }
-                  thinkDiv.textContent = fullThinking;
-                  thinkDiv.style.display = 'block'; // 有内容就显示
+                  (currentThinkBody || currentThinkDiv).textContent = fullThinking;
+                  currentThinkDiv.style.display = 'block'; // 有内容就显示
                   messageList.scrollTop = messageList.scrollHeight;
                 }
 
-                if (json.search) {
-                  // 联网搜索进行中：在气泡里补一行提示（后续内容到达时会被覆盖）
-                  if (!bubble.querySelector('.search-indicator')) {
-                    bubble.appendChild(createSearchIndicator());
-                    messageList.scrollTop = messageList.scrollHeight;
+                if (json.searchStart) {
+                  // 第一轮气泡已收尾：新建一条消息承载“搜索状态 + 第二轮思考 + 正式回答”
+                  const m2 = createAssistantStreamMessage();
+                  currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+                  messageList.appendChild(currentMsgDiv);
+                  const block = setupSearchStatusBlock(currentThinkDiv);
+                  currentThinkBody = block.thinkBody;
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
+
+                if (json.searchResult) {
+                  // 搜索完成：状态行保留，更新为“已搜索到 N 个网页”
+                  const statusLine = currentThinkDiv.querySelector('.search-status-line');
+                  if (statusLine) {
+                    statusLine.textContent = '';
+                    statusLine.appendChild(createGlobeIcon());
+                    statusLine.appendChild(document.createTextNode(json.count > 0 ? ` 已搜索到 ${json.count} 个网页` : ' 联网搜索没有返回结果'));
                   }
+                  messageList.scrollTop = messageList.scrollHeight;
                 }
 
                 if (json.content) {
                   fullReply += json.content;
-                  bubble.textContent = fullReply;
+                  currentBubble.textContent = fullReply;
                   messageList.scrollTop = messageList.scrollHeight;
                 }
 
                 if (json.done) {
                   // 1. 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
-                  finalizeStreamingMessage(msgDiv, thinkDiv, bubble, !!fullThinking);
+                  finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking || searchPhaseActive);
 
-                  // 2. 将 msgDiv 从流式容器转换为最终消息
-                  msgDiv.id = '';
+                  // 2. 将当前消息从流式容器转换为最终消息
+                  currentMsgDiv.id = '';
                   if (json.assistantMessageId) {
-                    msgDiv.dataset.messageId = json.assistantMessageId;
+                    currentMsgDiv.dataset.messageId = json.assistantMessageId;
                   }
 
                   // 2.5 为新生成的助手消息补上刷新（重新生成）按钮
-                  if (json.assistantMessageId && !msgDiv.querySelector('.refresh-btn')) {
+                  if (json.assistantMessageId && !currentMsgDiv.querySelector('.refresh-btn')) {
                     const refreshBtn = document.createElement('span');
                     refreshBtn.className = 'refresh-btn';
                     refreshBtn.appendChild(createRefreshIcon());
                     refreshBtn.title = '重新生成';
                     refreshBtn.dataset.messageId = json.assistantMessageId;
-                    refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, msgDiv); });
-                    msgDiv.appendChild(refreshBtn);
+                    refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
+                    currentMsgDiv.appendChild(refreshBtn);
                   }
 
                   // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
@@ -1816,7 +1882,7 @@
           }
         } catch (err) {
           console.error('发送消息失败:', err);
-          bubble.textContent = '❌ 请求失败：' + err.message;
+          currentBubble.textContent = '❌ 请求失败：' + err.message;
         } finally {
           isLoading = false;
           sendBtn.disabled = false;
@@ -1852,6 +1918,9 @@
           messageList.scrollTop = messageList.scrollHeight;
 
           let fullReply = '', fullThinking = '', streamError = null;
+          // 当前活跃的流式消息元素（联网搜索时会切到一条新消息）
+          let currentMsgDiv = newMsgDiv, currentThinkDiv = thinkDiv, currentBubble = bubble, currentThinkBody = null;
+          let searchPhaseActive = false;
           let doneInfo = null;
           const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1869,17 +1938,36 @@
                   if (!fullThinking.endsWith(json.thinking)) {
                     fullThinking += json.thinking;
                   }
-                  thinkDiv.style.display = 'block';
-                  thinkDiv.textContent = fullThinking;
+                  currentThinkDiv.style.display = 'block';
+                  (currentThinkBody || currentThinkDiv).textContent = fullThinking;
                 }
-                if (json.search) {
-                  // 联网搜索进行中：在气泡里补一行提示（后续内容到达时会被覆盖）
-                  if (bubble && !bubble.querySelector('.search-indicator')) {
-                    bubble.appendChild(createSearchIndicator());
-                    messageList.scrollTop = messageList.scrollHeight;
+                if (json.searchStart) {
+                  // 第一轮气泡已收尾：新建一条消息承载“搜索状态 + 第二轮思考 + 正式回答”
+                  const m2 = createAssistantStreamMessage();
+                  currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+                  messageList.insertBefore(currentMsgDiv, newMsgDiv.nextSibling);
+                  const block = setupSearchStatusBlock(currentThinkDiv);
+                  currentThinkBody = block.thinkBody;
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
+                if (json.searchResult) {
+                  // 搜索完成：状态行保留，更新为“已搜索到 N 个网页”
+                  const statusLine = currentThinkDiv.querySelector('.search-status-line');
+                  if (statusLine) {
+                    statusLine.textContent = '';
+                    statusLine.appendChild(createGlobeIcon());
+                    statusLine.appendChild(document.createTextNode(json.count > 0 ? ` 已搜索到 ${json.count} 个网页` : ' 联网搜索没有返回结果'));
                   }
+                  messageList.scrollTop = messageList.scrollHeight;
                 }
-                if (json.content) { fullReply += json.content; if (bubble) bubble.textContent = fullReply; }
+                if (json.content) { fullReply += json.content; currentBubble.textContent = fullReply; }
+                if (json.done && !json.assistantMessageId) {
+                  // 第一轮消息完成（过渡语气泡）：收尾补上折叠按钮+时间戳
+                  finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking);
+                  currentMsgDiv.id = '';
+                }
                 if (json.assistantMessageId && json.groupId) doneInfo = json;
                 if (json.error) { streamError = json.error; throw new Error(json.error); }
               } catch (e) { console.warn('解析SSE失败:', e, payload); }
@@ -1888,10 +1976,10 @@
           if (streamError) throw new Error(streamError);
           if (!doneInfo || !fullReply) throw new Error('未收到有效回复');
 
-          newMsgDiv.id = '';
-          newMsgDiv.dataset.messageId = doneInfo.assistantMessageId;
-          newMsgDiv.dataset.groupId = doneInfo.groupId;
-          newMsgDiv.dataset.assistantVersion = String(doneInfo.currentVersion);
+          currentMsgDiv.id = '';
+          currentMsgDiv.dataset.messageId = doneInfo.assistantMessageId;
+          currentMsgDiv.dataset.groupId = doneInfo.groupId;
+          currentMsgDiv.dataset.assistantVersion = String(doneInfo.currentVersion);
 
           // 旧回复打上分支组标记（默认隐藏，角标可切回）
           msgDiv.dataset.groupId = doneInfo.groupId;
@@ -1904,24 +1992,24 @@
           btn.disabled = false;
 
           // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
-          finalizeStreamingMessage(newMsgDiv, thinkDiv, bubble, !!fullThinking);
+          finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking || searchPhaseActive);
 
           // 给新回复补上刷新按钮
-          if (!newMsgDiv.querySelector('.refresh-btn')) {
+          if (!currentMsgDiv.querySelector('.refresh-btn')) {
             const refreshBtn = document.createElement('span');
             refreshBtn.className = 'refresh-btn';
             refreshBtn.appendChild(createRefreshIcon());
             refreshBtn.title = '重新生成';
             refreshBtn.dataset.messageId = doneInfo.assistantMessageId;
-            refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, newMsgDiv); });
-            newMsgDiv.appendChild(refreshBtn);
+            refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
+            currentMsgDiv.appendChild(refreshBtn);
           }
 
           // 只显示最新版本，并挂上版本角标（多个版本时）
           switchVersion(doneInfo.groupId, doneInfo.currentVersion);
           if (doneInfo.totalVersions > 1) {
             // 挂载规则：组内用户消息有多版本时挂在最新用户消息上（编辑场景），否则挂在助手消息上（重新生成场景）
-            let navTarget = newMsgDiv;
+            let navTarget = currentMsgDiv;
             const groupUserMsgs = document.querySelectorAll(`.message.user[data-group-id="${doneInfo.groupId}"]`);
             const userVersionCount = new Set([...groupUserMsgs].map(m => m.dataset.version)).size;
             if (userVersionCount > 1) {
