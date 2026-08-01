@@ -263,8 +263,10 @@
                 'times': '"Times New Roman", Times, serif',
                 'verdana': 'Verdana, Geneva, sans-serif'
             };
-            const cn = cnFonts[localStorage.getItem('moFontCn')] || '"PingFang SC", "Microsoft YaHei", sans-serif';
-            const en = enFonts[localStorage.getItem('moFontEn')] || '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            const cnKey = localStorage.getItem('moFontCn');
+            const enKey = localStorage.getItem('moFontEn');
+            const cn = cnFonts[cnKey] || '"PingFang SC", "Microsoft YaHei", sans-serif';
+            const en = enKey === 'follow' ? cn : (enFonts[enKey] || '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
             const style = document.createElement('style');
             style.textContent = ':root{--font-en:' + en + ';--font-cn:' + cn + ';}';
             document.head.appendChild(style);

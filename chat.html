@@ -573,41 +573,43 @@
       padding: 14px 16px 16px;
     }
 
-    .font-group {
-      margin-bottom: 14px;
-    }
-
-    .font-group:last-child {
-      margin-bottom: 0;
-    }
-
-    .font-label {
-      font-size: 13px;
-      color: #888;
+    /* 字体子设置卡片与下拉 */
+    .setting-sub-card {
+      background: #fafafa;
+      border: 1px solid #e9e9e9;
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
       margin-bottom: 8px;
     }
 
-    .font-options {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+    .font-dropdown {
+      background: #fff;
+      border: 1px solid #e9e9e9;
+      border-top: none;
+      border-radius: 0 0 12px 12px;
+      padding: 6px 8px;
+      margin-bottom: 8px;
     }
 
-    .font-option {
-      padding: 8px 14px;
-      border: 1px solid #e9e9e9;
-      border-radius: 12px;
+    .font-row {
+      padding: 10px 12px;
+      border-radius: 10px;
       font-size: 14px;
       cursor: pointer;
-      background: #fafafa;
       color: #444;
-      transition: all 0.15s;
     }
 
-    .font-option.selected {
-      border-color: #1e90ff;
-      color: #1e90ff;
+    .font-row:hover {
+      background: #f5f8ff;
+    }
+
+    .font-row.selected {
       background: #eaf4ff;
+      color: #1e90ff;
     }
 
     /* 图片消息与发送区 */
@@ -870,13 +872,22 @@
                 <span id="fontChevron" class="setting-chevron"></span>
               </div>
               <div id="fontPanel" class="setting-panel" style="display: none;">
-                <div class="font-group">
-                  <div class="font-label">中文</div>
-                  <div class="font-options" id="fontCnOptions"></div>
+                <!-- 中文 -->
+                <div class="setting-sub-card" onclick="toggleSettingPanel('fontCnPanel','fontCnChevron')">
+                  <span class="card-title">中文</span>
+                  <span id="fontCnChevron" class="setting-chevron"></span>
                 </div>
-                <div class="font-group">
-                  <div class="font-label">英文</div>
-                  <div class="font-options" id="fontEnOptions"></div>
+                <div id="fontCnPanel" class="font-dropdown" style="display: none;"></div>
+                <!-- 英文 -->
+                <div class="setting-sub-card" onclick="toggleSettingPanel('fontEnPanel','fontEnChevron')">
+                  <span class="card-title">英文</span>
+                  <span id="fontEnChevron" class="setting-chevron"></span>
+                </div>
+                <div id="fontEnPanel" class="font-dropdown" style="display: none;"></div>
+                <!-- 保存 -->
+                <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 6px;">
+                  <span id="fontStatus" style="font-size: 13px; color: #888;"></span>
+                  <button onclick="saveFonts()" style="padding: 8px 20px; border: none; border-radius: 20px; background: #1e90ff; color: #fff; cursor: pointer;">保存</button>
                 </div>
               </div>
             </div>
@@ -1065,6 +1076,14 @@
         if (fontChevron && !fontChevron.hasChildNodes()) {
           fontChevron.appendChild(createSettingChevron(false));
         }
+        const cnChevron = document.getElementById('fontCnChevron');
+        if (cnChevron && !cnChevron.hasChildNodes()) {
+          cnChevron.appendChild(createSettingChevron(false));
+        }
+        const enChevron = document.getElementById('fontEnChevron');
+        if (enChevron && !enChevron.hasChildNodes()) {
+          enChevron.appendChild(createSettingChevron(false));
+        }
       }
 
       // 设置项卡片展开/收起（箭头 右→下）
@@ -1079,11 +1098,31 @@
           chevron.appendChild(createSettingChevron(willOpen));
         }
         if (willOpen && panelId === 'promptPanel') loadPrompt();
-        if (willOpen && panelId === 'fontPanel') renderFontOptions();
+        if (willOpen && panelId === 'fontPanel') {
+          // 打开字体面板：从已保存的设置重新开始
+          pendingFontCn = localStorage.getItem('moFontCn') || 'default';
+          pendingFontEn = localStorage.getItem('moFontEn') || 'default';
+          applyFonts();
+          renderFontOptions();
+        }
+        if (!willOpen && panelId === 'fontPanel') {
+          // 收起字体面板：未保存的选择作废，恢复已保存字体，收起子面板
+          pendingFontCn = localStorage.getItem('moFontCn') || 'default';
+          pendingFontEn = localStorage.getItem('moFontEn') || 'default';
+          applyFonts();
+          ['fontCnPanel', 'fontEnPanel'].forEach(id => {
+            const p = document.getElementById(id);
+            if (p) p.style.display = 'none';
+          });
+          ['fontCnChevron', 'fontEnChevron'].forEach(id => {
+            const ch = document.getElementById(id);
+            if (ch) { ch.innerHTML = ''; ch.appendChild(createSettingChevron(false)); }
+          });
+        }
       }
       window.toggleSettingPanel = toggleSettingPanel;
 
-      // ---------- 字体切换（中文/英文分开） ----------
+      // ---------- 字体切换（中文/英文分开，选中后点“保存”生效） ----------
       const FONT_CN_OPTIONS = [
         { key: 'default', label: '系统默认', css: '"PingFang SC", "Microsoft YaHei", sans-serif' },
         { key: 'wenkai', label: '霞鹜文楷', css: '"LXGW WenKai", "KaiTi", "STKaiti", serif' },
@@ -1092,6 +1131,7 @@
         { key: 'heiti', label: '黑体', css: '"SimHei", "Heiti SC", sans-serif' }
       ];
       const FONT_EN_OPTIONS = [
+        { key: 'follow', label: '跟随中文字体', css: null },
         { key: 'default', label: '系统默认', css: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
         { key: 'wenkai', label: '霞鹜文楷', css: '"LXGW WenKai", Georgia, serif' },
         { key: 'georgia', label: 'Georgia', css: 'Georgia, "Times New Roman", serif' },
@@ -1099,42 +1139,56 @@
         { key: 'verdana', label: 'Verdana', css: 'Verdana, Geneva, sans-serif' }
       ];
 
-      // 把选中的字体应用到整个页面
+      // 暂存的选择（点“保存”后才写入 localStorage）
+      let pendingFontCn = localStorage.getItem('moFontCn') || 'default';
+      let pendingFontEn = localStorage.getItem('moFontEn') || 'default';
+
+      // 把暂存的字体应用到整个页面
       function applyFonts() {
-        const cn = localStorage.getItem('moFontCn') || 'default';
-        const en = localStorage.getItem('moFontEn') || 'default';
-        const cnCss = (FONT_CN_OPTIONS.find(o => o.key === cn) || FONT_CN_OPTIONS[0]).css;
-        const enCss = (FONT_EN_OPTIONS.find(o => o.key === en) || FONT_EN_OPTIONS[0]).css;
+        const cnCss = (FONT_CN_OPTIONS.find(o => o.key === pendingFontCn) || FONT_CN_OPTIONS[0]).css;
+        const enOpt = FONT_EN_OPTIONS.find(o => o.key === pendingFontEn) || FONT_EN_OPTIONS[0];
+        const enCss = pendingFontEn === 'follow' ? cnCss : (enOpt.css || cnCss);
         document.documentElement.style.setProperty('--font-cn', cnCss);
         document.documentElement.style.setProperty('--font-en', enCss);
       }
 
-      // 渲染字体选择按钮（带预览文字）
+      // 渲染字体下拉列表（带预览文字）
       function renderFontOptions() {
-        const cnBox = document.getElementById('fontCnOptions');
-        const enBox = document.getElementById('fontEnOptions');
+        const cnBox = document.getElementById('fontCnPanel');
+        const enBox = document.getElementById('fontEnPanel');
         if (!cnBox || !enBox) return;
-        const cn = localStorage.getItem('moFontCn') || 'default';
-        const en = localStorage.getItem('moFontEn') || 'default';
         cnBox.innerHTML = '';
         enBox.innerHTML = '';
+        const cnCss = (FONT_CN_OPTIONS.find(o => o.key === pendingFontCn) || FONT_CN_OPTIONS[0]).css;
         FONT_CN_OPTIONS.forEach(o => {
           const row = document.createElement('div');
-          row.className = 'font-option' + (o.key === cn ? ' selected' : '');
+          row.className = 'font-row' + (o.key === pendingFontCn ? ' selected' : '');
           row.style.fontFamily = o.css + ', sans-serif';
-          row.textContent = (o.label === '系统默认' ? '系统默认' : o.label) + ' · 今天天气很好呀';
-          row.onclick = () => { localStorage.setItem('moFontCn', o.key); applyFonts(); renderFontOptions(); };
+          row.textContent = o.label + ' · 今天天气很好呀';
+          row.onclick = () => { pendingFontCn = o.key; applyFonts(); renderFontOptions(); };
           cnBox.appendChild(row);
         });
         FONT_EN_OPTIONS.forEach(o => {
           const row = document.createElement('div');
-          row.className = 'font-option' + (o.key === en ? ' selected' : '');
-          row.style.fontFamily = o.css;
+          row.className = 'font-row' + (o.key === pendingFontEn ? ' selected' : '');
+          row.style.fontFamily = (o.css || cnCss);
           row.textContent = (o.label === '系统默认' ? 'System' : o.label) + ' · The quick brown fox';
-          row.onclick = () => { localStorage.setItem('moFontEn', o.key); applyFonts(); renderFontOptions(); };
+          row.onclick = () => { pendingFontEn = o.key; applyFonts(); renderFontOptions(); };
           enBox.appendChild(row);
         });
       }
+
+      // 保存字体设置
+      function saveFonts() {
+        localStorage.setItem('moFontCn', pendingFontCn);
+        localStorage.setItem('moFontEn', pendingFontEn);
+        const status = document.getElementById('fontStatus');
+        if (status) {
+          status.textContent = '✅ 字体已保存';
+          setTimeout(() => { status.textContent = ''; }, 2000);
+        }
+      }
+      window.saveFonts = saveFonts;
 
       // 启动时应用已保存的字体
       applyFonts();
