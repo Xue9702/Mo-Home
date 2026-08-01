@@ -14,6 +14,11 @@ const MOMENTS_REPLY_MAX_DELAY = 20; // 回复最长随机延迟（分钟）
 const MOMENTS_COMMENT_REPLY_MIN = 3; // 评论回复最短延迟
 const MOMENTS_COMMENT_REPLY_MAX = 8; // 评论回复最长延迟
 
+// ================== 识图（阿里云百炼视觉模型）配置 ==================
+const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY || '';
+const VISION_MODEL = process.env.VISION_MODEL || 'qwen3.5-omni-plus';
+const DASHSCOPE_BASE_URL = process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
 // ------------------ System Prompt 管理 ------------------
 
 // 随机延迟生成器
@@ -48,7 +53,7 @@ async function updatePushState(lastPushTimeISO, cooldownMinutes) {
 }
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 const port = process.env.PORT || 3000;
 
 // ================== 原有 Supabase 配置 ==================
@@ -291,13 +296,26 @@ async function shouldPush() {
 // 无 group_id 的普通消息全部保留；按时间正序返回最近 limit 条。
 async function loadLatestHistory(sessionId, limit = 50) {
   try {
-    const { data, error } = await supabase
+    let result = await supabase
       .from('messages')
-      .select('id, role, content, group_id, version_number, created_at')
+      .select('id, role, content, group_id, version_number, created_at, image_alt')
       .eq('session_id', sessionId)
       .eq('visible', true)
       .order('created_at', { ascending: false })
       .limit(Math.max(limit * 3, 150));
+
+    // 兼容尚未添加 image_alt 列的数据库：去掉该列重试
+    if (result.error && /image_alt/.test(result.error.message)) {
+      console.warn('⚠️ image_alt 列不存在，历史上下文暂不含图片描述（请执行 ALTER TABLE 开启）');
+      result = await supabase
+        .from('messages')
+        .select('id, role, content, group_id, version_number, created_at')
+        .eq('session_id', sessionId)
+        .eq('visible', true)
+        .order('created_at', { ascending: false })
+        .limit(Math.max(limit * 3, 150));
+    }
+    const { data, error } = result;
 
     if (error || !data) {
       console.error('加载历史消息失败:', error);
@@ -321,18 +339,74 @@ async function loadLatestHistory(sessionId, limit = 50) {
 
     return [...plainMessages, ...latestByGroup.values()]
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-      .slice(-limit);
+      .slice(-limit)
+      .map(msg => ({
+        ...msg,
+        // 图片消息在上下文中附带视觉模型生成的描述，让默"看见"图片
+        content: msg.content + (msg.image_alt ? `\n\n[图片描述：${msg.image_alt}]` : '')
+      }));
   } catch (err) {
     console.error('加载历史消息出错:', err.message);
     return [];
   }
 }
 
+// 调用阿里云百炼视觉模型识别图片，返回中文描述（给默补一双眼睛）
+async function describeImage(imageDataUrl, userText = '') {
+  if (!DASHSCOPE_API_KEY) {
+    console.error('❌ 识图功能未配置：请在环境变量中设置 DASHSCOPE_API_KEY');
+    return null;
+  }
+  try {
+    const prompt = '请用中文详细描述这张图片的内容，包括主体、场景、人物、文字、颜色、氛围等细节，'
+      + '以便一个没有视觉能力的AI伴侣理解图片并自然地回应。'
+      + (userText ? `\n对方配的文字是：“${userText}”，请结合它描述。` : '')
+      + '\n如果图片中有文字，请完整转述。';
+    const response = await fetch(`${DASHSCOPE_BASE_URL.replace(/\/?$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DASHSCOPE_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: VISION_MODEL,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+            { type: 'text', text: prompt }
+          ]
+        }],
+        stream: false,
+        max_tokens: 1024
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('❌ 视觉模型错误:', response.status, errText.slice(0, 300));
+      return null;
+    }
+
+    const json = await response.json();
+    const desc = json.choices?.[0]?.message?.content;
+    if (desc && typeof desc === 'string' && desc.trim()) {
+      console.log('🖼️ 图片识别成功:', desc.slice(0, 100));
+      return desc.trim();
+    }
+    return null;
+  } catch (err) {
+    console.error('❌ 识图失败:', err.message);
+    return null;
+  }
+}
+
 // ------------------ 对话接口（流式响应） ------------------
 app.post('/api/chat', async (req, res) => {
-  const { message } = req.body;
+  const { message, image } = req.body;
+  const text = (message || '').trim();
 
-  if (!message) {
+  if (!text && !image) {
     return res.status(400).json({ error: '消息不能为空' });
   }
 
@@ -351,6 +425,13 @@ app.post('/api/chat', async (req, res) => {
   };
 
   try {
+    // 识别图片（如果有）：转成中文描述，让默"看见"图片
+    let imageAlt = null;
+    if (image) {
+      imageAlt = await describeImage(image, text);
+      if (!imageAlt) imageAlt = '（图片内容解析失败）';
+    }
+
     // 加载历史消息（50条，按分支组去重，只保留每个分支的最新版本）
     const historyMessages = (await loadLatestHistory(1, 50)).map(msg => ({
       role: msg.role,
@@ -361,15 +442,27 @@ app.post('/api/chat', async (req, res) => {
     const userMessage = {
       session_id: 1,
       role: 'user',
-      content: message,
+      content: text,
       visible: true,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      ...(image ? { image_data: image, image_alt: imageAlt } : {})
     };
 
-    const { data: userData, error: userError } = await supabase
-      .from('messages')
-      .insert([userMessage])
-      .select();
+    // 若 image_data 列尚未在 Supabase 中创建，则降级为纯文本保存，聊天不中断
+    let userData = null, userError = null;
+    const insertResult = await supabase.from('messages').insert([userMessage]).select();
+    if (insertResult.error && image && /image_data|image_alt/.test(insertResult.error.message)) {
+      console.warn('⚠️ image_data 列不存在，降级为纯文本保存（请在 Supabase 执行 ALTER TABLE 开启图片持久化）');
+      const fallback = await supabase
+        .from('messages')
+        .insert([{ ...userMessage, image_data: undefined, image_alt: undefined }])
+        .select();
+      userData = fallback.data;
+      userError = fallback.error;
+    } else {
+      userData = insertResult.data;
+      userError = insertResult.error;
+    }
 
     if (userError) {
       console.error('保存用户消息失败:', userError);
@@ -378,7 +471,7 @@ app.post('/api/chat', async (req, res) => {
     // 调用 Ombre Brain 检索记忆
     let memoryContext = '';
     try {
-      const memoryResult = await callOmbreTool('breath', { text: message });
+      const memoryResult = await callOmbreTool('breath', { text: text || '用户发送了一张图片' });
       if (memoryResult) {
         memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
         console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
@@ -402,6 +495,9 @@ app.post('/api/chat', async (req, res) => {
       momentsContext
     );
 
+    // 当前这条用户消息（含图片描述）作为对话上下文的最后一条用户消息
+    const finalUserContent = (text + (imageAlt ? `\n\n[用户发来一张图片，图片内容描述：${imageAlt}]` : '')).trim();
+
     // 调用 DeepSeek API（开启流式）
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
@@ -415,7 +511,7 @@ app.post('/api/chat', async (req, res) => {
         messages: [
           { role: 'system', content: systemPrompt },
           ...historyMessages,
-          { role: 'user', content: message }
+          { role: 'user', content: finalUserContent }
         ],
 
         reasoning_effort: 'medium',
@@ -622,14 +718,25 @@ app.post('/api/regenerate', async (req, res) => {
     }
 
     // 2. 查找对应的用户消息
-    const { data: userMsg, error: userError } = await supabase
+    let userMsgResult = await supabase
       .from('messages')
-      .select('id, content')
+      .select('id, content, image_alt')
       .eq('session_id', targetMsg.session_id)
       .eq('role', 'user')
       .lt('id', messageId)
       .order('id', { ascending: false })
       .limit(1);
+    if (userMsgResult.error && /image_alt/.test(userMsgResult.error.message)) {
+      userMsgResult = await supabase
+        .from('messages')
+        .select('id, content')
+        .eq('session_id', targetMsg.session_id)
+        .eq('role', 'user')
+        .lt('id', messageId)
+        .order('id', { ascending: false })
+        .limit(1);
+    }
+    const { data: userMsg, error: userError } = userMsgResult;
 
     if (userError || !userMsg || userMsg.length === 0) {
       console.error('❌ 找不到对应的用户消息:', userError);
@@ -639,7 +746,8 @@ app.post('/api/regenerate', async (req, res) => {
     }
 
     const userMsgId = userMsg[0].id;
-    const userContent = userMsg[0].content;
+    const userContent = userMsg[0].content
+      + (userMsg[0].image_alt ? `\n\n[图片描述：${userMsg[0].image_alt}]` : '');
     console.log('✅ 找到对应的用户消息:', userContent);
 
     // 2.5 建立/复用分支组：确保用户消息与目标回复有 group_id 和版本号 v1
@@ -1447,6 +1555,11 @@ app.post('/api/edit-message', async (req, res) => {
       group_id: groupId,
       version_number: newVersion,
       original_user_id: originalMsg.original_user_id || originalMsg.id,
+      // 仅在原消息确实带图片时复制图片与描述（兼容尚未建列的表）
+      ...(originalMsg.image_data ? {
+        image_data: originalMsg.image_data,
+        image_alt: originalMsg.image_alt || null
+      } : {}),
       visible: true,
       created_at: new Date().toISOString()
     };
