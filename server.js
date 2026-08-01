@@ -265,7 +265,7 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '') 
     .trim();
   // 实时搜索指令：仅在后端配置了博查密钥时注入，避免默在未启用时也输出搜索标签
   const searchInstruction = process.env.BOCHA_API_KEY
-    ? `\n\n【实时搜索】\n你拥有联网实时搜索能力。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，在回复的最末尾附加一行标签：\n[SEARCH_QUERY]<简洁明确的中文搜索关键词>\n注意：标签必须位于回复最末尾、只出现一次，系统会拦截处理它，雪不会看到；标签之前可以写一句简短的过渡语，但不要写正式回答，等搜索结果返回后再作答。如果问题不需要实时信息，则完全不要使用该标签。`
+    ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，先调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
     + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
@@ -307,6 +307,7 @@ async function performWebSearch(query) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.BOCHA_API_KEY}`
       },
+      signal: AbortSignal.timeout(15000), // 博查最长等待15秒，避免卡住整个回复
       body: JSON.stringify({
         query,
         count: 5,
@@ -340,7 +341,7 @@ async function performWebSearch(query) {
 
 // 调用 DeepSeek（流式）。bufferContent=true 时先缓存可见内容，结束时统一返回，
 // 避免把 [SEARCH_QUERY] 这类工具标签直接流给前端；思考内容始终实时转发。
-async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false } = {}) {
+async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false, tools = null } = {}) {
   const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -350,6 +351,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
     body: JSON.stringify({
       model: 'deepseek-v4-flash',
       messages: chatMessages,
+      ...(tools ? { tools, tool_choice: 'auto' } : {}),
       reasoning_effort: 'medium',
       temperature: 0.7,
       max_tokens: 2048,
@@ -366,6 +368,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
   let fullReply = '';
   let fullThinking = '';
   let contentBuffer = '';
+  const toolCallsMap = new Map(); // 流式分片到达，按 index 累积工具调用
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8');
@@ -403,13 +406,45 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
             sendSSE({ content: delta.content });
           }
         }
+
+        // 累积模型发起的工具调用（可能分多次 delta 到达）
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            const cur = toolCallsMap.get(idx) || { id: '', type: 'function', function: { name: '', arguments: '' } };
+            if (tc.id) cur.id = tc.id;
+            if (tc.type) cur.type = tc.type;
+            if (tc.function?.name) cur.function.name += tc.function.name;
+            if (tc.function?.arguments) cur.function.arguments += tc.function.arguments;
+            toolCallsMap.set(idx, cur);
+          }
+        }
       } catch (e) {
         // 忽略非 JSON 数据
       }
     }
   }
 
-  return { fullReply, fullThinking, contentBuffer };
+  const toolCalls = toolCallsMap.size ? [...toolCallsMap.values()] : null;
+  return { fullReply, fullThinking, contentBuffer, toolCalls };
+}
+
+// 声明默的联网搜索工具（仅在配置了博查密钥时启用）
+function buildWebSearchTools() {
+  return [{
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description: '联网搜索实时信息，例如最新新闻、天气、股票汇率、热点事件、你知识截止后发生的事、需要查证的事实等。当雪的问题需要最新/实时信息时调用；日常聊天不要调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '简洁明确的中文搜索关键词' }
+        },
+        required: ['query']
+      }
+    }
+  }];
 }
 
 // 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
@@ -423,7 +458,46 @@ function flushBufferedContent(contentBuffer, sendSSE) {
 
 // 处理回复中的搜索标签：需要搜索时调用博查，并用搜索结果追加一次 DeepSeek 调用，
 // 返回最终的 { reply, thinking, searched }；搜索失败时降级为无结果回答。
-async function resolveSearchTag({ reply, thinking, chatMessages, systemPrompt, sendSSE }) {
+async function resolveSearchTag({ reply, thinking, chatMessages, systemPrompt, sendSSE, toolCalls }) {
+  // 方式一：模型通过 web_search 工具调用声明搜索（最可靠）
+  if (toolCalls && toolCalls.length > 0) {
+    const call = toolCalls[0];
+    let query = '';
+    try {
+      query = (JSON.parse(call.function.arguments || '{}').query || '').trim();
+    } catch (e) {
+      query = '';
+    }
+
+    if (query) {
+      // 先把首轮可见内容（过渡语）补发给前端，再通知“正在搜索”
+      if (reply.trim()) sendSSE({ content: reply.trim() });
+      sendSSE({ search: true, query });
+
+      const searchText = await performWebSearch(query);
+      const searchNote = searchText
+        ? `【实时搜索结果】\n以下是默刚刚搜索到的实时信息：\n\n${searchText}\n\n请基于这些搜索结果回答雪的问题，用自己的语气自然组织；如果搜索结果与问题无关或信息不足，请如实说明。`
+        : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
+
+      const second = await callDeepSeekStream(
+        [
+          { role: 'system', content: `${systemPrompt}\n\n${searchNote}` },
+          ...chatMessages.slice(1),
+          { role: 'assistant', content: reply || null, tool_calls: [call] },
+          { role: 'tool', tool_call_id: call.id || 'web_search', content: searchText || '（联网搜索无结果）' }
+        ],
+        sendSSE
+      );
+
+      if (second.error) return { error: second.error, searched: true };
+
+      const finalReply = stripSearchTags([reply.trim(), second.fullReply].filter(Boolean).join('\n'));
+      const finalThinking = thinking + (second.fullThinking ? `\n\n${second.fullThinking}` : '');
+      return { reply: finalReply, thinking: finalThinking, searched: true };
+    }
+  }
+
+  // 方式二：模型直接输出 [SEARCH_QUERY] 标签（备选）
   const tag = extractSearchTag(reply);
   if (!tag) return { reply, thinking, searched: false };
 
@@ -751,7 +825,10 @@ app.post('/api/chat', async (req, res) => {
       { role: 'user', content: finalUserContent }
     ];
 
-    const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: true });
+    const first = await callDeepSeekStream(chatMessages, sendSSE, {
+      bufferContent: true,
+      tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+    });
 
     if (first.error) {
       sendSSE({ error: first.error });
@@ -776,7 +853,8 @@ app.post('/api/chat', async (req, res) => {
       thinking: fullThinking,
       chatMessages,
       systemPrompt,
-      sendSSE
+      sendSSE,
+      toolCalls: first.toolCalls
     });
 
     if (searchResult.error) {
@@ -1059,7 +1137,10 @@ app.post('/api/regenerate', async (req, res) => {
     ];
 
     // 6. 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
-    const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: true });
+    const first = await callDeepSeekStream(chatMessages, sendSSE, {
+      bufferContent: true,
+      tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+    });
 
     if (first.error) {
       sendSSE({ error: first.error });
@@ -1083,7 +1164,8 @@ app.post('/api/regenerate', async (req, res) => {
       thinking: fullThinking,
       chatMessages,
       systemPrompt,
-      sendSSE
+      sendSSE,
+      toolCalls: first.toolCalls
     });
 
     if (searchResult.error) {
@@ -1845,7 +1927,10 @@ app.post('/api/edit-message', async (req, res) => {
     ];
 
     // 10. 调用 DeepSeek 流式生成新回复（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
-    const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: true });
+    const first = await callDeepSeekStream(chatMessages, sendSSE, {
+      bufferContent: true,
+      tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+    });
 
     if (first.error) {
       sendSSE({ error: first.error });
@@ -1869,7 +1954,8 @@ app.post('/api/edit-message', async (req, res) => {
       thinking: fullThinking,
       chatMessages,
       systemPrompt,
-      sendSSE
+      sendSSE,
+      toolCalls: first.toolCalls
     });
 
     if (searchResult.error) {
