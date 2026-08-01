@@ -1802,6 +1802,8 @@
       }
 
       async function handleRegenerate(btn, msgDiv) {
+        // 防误触：重新生成会从此处开启新分支并折叠之后的对话，先请夫人确认
+        if (!confirm('重新生成会从这里开启新分支，这条回复之后的消息会被折叠隐藏（可通过版本角标切回查看）。确定要重新生成吗？')) return;
         if (btn.disabled) return; btn.disabled = true; btn.textContent = '⏳ 生成中...';
         const messageId = btn.dataset.messageId;
         if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }

@@ -873,19 +873,31 @@ app.post('/api/chat', async (req, res) => {
 // ------------------ 获取历史消息 ------------------
 app.get('/api/history', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('session_id', 1)
-      .eq('visible', true)
-      .order('created_at', { ascending: true });
+    // Supabase 单次请求最多返回 1000 行，必须分页才能取到全部历史；
+    // 按 created_at + id 排序保证分页结果稳定不重不漏。
+    const allMessages = [];
+    const PAGE_SIZE = 1000;
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('session_id', 1)
+        .eq('visible', true)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1);
 
-    if (error) {
-      console.error('读取历史消息失败:', error);
-      return res.status(500).json({ error: '读取历史消息失败' });
+      if (error) {
+        console.error('读取历史消息失败:', error);
+        return res.status(500).json({ error: '读取历史消息失败' });
+      }
+      if (!data || data.length === 0) break;
+      allMessages.push(...data);
+      if (data.length < PAGE_SIZE) break;
     }
 
-    res.json({ messages: data });
+    console.log('📜 历史接口返回消息数:', allMessages.length);
+    res.json({ messages: allMessages });
   } catch (err) {
     console.error('历史接口错误:', err.message);
     res.status(500).json({ error: '读取历史消息时出错' });
