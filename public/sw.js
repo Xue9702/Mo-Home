@@ -1,5 +1,5 @@
 // sw.js - 基础 Service Worker
-const CACHE_NAME = 'mo-home-v1';
+const CACHE_NAME = 'mo-home-v2';
 const urlsToCache = [
   '/',
   '/chat.html',
@@ -16,18 +16,34 @@ self.addEventListener('install', function(event) {
         return cache.addAll(urlsToCache);
       })
   );
+  // 立即接管页面，避免旧版本继续生效
+  self.skipWaiting();
 });
 
-// 拦截请求，优先从缓存返回
+// 拦截请求：优先从网络获取最新版本，失败时才回退到缓存（保证线上总是最新）
 self.addEventListener('fetch', function(event) {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+
   event.respondWith(
-    caches.match(event.request)
+    fetch(request)
       .then(function(response) {
-        // 如果缓存命中则返回缓存，否则从网络获取
-        if (response) {
-          return response;
+        // 同源成功响应写入缓存，供离线时使用
+        if (response && response.ok) {
+          try {
+            const url = new URL(request.url);
+            if (url.origin === location.origin) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then(function(cache) {
+                cache.put(request, clone);
+              });
+            }
+          } catch (e) { /* 忽略跨域等无法缓存的情况 */ }
         }
-        return fetch(event.request);
+        return response;
+      })
+      .catch(function() {
+        return caches.match(request);
       })
   );
 });
@@ -43,6 +59,8 @@ self.addEventListener('activate', function(event) {
           }
         })
       );
+    }).then(function() {
+      return self.clients.claim();
     })
   );
 });

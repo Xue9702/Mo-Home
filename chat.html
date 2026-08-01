@@ -498,6 +498,8 @@
       border-radius: 50%;
       width: 44px;
       height: 44px;
+      font-size: 24px;
+      line-height: 1;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -677,7 +679,7 @@
           </div>
           <div class="input-row">
             <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
-            <button id="attachBtn" class="attach-btn" title="添加附件" aria-label="添加附件"></button>
+            <button id="attachBtn" class="attach-btn" title="添加附件" aria-label="添加附件">＋</button>
             <button id="sendBtn" aria-label="发送" title="发送"></button>
           </div>
           <input type="file" id="imageInput" accept="image/*" style="display:none;">
@@ -1043,20 +1045,6 @@
         const path = document.createElementNS(svgNS, 'path');
         path.setAttribute('d', 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z');
         svg.appendChild(path);
-        return svg;
-      }
-
-      function createPlusIcon() {
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(svgNS, 'svg');
-        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2.5');
-        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        svg.style.display = 'block';
-        const v = document.createElementNS(svgNS, 'path'); v.setAttribute('d', 'M12 5l0 14');
-        const h = document.createElementNS(svgNS, 'path'); h.setAttribute('d', 'M5 12l14 0');
-        svg.appendChild(v); svg.appendChild(h);
         return svg;
       }
 
@@ -1925,7 +1913,6 @@
       sendBtn.appendChild(createSendHeartIcon());
 
       // 加号按钮：从底部升起附件弹层
-      attachBtn.appendChild(createPlusIcon());
       function openAttachSheet() {
         attachSheet.classList.add('show');
         attachSheetBackdrop.classList.add('show');
