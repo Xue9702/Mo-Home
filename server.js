@@ -1990,7 +1990,7 @@ function renderMenuText(nodeId, ctx) {
   const lines = node.options.map((o, i) => {
     const costText = o.cost === '?' ? '（?）' : (o.cost > 0 ? `（-${o.cost}体力）` : '');
     const tagText = o.tag ? `——${o.tag}` : '';
-    return `${i + 1}. ${o.label}${costText}${tagText}`;
+    return `${i + 1}. [${o.id}] ${o.label}${costText}${tagText}`;
   });
   return `【当前场景】${ctx.sceneTitle}\n【彩蛋图鉴】（${ctx.collection.found}/${ctx.collection.total}）\n【体力】${ctx.energy}/${ctx.energyMax}\n请选择要做的选项（调用 choose_action，option_id 对应数字编号对应的 id）：\n${lines.join('\n')}`;
 }
@@ -2312,7 +2312,7 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
           model: 'deepseek-v4-flash',
           messages: conversation,
           tools: buildMenuTools(),
-          tool_choice: 'auto',
+          tool_choice: { type: 'function', function: { name: 'choose_action' } },
           max_tokens: 1200,
           temperature: 0.85,
           stream: false
@@ -2335,7 +2335,14 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       }
       const optionId = String(args.option_id || '');
       const node = WAKE_MENU[ctx.node];
-      const option = (node && node.options.find(o => o.id === optionId)) || null;
+      // 兼容数字编号与 id 两种填法
+      let option = (node && node.options.find(o => o.id === optionId)) || null;
+      if (!option && node) {
+        const num = parseInt(optionId, 10);
+        if (!isNaN(num) && num >= 1 && num <= node.options.length) {
+          option = node.options[num - 1];
+        }
+      }
 
       if (msg?.content) conversation.push({ role: 'assistant', content: msg.content });
       if (!option) {
