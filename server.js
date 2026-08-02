@@ -1360,9 +1360,8 @@ app.post('/api/regenerate', async (req, res) => {
     );
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
-    // 重新生成时不要喂旧版回复给默，也不要让他察觉这是"重新生成"，
-    // 只用一句自然的提示引导换一种说法
-    const regenUserContent = `${userContent}\n\n（再回答一次：换个角度、换个说法，让内容与之前不太一样～）`;
+    // 重新生成与正常回复完全一致：不喂旧版、不加任何提示，让默像第一次收到消息一样作答
+    const regenUserContent = userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
       ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),

@@ -2728,12 +2728,35 @@
 
         if (target) {
           target.appendChild(nav);
+          arrangeMetaRow(target);
         } else {
           messageList.appendChild(nav);
         }
 
         prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
         nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
+      }
+
+      // 把版本角标和刷新按钮放进同一行（右侧对齐）
+      function arrangeMetaRow(msgEl) {
+        if (!msgEl) return;
+        const nav = msgEl.querySelector(':scope > .version-nav');
+        const btn = msgEl.querySelector(':scope > .refresh-btn');
+        if (!nav && !btn) return;
+        let row = msgEl.querySelector(':scope > .meta-row');
+        if (!row) {
+          row = document.createElement('div');
+          row.className = 'meta-row';
+          row.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:4px;';
+          msgEl.appendChild(row);
+        }
+        if (btn && btn.parentNode !== row) row.appendChild(btn);
+        if (nav && nav.parentNode !== row) row.appendChild(nav);
+        if (nav) {
+          nav.style.width = 'auto';
+          nav.style.flex = '1';
+          nav.style.padding = '0';
+        }
       }
 
       function switchVersion(groupId, targetVersion) {
@@ -2939,6 +2962,7 @@
               btn.dataset.messageId = last.dataset.messageId || 'temp-' + Date.now();
               btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, last); });
               last.appendChild(btn);
+              arrangeMetaRow(last);
             }
           }
         } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
@@ -3067,6 +3091,7 @@
                     refreshBtn.dataset.messageId = json.assistantMessageId;
                     refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
                     currentMsgDiv.appendChild(refreshBtn);
+                    arrangeMetaRow(currentMsgDiv);
                   }
 
                   // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
@@ -3108,8 +3133,10 @@
       }
 
       async function handleRegenerate(btn, msgDiv) {
-        // 防误触：重新生成会从此处开启新分支并折叠之后的对话，先请夫人确认
-        if (!confirm('重新生成会从这里开启新分支，这条回复之后的消息会被折叠隐藏（可通过版本角标切回查看）。确定要重新生成吗？')) return;
+        // 只有重新生成“非最新”回复（会折叠之后的对话）时才需要确认；刷新最新一条直接执行
+        const allAsstMsgs = messageList.querySelectorAll('.message.assistant');
+        const isLatest = allAsstMsgs.length > 0 && msgDiv === allAsstMsgs[allAsstMsgs.length - 1];
+        if (!isLatest && !confirm('重新生成会从这里开启新分支，这条回复之后的消息会被折叠隐藏（可通过版本角标切回查看）。确定要重新生成吗？')) return;
         if (btn.disabled) return; btn.disabled = true; btn.textContent = '⏳ 生成中...';
         const messageId = btn.dataset.messageId;
         if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }
@@ -3220,6 +3247,7 @@
             refreshBtn.dataset.messageId = doneInfo.assistantMessageId;
             refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
             currentMsgDiv.appendChild(refreshBtn);
+            arrangeMetaRow(currentMsgDiv);
           }
 
           // 只显示最新版本，并挂上版本角标（多个版本时）
@@ -3234,6 +3262,7 @@
               if (latestUser) navTarget = latestUser;
             }
             addVersionNavigator(doneInfo.groupId, doneInfo.currentVersion, doneInfo.totalVersions, navTarget);
+            arrangeMetaRow(currentMsgDiv);
           }
           messageList.scrollTop = messageList.scrollHeight;
         } catch (err) {
