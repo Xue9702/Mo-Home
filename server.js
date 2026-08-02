@@ -1147,6 +1147,12 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存助手消息失败:', assistantError);
     }
 
+    // Aevum 自动提取（不阻塞回复，后台提炼候选记忆）
+    extractAevumMemories([
+      { role: 'user', content: finalUserContent },
+      { role: 'assistant', content: fullReply }
+    ]).catch(e => console.error('Aevum 自动提取失败:', e.message));
+
     // 发送完成信号，包含消息ID
     sendSSE({
       done: true,
@@ -2857,6 +2863,119 @@ function validAevumConfidence(c) {
   };
   return { evidence: num(conf.evidence), stability: num(conf.stability), importance: num(conf.importance) };
 }
+
+// 内容去重：与已有活跃/候选记忆高度重合则跳过
+async function aevumContentExists(content) {
+  try {
+    const { data } = await supabase
+      .from('aevum_memories')
+      .select('content')
+      .in('status', ['active', 'candidate', 'verified'])
+      .limit(300);
+    const norm = String(content || '').replace(/\s+/g, '');
+    if (!norm) return true;
+    return (data || []).some(m => {
+      const mn = String(m.content).replace(/\s+/g, '');
+      return mn.includes(norm) || norm.includes(mn);
+    });
+  } catch (e) {
+    return true; // 表缺失或出错时保守跳过
+  }
+}
+
+// 从一段对话中提取候选记忆（Phase 2 提取管线）
+async function extractAevumMemories(texts) {
+  if (!Array.isArray(texts) || texts.length === 0) return 0;
+  const dialogue = texts
+    .map(t => `${t.role === 'user' ? '雪' : '默'}：${String(t.content || '').slice(0, 800)}`)
+    .join('\n');
+  if (!dialogue.trim()) return 0;
+
+  const system = `你是 Aevum Memory 的记忆提取器，负责从对话中提炼值得长期记住的信息。
+规则：
+- 只提取明确出现在对话里的信息，不脑补、不编造
+- event=客观发生的事；fact=稳定的用户信息/偏好/情况；meaning=这件事对用户的意义（解释性，置信度<0.9）
+- relationship=互动规律；personality=AI 稳定行为倾向；这两类只在很有把握时提取
+- 不要提取：日常寒暄、一次性话题、情绪化即兴表达、AI 的客套话
+- 每次最多 3 条，宁缺毋滥
+- 输出格式：只输出 [AEVUM_MEMORIES]{"memories":[{"type":"event|fact|meaning|relationship|personality","owner":"USER|RELATIONSHIP|AGENT","content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+
+  try {
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: `请提取这段对话的记忆：\n${dialogue}` }
+        ],
+        reasoning_effort: 'low',
+        max_tokens: 600,
+        temperature: 0.4,
+        stream: false
+      })
+    });
+    if (!resp.ok) return 0;
+    const data = await resp.json();
+    const reply = String(data.choices?.[0]?.message?.content || '');
+    const marker = '[AEVUM_MEMORIES]';
+    const idx = reply.indexOf(marker);
+    if (idx === -1) return 0;
+    let parsed = null;
+    try {
+      parsed = JSON.parse(reply.substring(idx + marker.length).trim());
+    } catch (e) {
+      console.error('Aevum 提取结果解析失败:', e.message);
+      return 0;
+    }
+    const memories = Array.isArray(parsed?.memories) ? parsed.memories : [];
+    let inserted = 0;
+    for (const m of memories.slice(0, 3)) {
+      const content = String(m.content || '').trim();
+      if (!content || !AEVUM_TYPES.includes(m.type)) continue;
+      if (await aevumContentExists(content)) continue;
+      await supabase.from('aevum_memories').insert({
+        type: m.type,
+        owner: AEVUM_OWNERS.includes(m.owner) ? m.owner : 'USER',
+        content,
+        status: 'candidate',
+        confidence: validAevumConfidence(m.confidence),
+        evidence: Array.isArray(m.evidence) ? m.evidence : [],
+        tags: Array.isArray(m.tags) ? m.tags.map(String) : [],
+        source: 'auto-extract'
+      });
+      inserted++;
+    }
+    if (inserted > 0) console.log(`🔮 Aevum 自动提取 ${inserted} 条候选记忆`);
+    return inserted;
+  } catch (err) {
+    console.error('Aevum 提取失败:', err.message);
+    return 0;
+  }
+}
+
+// 手动提取：从最近 N 条对话里跑一遍提取（配合去重，可重复执行）
+app.post('/api/aevum/extract', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.body?.limit, 10) || 12, 30);
+    const { data } = await supabase
+      .from('messages')
+      .select('role, content')
+      .eq('session_id', 1)
+      .eq('visible', true)
+      .order('id', { ascending: false })
+      .limit(limit);
+    const texts = (data || []).slice().reverse();
+    const count = await extractAevumMemories(texts);
+    res.json({ ok: true, extracted: count });
+  } catch (e) {
+    res.status(500).json({ error: '提取失败' });
+  }
+});
 
 // 记忆列表：?type= &status= &owner= &q=
 app.get('/api/aevum', async (req, res) => {

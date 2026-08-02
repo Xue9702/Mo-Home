@@ -2066,6 +2066,8 @@
                 ${filterSel('aevumOwner', Object.entries(AEVUM_OWNER_LABELS), aevumState.filters.owner, '全部归属')}
                 <input id="aevumQ" placeholder="搜索内容…" value="${escapeHtml2(aevumState.filters.q)}" oninput="aevumFilter()"
                   style="flex:1;min-width:90px;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 10px;font-size:13px;background:rgba(255,255,255,0.7);outline:none;">
+                <button onclick="aevumManualExtract()" title="从最近 12 条对话提取候选记忆"
+                  style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">从最近对话提取</button>
                 <button onclick="aevumToggleForm()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">${aevumState.showForm || aevumState.editingId ? '收起' : '+ 新增记忆'}</button>
               </div>
               <div style="font-size:12px;color:#8a83a8;display:flex;gap:12px;flex-wrap:wrap;">
@@ -2128,6 +2130,7 @@
           <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${AEVUM_TYPE_COLORS[m.type] || '#eee'};color:#fff;">${AEVUM_TYPE_LABELS[m.type] || m.type}</span>
+              ${m.source === 'auto-extract' ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#eef3ff;color:#7f9fd9;">自动</span>' : ''}
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${m.status === 'active' ? '#e8f9f0' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6'};color:${m.status === 'active' ? '#2ecc71' : m.status === 'archived' ? '#aaa' : '#b8860b'};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
               <span style="margin-left:auto;font-size:11px;color:#b0a6c4;">${new Date(m.updated_at || m.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
@@ -2196,6 +2199,22 @@
         renderAevum();
       }
       window.aevumSave = aevumSave;
+
+      async function aevumManualExtract() {
+        try {
+          const res = await fetch('/api/aevum/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          const data = await res.json();
+          alert(data.extracted > 0 ? `✅ 提取到 ${data.extracted} 条候选记忆，去候选队列审核吧~` : '没有提取到新的候选记忆（重复的已自动跳过）');
+          renderAevum();
+        } catch (e) {
+          alert('提取失败，请确认后端已部署');
+        }
+      }
+      window.aevumManualExtract = aevumManualExtract;
 
       async function aevumReview(id, action) {
         await fetch('/api/aevum/' + id + '/review', {
