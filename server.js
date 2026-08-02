@@ -988,6 +988,9 @@ app.post('/api/chat', async (req, res) => {
     // 默最近几次唤醒的活动记录，保持唤醒与聊天连贯
     const recentActionContext = await getRecentActionContext();
     if (recentActionContext) memoryContext += recentActionContext;
+    // Aevum 活跃记忆召回
+    const aevumContext = await recallAevumMemories(text);
+    if (aevumContext) memoryContext += aevumContext;
 
     // 构建动态的 System Prompt
     const momentsContext = await getMomentsContext();
@@ -1348,6 +1351,8 @@ app.post('/api/regenerate', async (req, res) => {
     if (readDiaryContext) memoryContext += readDiaryContext;
     const recentActionContext = await getRecentActionContext();
     if (recentActionContext) memoryContext += recentActionContext;
+    const aevumContext = await recallAevumMemories(userContent);
+    if (aevumContext) memoryContext += aevumContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
@@ -2883,6 +2888,88 @@ async function aevumContentExists(content) {
   }
 }
 
+const AEVUM_TYPE_CN = {
+  event: '事件', fact: '事实', meaning: '意义', relationship: '关系',
+  personality: '人格', self_candidate: 'Self候选', self_model: 'Self模型'
+};
+
+// 阿里百炼向量（text-embedding-v4，1024 维）；失败返回 null
+async function getEmbedding(text) {
+  const key = process.env.DASHSCOPE_API_KEY;
+  if (!key) return null;
+  try {
+    const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        model: process.env.AEVUM_EMBED_MODEL || 'text-embedding-v4',
+        input: String(text || '').slice(0, 1000),
+        dimensions: 1024,
+        encoding_format: 'float'
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!resp.ok) {
+      console.error('Embedding API 错误:', resp.status);
+      return null;
+    }
+    const data = await resp.json();
+    const emb = data?.data?.[0]?.embedding;
+    return Array.isArray(emb) && emb.length ? emb : null;
+  } catch (err) {
+    console.error('Embedding 调用失败:', err.message);
+    return null;
+  }
+}
+
+async function ensureAevumEmbedding(id, content) {
+  const emb = await getEmbedding(content);
+  if (!emb) return;
+  try {
+    await supabase.from('aevum_memories').update({ embedding: emb }).eq('id', id);
+  } catch (e) {
+    console.error('embedding 写入失败:', e.message);
+  }
+}
+
+// 召回：向量相似度取活跃记忆；向量不可用时退回关键词匹配
+async function recallAevumMemories(text, limit = 5) {
+  const q = String(text || '').trim();
+  if (!q) return '';
+  try {
+    const embedding = await getEmbedding(q.slice(0, 500));
+    let items = null;
+    if (embedding && embedding.length) {
+      const { data, error } = await supabase.rpc('match_aevum_memories', {
+        query_embedding: embedding,
+        match_count: limit
+      });
+      if (!error && Array.isArray(data) && data.length) items = data;
+    }
+    if (!items) {
+      const keywords = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2).slice(0, 3);
+      if (keywords.length) {
+        const { data } = await supabase
+          .from('aevum_memories')
+          .select('*')
+          .eq('status', 'active')
+          .or(keywords.map(k => `content.ilike.%${k}%`).join(','))
+          .limit(limit);
+        if (Array.isArray(data) && data.length) items = data;
+      }
+    }
+    if (!items || !items.length) return '';
+    const lines = items.map(m => `- [${AEVUM_TYPE_CN[m.type] || m.type}] ${m.content}`).join('\n');
+    return `\n\n【Aevum记忆】\n${lines}`;
+  } catch (e) {
+    console.error('Aevum 召回失败:', e.message);
+    return '';
+  }
+}
+
 // 从一段对话中提取候选记忆（Phase 2 提取管线）
 async function extractAevumMemories(texts) {
   if (!Array.isArray(texts) || texts.length === 0) return 0;
@@ -2938,7 +3025,7 @@ async function extractAevumMemories(texts) {
       const content = String(m.content || '').trim();
       if (!content || !AEVUM_TYPES.includes(m.type)) continue;
       if (await aevumContentExists(content)) continue;
-      await supabase.from('aevum_memories').insert({
+      const { data: insData } = await supabase.from('aevum_memories').insert({
         type: m.type,
         owner: AEVUM_OWNERS.includes(m.owner) ? m.owner : 'USER',
         content,
@@ -2947,7 +3034,10 @@ async function extractAevumMemories(texts) {
         evidence: Array.isArray(m.evidence) ? m.evidence : [],
         tags: Array.isArray(m.tags) ? m.tags.map(String) : [],
         source: 'auto-extract'
-      });
+      }).select();
+      if (insData?.[0]?.id) {
+        ensureAevumEmbedding(insData[0].id, content).catch(e => console.error('Aevum embedding 失败:', e.message));
+      }
       inserted++;
     }
     if (inserted > 0) console.log(`🔮 Aevum 自动提取 ${inserted} 条候选记忆`);
@@ -2974,6 +3064,27 @@ app.post('/api/aevum/extract', async (req, res) => {
     res.json({ ok: true, extracted: count });
   } catch (e) {
     res.status(500).json({ error: '提取失败' });
+  }
+});
+
+// 回填缺失的向量（迁移/补算用）
+app.post('/api/aevum/backfill', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('aevum_memories')
+      .select('id, content')
+      .is('embedding', null)
+      .limit(50);
+    let done = 0;
+    for (const m of data || []) {
+      const emb = await getEmbedding(m.content);
+      if (!emb) continue;
+      await supabase.from('aevum_memories').update({ embedding: emb }).eq('id', m.id);
+      done++;
+    }
+    res.json({ ok: true, backfilled: done });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -3045,6 +3156,7 @@ app.post('/api/aevum', async (req, res) => {
       .select()
       .single();
     if (error) return res.status(500).json({ error: '保存失败，请先执行 setup_aevum.sql' });
+    if (data?.id) ensureAevumEmbedding(data.id, text).catch(e => console.error('Aevum embedding 失败:', e.message));
     res.json({ ok: true, memory: data });
   } catch (e) {
     res.status(500).json({ error: '保存失败' });
@@ -3071,6 +3183,7 @@ app.put('/api/aevum/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single();
     if (error) return res.status(500).json({ error: error.message });
+    if (data?.id) ensureAevumEmbedding(data.id, data.content).catch(e => console.error('Aevum embedding 失败:', e.message));
     res.json({ ok: true, memory: data });
   } catch (e) {
     res.status(500).json({ error: '修改失败' });
@@ -3563,6 +3676,8 @@ app.post('/api/edit-message', async (req, res) => {
     if (readDiaryContext) memoryContext += readDiaryContext;
     const recentActionContext = await getRecentActionContext();
     if (recentActionContext) memoryContext += recentActionContext;
+    const aevumContext = await recallAevumMemories(newContent);
+    if (aevumContext) memoryContext += aevumContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt

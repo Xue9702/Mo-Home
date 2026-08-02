@@ -2068,6 +2068,8 @@
                   style="flex:1;min-width:90px;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 10px;font-size:13px;background:rgba(255,255,255,0.7);outline:none;">
                 <button onclick="aevumManualExtract()" title="从最近 12 条对话提取候选记忆"
                   style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">从最近对话提取</button>
+                <button onclick="aevumBackfill()" title="给还没有向量的记忆补算向量"
+                  style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">补算向量</button>
                 <button onclick="aevumToggleForm()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">${aevumState.showForm || aevumState.editingId ? '收起' : '+ 新增记忆'}</button>
               </div>
               <div style="font-size:12px;color:#8a83a8;display:flex;gap:12px;flex-wrap:wrap;">
@@ -2215,6 +2217,22 @@
         }
       }
       window.aevumManualExtract = aevumManualExtract;
+
+      async function aevumBackfill() {
+        try {
+          const res = await fetch('/api/aevum/backfill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          const data = await res.json();
+          alert(data.ok ? `✅ 已补算 ${data.backfilled} 条向量的记忆` : '补算失败');
+          renderAevum();
+        } catch (e) {
+          alert('补算失败，请先执行 setup_aevum_phase3.sql');
+        }
+      }
+      window.aevumBackfill = aevumBackfill;
 
       async function aevumReview(id, action) {
         await fetch('/api/aevum/' + id + '/review', {
