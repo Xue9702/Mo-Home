@@ -2845,6 +2845,156 @@ app.delete('/api/day-tags/:id', async (req, res) => {
   }
 });
 
+// ================== Aevum Memory（v1 Phase 1） ==================
+const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate', 'self_model'];
+const AEVUM_OWNERS = ['USER', 'RELATIONSHIP', 'AGENT', 'SYSTEM'];
+
+function validAevumConfidence(c) {
+  const conf = (c && typeof c === 'object') ? c : {};
+  const num = (v) => {
+    const n = Number(v);
+    return isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5;
+  };
+  return { evidence: num(conf.evidence), stability: num(conf.stability), importance: num(conf.importance) };
+}
+
+// 记忆列表：?type= &status= &owner= &q=
+app.get('/api/aevum', async (req, res) => {
+  try {
+    let q = supabase.from('aevum_memories').select('*').order('updated_at', { ascending: false }).limit(200);
+    if (AEVUM_TYPES.includes(req.query.type)) q = q.eq('type', req.query.type);
+    if (req.query.status) q = q.eq('status', req.query.status);
+    if (AEVUM_OWNERS.includes(req.query.owner)) q = q.eq('owner', req.query.owner);
+    if (req.query.q) q = q.ilike('content', `%${req.query.q}%`);
+    const { data, error } = await q;
+    if (error) return res.json({ memories: [] });
+    res.json({ memories: data || [] });
+  } catch (e) {
+    res.json({ memories: [] });
+  }
+});
+
+// 统计概览（Xylos 健康视角雏形）
+app.get('/api/aevum/stats', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('aevum_memories').select('type, status');
+    if (error) return res.json({ total: 0, byType: {}, byStatus: {} });
+    const byType = {};
+    const byStatus = {};
+    for (const m of data || []) {
+      byType[m.type] = (byType[m.type] || 0) + 1;
+      byStatus[m.status] = (byStatus[m.status] || 0) + 1;
+    }
+    res.json({ total: (data || []).length, byType, byStatus });
+  } catch (e) {
+    res.json({ total: 0, byType: {}, byStatus: {} });
+  }
+});
+
+// 单条记忆
+app.get('/api/aevum/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('aevum_memories').select('*').eq('id', req.params.id).single();
+    if (error) return res.status(404).json({ error: '未找到' });
+    res.json({ memory: data });
+  } catch (e) {
+    res.status(404).json({ error: '未找到' });
+  }
+});
+
+// 新增（默认进入候选队列）
+app.post('/api/aevum', async (req, res) => {
+  const { type, owner, content, confidence, evidence, tags, source, source_message_id, review_note } = req.body || {};
+  const text = String(content || '').trim();
+  if (!AEVUM_TYPES.includes(type)) return res.status(400).json({ error: '层级无效' });
+  if (!text) return res.status(400).json({ error: '内容不能为空' });
+  try {
+    const { data, error } = await supabase
+      .from('aevum_memories')
+      .insert({
+        type,
+        owner: AEVUM_OWNERS.includes(owner) ? owner : 'USER',
+        content: text,
+        status: 'candidate',
+        confidence: validAevumConfidence(confidence),
+        evidence: Array.isArray(evidence) ? evidence : [],
+        tags: Array.isArray(tags) ? tags.map(String) : [],
+        source: source ? String(source) : null,
+        source_message_id: source_message_id ? Number(source_message_id) : null,
+        review_note: review_note ? String(review_note) : null
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: '保存失败，请先执行 setup_aevum.sql' });
+    res.json({ ok: true, memory: data });
+  } catch (e) {
+    res.status(500).json({ error: '保存失败' });
+  }
+});
+
+// 修改
+app.put('/api/aevum/:id', async (req, res) => {
+  const { type, owner, content, confidence, evidence, tags, source, review_note } = req.body || {};
+  const patch = {};
+  if (AEVUM_TYPES.includes(type)) patch.type = type;
+  if (AEVUM_OWNERS.includes(owner)) patch.owner = owner;
+  if (content !== undefined) {
+    const text = String(content).trim();
+    if (!text) return res.status(400).json({ error: '内容不能为空' });
+    patch.content = text;
+  }
+  if (confidence !== undefined) patch.confidence = validAevumConfidence(confidence);
+  if (evidence !== undefined) patch.evidence = Array.isArray(evidence) ? evidence : [];
+  if (tags !== undefined) patch.tags = Array.isArray(tags) ? tags.map(String) : [];
+  if (source !== undefined) patch.source = source ? String(source) : null;
+  if (review_note !== undefined) patch.review_note = review_note ? String(review_note) : null;
+  patch.updated_at = new Date().toISOString();
+  try {
+    const { data, error } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, memory: data });
+  } catch (e) {
+    res.status(500).json({ error: '修改失败' });
+  }
+});
+
+// 审核：approve → active；reject → archived
+app.post('/api/aevum/:id/review', async (req, res) => {
+  const action = req.body?.action;
+  let status = null;
+  if (action === 'approve') status = 'active';
+  else if (action === 'reject') status = 'archived';
+  else return res.status(400).json({ error: '操作无效' });
+  try {
+    const { data, error } = await supabase
+      .from('aevum_memories')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, memory: data });
+  } catch (e) {
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// 删除 = 软归档
+app.delete('/api/aevum/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('aevum_memories')
+      .update({ status: 'archived', updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, memory: data });
+  } catch (e) {
+    res.status(500).json({ error: '归档失败' });
+  }
+});
+
 // ================== 朋友圈 API ==================
 
 // 发布动态
