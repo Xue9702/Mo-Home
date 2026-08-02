@@ -1659,7 +1659,7 @@ async function getRecentActionContext(limit = 4) {
   try {
     const { data, error } = await supabase
       .from('mo_actions')
-      .select('wake_number, action_date, note, actions, summary, created_at')
+      .select('*')
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error || !data || data.length === 0) return '';
