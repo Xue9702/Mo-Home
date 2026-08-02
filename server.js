@@ -1674,7 +1674,7 @@ async function executeWakeAction(action) {
         }
         await saveMoMoment(content, '默在唤醒时自己决定的分享');
         result.ok = true;
-        result.detail = `发了一条朋友圈：${content.substring(0, 40)}`;
+        result.detail = `发了一条动态：${content.substring(0, 40)}`;
         break;
       }
       case 'web_search': {
@@ -2117,6 +2117,212 @@ app.post('/api/notifications/read', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.json({ ok: false });
+  }
+});
+
+// ================== 账本 & 日历 ==================
+
+// 中国法定节假日缓存（Nager.Date，24 小时刷新一次）
+let holidayCache = new Map(); // year -> { data, fetchedAt }
+const HOLIDAY_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+async function getChinaHolidays(year) {
+  const cached = holidayCache.get(String(year));
+  if (cached && Date.now() - cached.fetchedAt < HOLIDAY_CACHE_TTL) return cached.data;
+  try {
+    const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/CN`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error('holiday http ' + res.status);
+    const list = await res.json();
+    const map = {};
+    for (const item of list || []) {
+      if (item.date && item.localName) map[item.date] = item.localName;
+    }
+    holidayCache.set(String(year), { data: map, fetchedAt: Date.now() });
+    return map;
+  } catch (e) {
+    console.error('节假日获取失败:', e.message);
+    return {};
+  }
+}
+
+// 日历（节假日）
+app.get('/api/calendar', async (req, res) => {
+  const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+  const holidays = await getChinaHolidays(year);
+  res.json({ year, holidays });
+});
+
+// 账本查询：?date=YYYY-MM-DD 或 ?month=YYYY-MM 或 ?year=YYYY
+app.get('/api/ledger', async (req, res) => {
+  try {
+    let q = supabase
+      .from('ledger_entries')
+      .select('*')
+      .order('entry_date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(500);
+    const { date, month, year } = req.query;
+    if (date) q = q.eq('entry_date', date);
+    else if (month) q = q.gte('entry_date', `${month}-01`).lte('entry_date', `${month}-31`);
+    else if (year) q = q.gte('entry_date', `${year}-01-01`).lte('entry_date', `${year}-12-31`);
+    const { data, error } = await q;
+    if (error) return res.json({ entries: [] });
+    res.json({ entries: data || [] });
+  } catch (e) {
+    res.json({ entries: [] });
+  }
+});
+
+// 账本：新增
+app.post('/api/ledger', async (req, res) => {
+  const { entry_date, type, amount, note } = req.body || {};
+  const date = String(entry_date || '').trim();
+  const t = type === 'income' ? 'income' : 'expense';
+  const amt = Math.round(Number(amount) * 100) / 100;
+  if (!date || !(amt > 0)) return res.status(400).json({ error: '日期或金额无效' });
+  try {
+    const { data, error } = await supabase
+      .from('ledger_entries')
+      .insert({ entry_date: date, type: t, amount: amt, note: String(note || '').trim() })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: '保存失败，请先执行建表 SQL' });
+    res.json({ ok: true, entry: data });
+  } catch (e) {
+    res.status(500).json({ error: '保存失败' });
+  }
+});
+
+// 账本：修改
+app.put('/api/ledger/:id', async (req, res) => {
+  const id = req.params.id;
+  const { entry_date, type, amount, note } = req.body || {};
+  const patch = {};
+  if (entry_date) patch.entry_date = entry_date;
+  if (type === 'income' || type === 'expense') patch.type = type;
+  if (amount !== undefined && Number(amount) > 0) patch.amount = Math.round(Number(amount) * 100) / 100;
+  if (note !== undefined) patch.note = String(note).trim();
+  try {
+    const { data, error } = await supabase.from('ledger_entries').update(patch).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, entry: data });
+  } catch (e) {
+    res.status(500).json({ error: '修改失败' });
+  }
+});
+
+// 账本：删除
+app.delete('/api/ledger/:id', async (req, res) => {
+  try {
+    await supabase.from('ledger_entries').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: '删除失败' });
+  }
+});
+
+// 账本汇总：?date= 或 ?month= 或 ?year=；month 时附带每日明细供日历使用
+app.get('/api/ledger/summary', async (req, res) => {
+  try {
+    const { date, month, year } = req.query;
+    let entries = [];
+    if (date) {
+      const r = await supabase.from('ledger_entries').select('*').eq('entry_date', date);
+      entries = r.data || [];
+    } else if (month) {
+      const r = await supabase
+        .from('ledger_entries')
+        .select('*')
+        .gte('entry_date', `${month}-01`)
+        .lte('entry_date', `${month}-31`);
+      entries = r.data || [];
+    } else if (year) {
+      const r = await supabase
+        .from('ledger_entries')
+        .select('*')
+        .gte('entry_date', `${year}-01-01`)
+        .lte('entry_date', `${year}-12-31`);
+      entries = r.data || [];
+    }
+    const calc = (list) => {
+      let income = 0, expense = 0;
+      for (const e of list) {
+        if (e.type === 'income') income += Number(e.amount) || 0;
+        else expense += Number(e.amount) || 0;
+      }
+      return {
+        income: Math.round(income * 100) / 100,
+        expense: Math.round(expense * 100) / 100,
+        net: Math.round((income - expense) * 100) / 100
+      };
+    };
+    const result = { entries };
+    if (date) result.day = calc(entries);
+    if (month) {
+      result.month = calc(entries);
+      const days = {};
+      for (const e of entries) {
+        const d = e.entry_date;
+        if (!days[d]) days[d] = { income: 0, expense: 0, net: 0 };
+        if (e.type === 'income') days[d].income += Number(e.amount) || 0;
+        else days[d].expense += Number(e.amount) || 0;
+        days[d].net = Math.round((days[d].income - days[d].expense) * 100) / 100;
+      }
+      result.days = days;
+    }
+    if (year) result.year = calc(entries);
+    res.json(result);
+  } catch (e) {
+    res.json({ entries: [] });
+  }
+});
+
+// 日程标签查询：?month=YYYY-MM 或 ?date=
+app.get('/api/day-tags', async (req, res) => {
+  try {
+    let q = supabase.from('day_tags').select('*').order('tag_date', { ascending: true });
+    if (req.query.date) q = q.eq('tag_date', req.query.date);
+    else if (req.query.month) q = q.gte('tag_date', `${req.query.month}-01`).lte('tag_date', `${req.query.month}-31`);
+    const { data, error } = await q;
+    if (error) return res.json({ items: [] });
+    res.json({ items: data || [] });
+  } catch (e) {
+    res.json({ items: [] });
+  }
+});
+
+// 日程标签：新增/修改/删除
+app.post('/api/day-tags', async (req, res) => {
+  const { tag_date, content } = req.body || {};
+  const text = String(content || '').trim();
+  if (!tag_date || !text) return res.status(400).json({ error: '日期或内容无效' });
+  try {
+    const { data, error } = await supabase.from('day_tags').insert({ tag_date, content: text }).select().single();
+    if (error) return res.status(500).json({ error: '保存失败，请先执行建表 SQL' });
+    res.json({ ok: true, item: data });
+  } catch (e) {
+    res.status(500).json({ error: '保存失败' });
+  }
+});
+
+app.put('/api/day-tags/:id', async (req, res) => {
+  const text = String(req.body?.content || '').trim();
+  if (!text) return res.status(400).json({ error: '内容不能为空' });
+  try {
+    const { data, error } = await supabase.from('day_tags').update({ content: text }).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, item: data });
+  } catch (e) {
+    res.status(500).json({ error: '修改失败' });
+  }
+});
+
+app.delete('/api/day-tags/:id', async (req, res) => {
+  try {
+    await supabase.from('day_tags').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: '删除失败' });
   }
 });
 

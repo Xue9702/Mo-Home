@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>账本 · Mo-Home</title>
+    <link rel="stylesheet" href="/fonts/lxgw-wenkai/lxgwwenkai-regular.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-en), var(--font-cn), sans-serif;
+            background-color: #ffffff;
+            min-height: 100vh;
+            padding-bottom: 100px;
+        }
+
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #fff;
+            border-bottom: 1px solid #eee;
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        .back-btn {
+            cursor: pointer;
+            color: #1e90ff;
+            font-size: 15px;
+            background: none;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            padding: 4px;
+            text-decoration: none;
+        }
+
+        .summary-row {
+            display: flex;
+            gap: 10px;
+            margin: 16px;
+        }
+
+        .summary-card {
+            flex: 1;
+            background: linear-gradient(135deg, #eaf4ff, #fdf2f6);
+            border: 1px solid #e9f0f7;
+            border-radius: 16px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .summary-card .period {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .summary-card .value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-top: 4px;
+        }
+
+        .summary-card .detail {
+            font-size: 11px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .add-box {
+            margin: 0 16px 16px;
+            padding: 14px;
+            border: 1px solid #e9e9e9;
+            border-radius: 16px;
+            background: #fafafa;
+        }
+
+        .add-box .row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .add-box input {
+            flex: 1;
+            border: 1px solid #e9e9e9;
+            border-radius: 10px;
+            padding: 8px 10px;
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            min-width: 0;
+        }
+
+        .type-toggle {
+            display: flex;
+            gap: 8px;
+        }
+
+        .type-toggle button {
+            flex: 1;
+            border: 1px solid #e9e9e9;
+            border-radius: 10px;
+            padding: 8px 0;
+            font-size: 14px;
+            cursor: pointer;
+            background: #fff;
+            color: #555;
+        }
+
+        .type-toggle button.on-expense {
+            background: #fff2f2;
+            color: #e74c3c;
+            border-color: #ffd5d5;
+        }
+
+        .type-toggle button.on-income {
+            background: #eafaf1;
+            color: #2ecc71;
+            border-color: #c8f0da;
+        }
+
+        .add-box .save-btn {
+            width: 100%;
+            border: none;
+            border-radius: 20px;
+            background: #1e90ff;
+            color: #fff;
+            padding: 10px 0;
+            font-size: 15px;
+            cursor: pointer;
+            margin-top: 4px;
+        }
+
+        .entry-list {
+            margin: 0 16px;
+        }
+
+        .entry-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 4px;
+            border-bottom: 1px solid #f3f3f3;
+            font-size: 14px;
+            color: #444;
+        }
+
+        .entry-item .date {
+            font-size: 12px;
+            color: #999;
+            width: 74px;
+            flex-shrink: 0;
+        }
+
+        .entry-item .note {
+            flex: 1;
+            word-break: break-all;
+        }
+
+        .entry-item .amount {
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .amount.income {
+            color: #2ecc71;
+        }
+
+        .amount.expense {
+            color: #e74c3c;
+        }
+
+        .entry-item .ops {
+            display: flex;
+            gap: 8px;
+            color: #bbb;
+            font-size: 13px;
+        }
+
+        .entry-item .ops span {
+            cursor: pointer;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #ccc;
+            padding: 40px 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <a class="back-btn" href="/" aria-label="返回">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="m15 18-6-6 6-6" />
+            </svg>
+        </a>
+        <h1>账本</h1>
+        <div></div>
+    </div>
+
+    <!-- 汇总 -->
+    <div class="summary-row" id="summaryRow"></div>
+
+    <!-- 记一笔 -->
+    <div class="add-box">
+        <div class="row">
+            <input type="date" id="entryDate">
+            <input type="number" id="entryAmount" step="0.01" placeholder="金额（¥）" inputmode="decimal">
+        </div>
+        <div class="row">
+            <input id="entryNote" placeholder="备注，比如：🧋今日份的快乐奶茶~" style="flex:1;">
+        </div>
+        <div class="type-toggle" id="typeToggle">
+            <button id="typeExpense" onclick="setType('expense')">支出</button>
+            <button id="typeIncome" onclick="setType('income')">收入</button>
+        </div>
+        <button class="save-btn" onclick="addEntry()">记一笔</button>
+    </div>
+
+    <!-- 明细 -->
+    <div class="entry-list" id="entryList"></div>
+
+    <script>
+        let currentType = 'expense';
+        document.getElementById('entryDate').value = new Date().toISOString().slice(0, 10);
+
+        function setType(t) {
+            currentType = t;
+            document.getElementById('typeExpense').className = t === 'expense' ? 'on-expense' : '';
+            document.getElementById('typeIncome').className = t === 'income' ? 'on-income' : '';
+        }
+
+        function money(v) {
+            return (Math.round(Number(v) * 100) / 100).toFixed(2);
+        }
+
+        async function loadAll() {
+            const today = new Date().toISOString().slice(0, 10);
+            const month = today.slice(0, 7);
+            const year = today.slice(0, 4);
+            const [sumRes, entriesRes] = await Promise.all([
+                fetch(`/api/ledger/summary?date=${today}&month=${month}&year=${year}`),
+                fetch(`/api/ledger?year=${year}`)
+            ]);
+            const sum = await sumRes.json();
+            const entries = (await entriesRes.json()).entries || [];
+
+            const ZERO = { income: 0, expense: 0, net: 0 };
+            const card = (period, s) => `
+                <div class="summary-card">
+                    <div class="period">${period}</div>
+                    <div class="value">${money(s.net)}</div>
+                    <div class="detail">收 ${money(s.income)} · 支 ${money(s.expense)}</div>
+                </div>`;
+            document.getElementById('summaryRow').innerHTML =
+                card('今日', sum.day || ZERO) +
+                card('本月', sum.month || ZERO) +
+                card('本年', sum.year || ZERO);
+
+            const list = document.getElementById('entryList');
+            if (!entries.length) {
+                list.innerHTML = '<div class="empty-state">还没有账目，记下第一笔吧~</div>';
+                return;
+            }
+            list.innerHTML = entries.map(e => `
+                <div class="entry-item">
+                    <span class="date">${e.entry_date}</span>
+                    <span class="note">${escapeHtml(e.note || '')}</span>
+                    <span class="amount ${e.type}">${e.type === 'income' ? '+' : '-'}${money(e.amount)}¥</span>
+                    <span class="ops">
+                        <span onclick="editEntry(${e.id})">✎</span>
+                        <span onclick="deleteEntry(${e.id})">✕</span>
+                    </span>
+                </div>`).join('');
+        }
+
+        async function addEntry() {
+            const entry_date = document.getElementById('entryDate').value;
+            const amount = parseFloat(document.getElementById('entryAmount').value);
+            const note = document.getElementById('entryNote').value.trim();
+            if (!entry_date || !(amount > 0)) { alert('请填写日期和金额'); return; }
+            const res = await fetch('/api/ledger', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entry_date, type: currentType, amount, note })
+            });
+            if (!res.ok) { alert('保存失败，请确认已执行建表 SQL'); return; }
+            document.getElementById('entryAmount').value = '';
+            document.getElementById('entryNote').value = '';
+            loadAll();
+        }
+
+        async function editEntry(id) {
+            const note = prompt('修改备注：');
+            if (note === null) return;
+            const amount = parseFloat(prompt('修改金额：'));
+            const type = confirm('确认是收入吗？（确定=收入，取消=支出）') ? 'income' : 'expense';
+            if (!(amount > 0)) { alert('金额无效'); return; }
+            await fetch('/api/ledger/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ note: note.trim(), amount, type })
+            });
+            loadAll();
+        }
+
+        async function deleteEntry(id) {
+            if (!confirm('删除这笔记录？')) return;
+            await fetch('/api/ledger/' + id, { method: 'DELETE' });
+            loadAll();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        loadAll();
+    </script>
+</body>
+
+</html>

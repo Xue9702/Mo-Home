@@ -1085,11 +1085,14 @@
         moHomeIcon.innerHTML = '';
         moHomeIcon.appendChild(createHouseIcon(activePage === 'moHomePage'));
         togetherIcon.innerHTML = '';
-        togetherIcon.appendChild(createOrbitIcon());
+        const orbit = createOrbitIcon();
+        orbit.setAttribute('width', '24');
+        orbit.setAttribute('height', '24');
+        togetherIcon.appendChild(orbit);
         chatIcon.innerHTML = '';
         chatIcon.appendChild(createChatIcon(activePage === 'chatPage'));
         memoryIcon.innerHTML = '';
-        memoryIcon.appendChild(createBookIcon());
+        memoryIcon.appendChild(createSparkleIcon(activePage === 'memoryPage'));
         xueHomeIcon.innerHTML = '';
         xueHomeIcon.appendChild(createHeartBigIcon(activePage === 'xueHomePage'));
       }
@@ -1317,7 +1320,7 @@
       }
       window.savePrompt = savePrompt;
 
-      // 在 together 页面渲染天气卡片与朋友圈入口
+      // 在 together 页面渲染天气 + 日历 + 动态/账本入口
       function renderTogetherPage() {
         const homeContent = togetherPage.querySelector('.home-content');
         if (!homeContent) return;
@@ -1330,29 +1333,202 @@
         weatherCard.innerHTML = '<div class="weather-loading">天气加载中…</div>';
         homeContent.appendChild(weatherCard);
 
-        // 朋友圈卡片
-        const card = document.createElement('div');
-        card.className = 'feature-card';
-        card.style.cursor = 'pointer'; // 鼠标变成手型，提示可点击
-        card.onclick = () => {
-          window.location.href = '/moments.html'; // 跳转到朋友圈页面
+        // 日历卡片
+        const calendarCard = document.createElement('div');
+        calendarCard.className = 'feature-card';
+        calendarCard.style.alignItems = 'stretch';
+        calendarCard.style.textAlign = 'left';
+        calendarCard.id = 'calendarCard';
+        calendarCard.innerHTML = '<div class="weather-loading">日历加载中…</div>';
+        homeContent.appendChild(calendarCard);
+
+        // 动态 + 账本 一行
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:12px;';
+        const makeEntryCard = (iconEl, label, onClick) => {
+          const c = document.createElement('div');
+          c.className = 'feature-card';
+          c.style.flex = '1';
+          c.style.cursor = 'pointer';
+          c.onclick = onClick;
+          const iconSpan = document.createElement('span');
+          iconSpan.className = 'card-icon';
+          iconSpan.appendChild(iconEl);
+          const titleSpan = document.createElement('span');
+          titleSpan.style.fontSize = '14px';
+          titleSpan.style.color = '#333';
+          titleSpan.textContent = label;
+          c.appendChild(iconSpan);
+          c.appendChild(titleSpan);
+          return c;
         };
-
-        const iconSpan = document.createElement('span');
-        iconSpan.className = 'card-icon';
-        iconSpan.appendChild(createOrbitIcon());
-
-        const titleSpan = document.createElement('span');
-        titleSpan.style.fontSize = '14px';
-        titleSpan.style.color = '#333';
-        titleSpan.textContent = '朋友圈';
-
-        card.appendChild(iconSpan);
-        card.appendChild(titleSpan);
-        homeContent.appendChild(card);
+        row.appendChild(makeEntryCard(createPizzaIcon(), '动态', () => { window.location.href = '/moments.html'; }));
+        row.appendChild(makeEntryCard(createReceiptTextIcon(), '账本', () => { window.location.href = '/ledger.html'; }));
+        homeContent.appendChild(row);
 
         loadHomeWeather();
+        renderCalendar();
       }
+
+      // ---------- 日历（节假日 + 当天收支 + 日程标签） ----------
+      let calendarState = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, selected: null };
+      let calendarCache = { holidays: {}, monthSummary: { days: {} }, dayTags: [] };
+
+      async function loadCalendarData() {
+        const y = calendarState.year;
+        const m = String(calendarState.month).padStart(2, '0');
+        try {
+          const [holRes, sumRes, tagRes] = await Promise.all([
+            fetch(`/api/calendar?year=${y}`),
+            fetch(`/api/ledger/summary?month=${y}-${m}`),
+            fetch(`/api/day-tags?month=${y}-${m}`)
+          ]);
+          calendarCache.holidays = (await holRes.json()).holidays || {};
+          calendarCache.monthSummary = await sumRes.json();
+          calendarCache.dayTags = (await tagRes.json()).items || [];
+        } catch (e) {
+          calendarCache = { holidays: {}, monthSummary: { days: {} }, dayTags: [] };
+        }
+      }
+
+      async function renderCalendar() {
+        const card = document.getElementById('calendarCard');
+        if (!card) return;
+        card.innerHTML = '<div class="weather-loading">日历加载中…</div>';
+        await loadCalendarData();
+        const y = calendarState.year;
+        const m = calendarState.month;
+        const first = new Date(y, m - 1, 1);
+        const daysInMonth = new Date(y, m, 0).getDate();
+        const startWeekday = first.getDay(); // 0=周日
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const monthStr = `${y}-${String(m).padStart(2, '0')}`;
+        const daysData = calendarCache.monthSummary.days || {};
+        const tagsByDay = {};
+        (calendarCache.dayTags || []).forEach(t => { if (t.tag_date) tagsByDay[t.tag_date] = t; });
+
+        let html = `
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px;">
+            <button onclick="calendarPrevMonth()" style="border:none;background:none;font-size:16px;cursor:pointer;color:#1e90ff;">‹</button>
+            <span style="font-size:15px;font-weight:600;color:#333;">${y} 年 ${m} 月</span>
+            <button onclick="calendarNextMonth()" style="border:none;background:none;font-size:16px;cursor:pointer;color:#1e90ff;">›</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;font-size:12px;color:#999;margin-bottom:4px;">
+            ${['日','一','二','三','四','五','六'].map(d => `<div>${d}</div>`).join('')}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;">`;
+        for (let i = 0; i < startWeekday; i++) html += '<div></div>';
+        for (let d = 1; d <= daysInMonth; d++) {
+          const ds = `${monthStr}-${String(d).padStart(2, '0')}`;
+          const isToday = ds === todayStr;
+          const holiday = calendarCache.holidays[ds];
+          const daySum = daysData[ds];
+          const tag = tagsByDay[ds];
+          const isSel = calendarState.selected === ds;
+          html += `
+            <div onclick="calendarSelectDay('${ds}')"
+              style="cursor:pointer;padding:6px 0;border-radius:8px;${isSel ? 'background:#eaf4ff;' : isToday ? 'background:#fff3d6;' : ''}">
+              <div style="font-size:14px;color:${isToday ? '#1e90ff' : '#333'};font-weight:${isToday ? '600' : '400'};">${d}</div>
+              <div style="font-size:10px;color:#e67e22;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${holiday || ''}</div>
+              <div style="font-size:10px;color:${(daySum && daySum.net < 0) ? '#e74c3c' : '#2ecc71'};">${daySum && daySum.net !== 0 ? (daySum.net > 0 ? '+' : '') + daySum.net : ''}</div>
+              ${tag ? '<div style="font-size:10px;color:#1e90ff;">✦</div>' : ''}
+            </div>`;
+        }
+        html += '</div>';
+
+        // 选中日的展开面板
+        if (calendarState.selected) {
+          const sel = calendarState.selected;
+          const dayEntries = (calendarCache.monthSummary.entries || []).filter(e => e.entry_date === sel);
+          const daySum = daysData[sel] || { income: 0, expense: 0, net: 0 };
+          const selTag = tagsByDay[sel];
+          html += `
+            <div id="calendarDayPanel" style="margin-top:10px;border-top:1px solid #f0f0f0;padding-top:10px;font-size:13px;color:#555;">
+              <div style="font-weight:600;color:#333;margin-bottom:6px;">${sel} 的收支</div>
+              <div style="font-size:12px;color:#888;margin-bottom:8px;">收入 +${daySum.income} · 支出 -${daySum.expense} · 净 ${daySum.net >= 0 ? '+' : ''}${daySum.net}</div>
+              ${dayEntries.length ? dayEntries.map(e => `
+                <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f6f6f6;">
+                  <span style="color:${e.type === 'income' ? '#2ecc71' : '#e74c3c'};">${e.type === 'income' ? '+' : '-'}${e.amount}¥</span>
+                  <span style="flex:1;word-break:break-all;">${escapeHtml2(e.note || '')}</span>
+                  <span onclick="deleteLedgerEntry(${e.id})" style="cursor:pointer;color:#ccc;">✕</span>
+                </div>`).join('') : '<div style="color:#bbb;font-size:12px;">这一天还没有记录</div>'}
+              <div style="display:flex;gap:6px;margin-top:8px;">
+                <input id="calAmount" type="number" step="0.01" placeholder="金额" style="width:70px;border:1px solid #e9e9e9;border-radius:8px;padding:6px;font-size:13px;">
+                <input id="calNote" placeholder="备注（比如：今日份的快乐奶茶）" style="flex:1;border:1px solid #e9e9e9;border-radius:8px;padding:6px;font-size:13px;">
+                <button onclick="calendarAddLedger('expense')" style="border:none;border-radius:8px;background:#fff2f2;color:#e74c3c;padding:6px 12px;cursor:pointer;font-size:13px;">支出</button>
+                <button onclick="calendarAddLedger('income')" style="border:none;border-radius:8px;background:#eafaf1;color:#2ecc71;padding:6px 12px;cursor:pointer;font-size:13px;">收入</button>
+              </div>
+              <div style="margin-top:10px;border-top:1px dashed #eee;padding-top:8px;">
+                <div style="font-size:12px;color:#888;margin-bottom:4px;">这一天的小标签</div>
+                ${selTag
+                  ? `<div style="display:flex;align-items:center;gap:8px;background:#f7f9ff;border-radius:8px;padding:8px 10px;color:#1e90ff;">
+                       ${escapeHtml2(selTag.content)}
+                       <span style="margin-left:auto;cursor:pointer;color:#ccc;" onclick="editDayTag(${selTag.id},'${sel}')">✎</span>
+                       <span style="cursor:pointer;color:#ccc;" onclick="deleteDayTag(${selTag.id},'${sel}')">✕</span>
+                     </div>`
+                  : `<input id="calTagInput" placeholder="写一句今天的小标签，比如：今天把日历也带进小屋啦~" style="width:100%;border:1px solid #e9e9e9;border-radius:8px;padding:6px;font-size:13px;box-sizing:border-box;">
+                     <button onclick="saveDayTag('${sel}')" style="margin-top:6px;border:none;border-radius:8px;background:#1e90ff;color:#fff;padding:6px 14px;cursor:pointer;font-size:13px;">保存标签</button>`}
+              </div>
+            </div>`;
+        }
+        card.innerHTML = html;
+      }
+
+      window.calendarPrevMonth = () => {
+        calendarState.month--;
+        if (calendarState.month < 1) { calendarState.month = 12; calendarState.year--; }
+        calendarState.selected = null;
+        renderCalendar();
+      };
+      window.calendarNextMonth = () => {
+        calendarState.month++;
+        if (calendarState.month > 12) { calendarState.month = 1; calendarState.year++; }
+        calendarState.selected = null;
+        renderCalendar();
+      };
+      window.calendarSelectDay = (ds) => {
+        calendarState.selected = calendarState.selected === ds ? null : ds;
+        renderCalendar();
+      };
+      window.calendarAddLedger = async (type) => {
+        const amount = parseFloat(document.getElementById('calAmount').value);
+        const note = document.getElementById('calNote').value.trim();
+        if (!(amount > 0)) { alert('请输入金额'); return; }
+        await fetch('/api/ledger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entry_date: calendarState.selected, type, amount, note })
+        });
+        renderCalendar();
+      };
+      window.deleteLedgerEntry = async (id) => {
+        await fetch('/api/ledger/' + id, { method: 'DELETE' });
+        renderCalendar();
+      };
+      window.saveDayTag = async (ds) => {
+        const content = document.getElementById('calTagInput').value.trim();
+        if (!content) return;
+        await fetch('/api/day-tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tag_date: ds, content })
+        });
+        renderCalendar();
+      };
+      window.editDayTag = async (id, ds) => {
+        const content = prompt('修改这一天的小标签：');
+        if (!content || !content.trim()) return;
+        await fetch('/api/day-tags/' + id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: content.trim() })
+        });
+        renderCalendar();
+      };
+      window.deleteDayTag = async (id, ds) => {
+        await fetch('/api/day-tags/' + id, { method: 'DELETE' });
+        renderCalendar();
+      };
 
       // 加载天气到小屋页面（城市保存在浏览器本地，默认晋江）
       async function loadHomeWeather() {
@@ -1414,12 +1590,11 @@
           const [stateRes, actionsRes, diaryRes] = await Promise.all([
             fetch('/api/home-state'),
             fetch('/api/actions'),
-            fetch('/api/diary?author=xue&limit=20')
+            fetch('/api/diary?author=mo&limit=20')
           ]);
           const state = await stateRes.json();
           const actions = (await actionsRes.json()).entries || [];
-          const diary = (await diaryRes.json()).entries || [];
-          const unreadCount = diary.filter(d => !d.mo_read).length;
+          const moDiary = (await diaryRes.json()).entries || [];
 
           const moodBar = (v) => `
             <div style="height:8px;border-radius:4px;background:#eef0f3;overflow:hidden;margin-top:6px;">
@@ -1434,13 +1609,12 @@
               <div style="font-size:13px;color:#666;margin-top:10px;">今日唤醒：${state.today_wakes} 次 · 每次体力 ${state.today_energy} 点</div>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">雪的日记足迹</div>
-              ${diary.length ? diary.slice(0, 10).map(d => `
-                <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#666;padding:3px 0;">
-                  <span>${escapeHtml2(d.entry_date || '未标注日期')}</span>
-                  <span style="margin-left:auto;font-size:12px;${d.mo_read ? 'color:#aaa;' : 'color:#1e90ff;'}">${d.mo_read ? '已读' : '未读'}</span>
-                </div>`).join('') : '<div style="font-size:13px;color:#bbb;">还没有日记</div>'}
-              ${unreadCount > 0 ? `<div style="font-size:12px;color:#1e90ff;margin-top:6px;">还有 ${unreadCount} 天没读</div>` : ''}
+              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">默的日记</div>
+              ${moDiary.length ? moDiary.map(d => `
+                <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f3f3f3;">
+                  <span style="color:#999;">${escapeHtml2(d.entry_date || '未标注日期')}</span>
+                  <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content.length > 120 ? d.content.substring(0, 120) + '…' : d.content)}</div>
+                </div>`).join('') : '<div style="font-size:13px;color:#bbb;">默还没写过日记</div>'}
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">行动日志</div>
@@ -1891,6 +2065,59 @@
         const p = document.createElementNS(svgNS, 'path');
         p.setAttribute('d', 'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z');
         svg.appendChild(p);
+        return svg;
+      }
+
+      // 记忆标签图标：未选中 sparkle，选中 sparkles
+      function createSparkleIcon(active) {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '24'); svg.setAttribute('height', '24');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z');
+        svg.appendChild(p1);
+        if (active) {
+          const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'M20 3v4'); svg.appendChild(p2);
+          const p3 = document.createElementNS(svgNS, 'path'); p3.setAttribute('d', 'M22 5h-4'); svg.appendChild(p3);
+          const p4 = document.createElementNS(svgNS, 'path'); p4.setAttribute('d', 'M4 17v2'); svg.appendChild(p4);
+          const p5 = document.createElementNS(svgNS, 'path'); p5.setAttribute('d', 'M5 18H3'); svg.appendChild(p5);
+        }
+        return svg;
+      }
+
+      // 动态图标（披萨）
+      function createPizzaIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '32'); svg.setAttribute('height', '32');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path'); p1.setAttribute('d', 'm2 16 20 6-6-20A20 20 0 0 0 2 16'); svg.appendChild(p1);
+        const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'M5.8 2.8A16.9 16.9 0 0 1 22 10'); svg.appendChild(p2);
+        const c1 = document.createElementNS(svgNS, 'circle'); c1.setAttribute('cx', '9'); c1.setAttribute('cy', '15'); c1.setAttribute('r', '1'); svg.appendChild(c1);
+        const c2 = document.createElementNS(svgNS, 'circle'); c2.setAttribute('cx', '7'); c2.setAttribute('cy', '11'); c2.setAttribute('r', '1'); svg.appendChild(c2);
+        const c3 = document.createElementNS(svgNS, 'circle'); c3.setAttribute('cx', '12'); c3.setAttribute('cy', '12'); c3.setAttribute('r', '1'); svg.appendChild(c3);
+        return svg;
+      }
+
+      // 账本图标（小票）
+      function createReceiptTextIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '32'); svg.setAttribute('height', '32');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z');
+        svg.appendChild(p1);
+        const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'M14 8H8'); svg.appendChild(p2);
+        const p3 = document.createElementNS(svgNS, 'path'); p3.setAttribute('d', 'M16 12H8'); svg.appendChild(p3);
+        const p4 = document.createElementNS(svgNS, 'path'); p4.setAttribute('d', 'M13 16H8'); svg.appendChild(p4);
         return svg;
       }
 
