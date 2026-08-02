@@ -902,6 +902,7 @@
     #tabIndicator {
       position: absolute;
       top: 50%;
+      left: 0;
       transform: translateY(-50%);
       height: 40px;
       border-radius: 20px;
@@ -966,11 +967,18 @@
       box-shadow: inset 0 1px 3px rgba(180, 140, 190, 0.08);
     }
 
-    .attach-btn,
+    #attachBtn,
     #sendBtn {
       background: #ffdde6;
-      color: #e1789a;
       box-shadow: 0 4px 14px rgba(240, 170, 190, 0.28);
+    }
+
+    #sendBtn {
+      color: #ffffff;
+    }
+
+    #attachBtn {
+      color: #d96a8e;
     }
 
     #sendBtn:active {
@@ -983,6 +991,7 @@
 
     .message.assistant .bubble {
       background: #ffffff;
+      color: #2b2438;
       border: 1px solid rgba(255, 255, 255, 0.9);
       box-shadow: 0 4px 16px rgba(180, 140, 190, 0.1);
     }
