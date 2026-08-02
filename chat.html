@@ -2140,11 +2140,18 @@
         svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
         svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
         svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        const p1 = document.createElementNS(svgNS, 'path'); p1.setAttribute('d', 'm2 16 20 6-6-20A20 20 0 0 0 2 16'); svg.appendChild(p1);
-        const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'M5.8 2.8A16.9 16.9 0 0 1 22 10'); svg.appendChild(p2);
-        const c1 = document.createElementNS(svgNS, 'circle'); c1.setAttribute('cx', '9'); c1.setAttribute('cy', '15'); c1.setAttribute('r', '1'); svg.appendChild(c1);
-        const c2 = document.createElementNS(svgNS, 'circle'); c2.setAttribute('cx', '7'); c2.setAttribute('cy', '11'); c2.setAttribute('r', '1'); svg.appendChild(c2);
-        const c3 = document.createElementNS(svgNS, 'circle'); c3.setAttribute('cx', '12'); c3.setAttribute('cy', '12'); c3.setAttribute('r', '1'); svg.appendChild(c3);
+        const paths = [
+          'm12 14-1 1',
+          'm13.75 18.25-1.25 1.42',
+          'M17.775 5.654a15.68 15.68 0 0 0-12.121 12.12',
+          'M18.8 9.3a1 1 0 0 0 2.1 7.7',
+          'M21.964 20.732a1 1 0 0 1-1.232 1.232l-18-5a1 1 0 0 1-.695-1.232A19.68 19.68 0 0 1 15.732 2.037a1 1 0 0 1 1.232.695z'
+        ];
+        paths.forEach(d => {
+          const p = document.createElementNS(svgNS, 'path');
+          p.setAttribute('d', d);
+          svg.appendChild(p);
+        });
         return svg;
       }
 

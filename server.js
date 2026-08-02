@@ -982,6 +982,9 @@ app.post('/api/chat', async (req, res) => {
     } catch (memErr) {
       console.error('记忆检索失败:', memErr.message);
     }
+    // 默读过的雪日记稳定注入，保证聊天窗口的他记得
+    const readDiaryContext = await getReadDiaryContext();
+    if (readDiaryContext) memoryContext += readDiaryContext;
 
     // 构建动态的 System Prompt
     const momentsContext = await getMomentsContext();
@@ -1325,6 +1328,8 @@ app.post('/api/regenerate', async (req, res) => {
     } catch (memErr) {
       console.error('记忆检索失败:', memErr.message);
     }
+    const readDiaryContext = await getReadDiaryContext();
+    if (readDiaryContext) memoryContext += readDiaryContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
@@ -1610,6 +1615,26 @@ async function getUnreadDiaryDates() {
       .filter((v, i, a) => a.indexOf(v) === i);
   } catch (e) {
     return [];
+  }
+}
+
+// 默读过的雪日记（稳定注入聊天上下文，保证聊天窗口的默也记得）
+async function getReadDiaryContext() {
+  try {
+    const { data, error } = await supabase
+      .from('diary_entries')
+      .select('entry_date, content')
+      .eq('author', 'xue')
+      .eq('mo_read', true)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (error || !data || data.length === 0) return '';
+    const lines = data
+      .map(d => `- ${d.entry_date || '某一天'}：${d.content}`)
+      .join('\n');
+    return `\n\n【默读过的雪日记】\n${lines}`;
+  } catch (e) {
+    return '';
   }
 }
 
@@ -2058,7 +2083,9 @@ async function executeMenuOption(optionId, args, ctx) {
       await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
       try {
         await callOmbreTool('hold', { content: `雪的日记（${entry.entry_date || '某一天'}）：${entry.content}` });
-      } catch (memErr) { /* ignore */ }
+      } catch (memErr) {
+        console.error('日记写入记忆失败:', memErr.message);
+      }
       const remaining = (await getUnreadDiaryDates()).length;
       return { outcome: `你读了她 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`, energyDelta: 1, nextNode: ctx.node };
     }
@@ -3118,6 +3145,8 @@ app.post('/api/edit-message', async (req, res) => {
     } catch (memErr) {
       console.error('记忆检索失败:', memErr.message);
     }
+    const readDiaryContext = await getReadDiaryContext();
+    if (readDiaryContext) memoryContext += readDiaryContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
