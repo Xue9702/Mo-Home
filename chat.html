@@ -816,9 +816,9 @@
       --pb-blue: #8ec5ff;
       --pb-grad: linear-gradient(135deg, #ff9db4, #7fb8ff);
       --pb-grad-soft: linear-gradient(135deg, #ffe3ec, #dcebff);
-      --glass-bg: rgba(255, 255, 255, 0.58);
-      --glass-border: rgba(255, 255, 255, 0.75);
-      --glass-shadow: 0 8px 28px rgba(180, 140, 190, 0.16);
+      --glass-bg: rgba(255, 255, 255, 0.32);
+      --glass-border: rgba(255, 255, 255, 0.92);
+      --glass-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.85), 0 8px 28px rgba(180, 140, 190, 0.12);
     }
 
     body {
@@ -885,19 +885,38 @@
     }
 
     .tab-bar {
-      background: rgba(255, 255, 255, 0.55);
+      position: relative;
+      background: rgba(255, 255, 255, 0.5);
       backdrop-filter: blur(20px) saturate(170%);
       -webkit-backdrop-filter: blur(20px) saturate(170%);
-      border: 1px solid var(--glass-border);
-      border-radius: 26px;
-      margin: 0 14px 12px;
-      padding: 6px 4px;
-      box-shadow: 0 8px 28px rgba(180, 140, 190, 0.18);
+      border: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.75);
+      border-radius: 0;
+      margin: 0;
+      padding: 8px 0;
+      box-shadow: 0 -4px 20px rgba(180, 140, 190, 0.08);
       width: auto;
     }
 
+    /* 底部导航滑动粉色底框 */
+    #tabIndicator {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      height: 40px;
+      border-radius: 20px;
+      background: #ff9eb5;
+      box-shadow: 0 4px 14px rgba(255, 158, 181, 0.4);
+      transition: transform 0.28s ease, width 0.28s ease;
+      z-index: 0;
+    }
+
+    .tab-btn {
+      z-index: 1;
+    }
+
     .tab-btn.active .tab-icon {
-      color: #e1789a;
+      color: #ffffff;
     }
 
     .feature-card,
@@ -930,10 +949,14 @@
     }
 
     #inputArea {
+      margin: 0 10px 10px;
+      padding: 8px 10px;
+      border-radius: 24px;
       background: rgba(255, 255, 255, 0.5);
       backdrop-filter: blur(18px) saturate(160%);
       -webkit-backdrop-filter: blur(18px) saturate(160%);
-      border-top: 1px solid rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.92);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7), 0 8px 28px rgba(180, 140, 190, 0.12);
     }
 
     #userInput {
@@ -945,30 +968,34 @@
 
     .attach-btn,
     #sendBtn {
-      background: var(--pb-grad);
-      color: #fff;
-      box-shadow: 0 4px 14px rgba(240, 130, 160, 0.35);
+      background: #ffdde6;
+      color: #e1789a;
+      box-shadow: 0 4px 14px rgba(240, 170, 190, 0.28);
+    }
+
+    #sendBtn:active {
+      background: #ffc9d8;
+    }
+
+    #sendBtn:active svg {
+      fill: none;
     }
 
     .message.assistant .bubble {
-      background: rgba(255, 255, 255, 0.66);
-      backdrop-filter: blur(12px) saturate(150%);
-      -webkit-backdrop-filter: blur(12px) saturate(150%);
-      border: 1px solid rgba(255, 255, 255, 0.8);
-      box-shadow: 0 4px 16px rgba(180, 140, 190, 0.12);
+      background: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      box-shadow: 0 4px 16px rgba(180, 140, 190, 0.1);
     }
 
     .message.user .bubble {
-      background: var(--pb-grad);
-      color: #fff;
-      box-shadow: 0 4px 16px rgba(240, 130, 160, 0.3);
+      background: #ffdde6;
+      color: #8a4a58;
+      box-shadow: 0 4px 16px rgba(240, 170, 190, 0.22);
     }
 
     .thinking-content {
-      background: rgba(255, 255, 255, 0.5);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.7);
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.9);
     }
 
     .timestamp {
@@ -1166,6 +1193,7 @@
 
     <!-- 底部状态栏 -->
     <div class="tab-bar" id="tabBar">
+      <div id="tabIndicator"></div>
       <button class="tab-btn" data-page="moHomePage" aria-label="默的小屋">
         <span class="tab-icon" id="moHomeIcon"></span>
       </button>
@@ -1282,6 +1310,7 @@
 
         // 刷新所有底部图标
         renderTabIcons(pageName);
+        updateTabIndicator();
 
         // 如果切换到设置页面，初始化图标（延迟 50ms 确保 DOM 就位）
         if (pageName === 'settingsPage') {
@@ -1315,6 +1344,15 @@
         memoryIcon.appendChild(createSparkleIcon(activePage === 'memoryPage'));
         xueHomeIcon.innerHTML = '';
         xueHomeIcon.appendChild(createHeartBigIcon(activePage === 'xueHomePage'));
+      }
+
+      // 让粉色底框跟随当前激活的标签滑动
+      function updateTabIndicator() {
+        const ind = document.getElementById('tabIndicator');
+        const active = tabBar.querySelector('.tab-btn.active');
+        if (!ind || !active) return;
+        ind.style.width = active.offsetWidth + 'px';
+        ind.style.transform = `translate(${active.offsetLeft}px, -50%)`;
       }
 
       // 聊天页左上角设置入口（再点一次回到之前的页面）
@@ -2125,6 +2163,38 @@
         const path = document.createElementNS(svgNS, 'path');
         path.setAttribute('d', 'M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5');
         svg.appendChild(path);
+        return svg;
+      }
+
+      // 发送图标（纸飞机）
+      function createSendIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        svg.style.verticalAlign = 'middle';
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z');
+        svg.appendChild(p1);
+        const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'm21.854 2.147-10.94 10.939'); svg.appendChild(p2);
+        return svg;
+      }
+
+      // 设置入口图标（三横线菜单）
+      function createMenuIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '22'); svg.setAttribute('height', '22');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        ['M4 5h16', 'M4 12h16', 'M4 19h16'].forEach(d => {
+          const p = document.createElementNS(svgNS, 'path');
+          p.setAttribute('d', d);
+          svg.appendChild(p);
+        });
         return svg;
       }
 
@@ -3215,11 +3285,11 @@
 
       // 标题栏设置图标
       if (headerSettingsBtn && !headerSettingsBtn.hasChildNodes()) {
-        headerSettingsBtn.appendChild(createSettingsIcon(false));
+        headerSettingsBtn.appendChild(createMenuIcon());
       }
 
       unlockBtn.addEventListener('click', () => {
-        if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; loadHistory(); userInput.focus(); loginError.style.display = 'none'; setInterval(pollNotifications, 25000); }
+        if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; loadHistory(); userInput.focus(); loginError.style.display = 'none'; setInterval(pollNotifications, 25000); setTimeout(() => updateTabIndicator(), 80); }
         else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
       });
       passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); } });
@@ -3256,7 +3326,7 @@
       }
 
       // 发送按钮：心形图标
-      sendBtn.appendChild(createSendHeartIcon());
+      sendBtn.appendChild(createSendIcon());
 
       // 加号按钮：从底部升起附件弹层
       attachBtn.appendChild(createPlusIcon());
