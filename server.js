@@ -2208,24 +2208,9 @@ app.post('/api/shadow-push', async (req, res) => {
       }
     }
 
-    // 4. 每日上限检查（4 次 = 当天 is_push 消息数 + 当天行动日志数）
-    const todayStart = new Date(timeInfo.now);
-    todayStart.setHours(0, 0, 0, 0);
-    const { count: todayPushCount, error: countError } = await supabase
-      .from('messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('session_id', 1)
-      .eq('is_push', true)
-      .gte('created_at', todayStart.toISOString());
-
-    if (countError) {
-      console.error('查询推送计数失败:', countError);
-      isPushInProgress = false;
-      return res.status(500).json({ error: '计数查询失败' });
-    }
-
+    // 4. 每日上限检查（只按行动日志计唤醒次数，避免旧系统推送消息干扰计数）
     const todayLogs = await getTodayActionLog(dateStr);
-    const wakeNumber = (todayPushCount || 0) + todayLogs.length + 1;
+    const wakeNumber = todayLogs.length + 1;
     if (wakeNumber > PUSH_DAILY_LIMIT) {
       console.log(`📊 今日唤醒已达上限 ${PUSH_DAILY_LIMIT} 次`);
       isPushInProgress = false;
