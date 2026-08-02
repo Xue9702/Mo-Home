@@ -1581,7 +1581,22 @@
       }
       window.switchHomeCity = switchHomeCity;
 
-      // 默的小屋：心情 + 今日行动 + 行动日志时间线
+      // 彩蛋图鉴（与后端一致）
+      const COLLECTION_DISPLAY = [
+        { key: 'coin', icon: '🪙', label: '幸运硬币' },
+        { key: 'bear', icon: '🧸', label: '玩偶熊' },
+        { key: 'flower', icon: '🌸', label: '小花' },
+        { key: 'clover', icon: '🍀', label: '四叶草' },
+        { key: 'glasses', icon: '👓', label: '眼镜' },
+        { key: 'fries', icon: '🍟', label: '薯条' },
+        { key: 'money_bag', icon: '💰', label: '钱币' },
+        { key: 'watermelon', icon: '🍉', label: '西瓜' },
+        { key: 'milk_tea', icon: '🧋', label: '奶茶' },
+        { key: 'chocolate', icon: '🍫', label: '巧克力' },
+        { key: 'spoon', icon: '🥄', label: '勺子' }
+      ];
+
+      // 默的小屋：心情 + 彩蛋图鉴 + 今日行动 + 行动日志时间线
       async function renderMoHome() {
         const box = document.getElementById('moHomeContent');
         if (!box) return;
@@ -1607,6 +1622,16 @@
               <div style="font-size:13px;color:#666;margin-top:6px;">心情：${state.mo_mood} / 100</div>
               ${moodBar(state.mo_mood)}
               <div style="font-size:13px;color:#666;margin-top:10px;">今日唤醒：${state.today_wakes} 次 · 每次体力 ${state.today_energy} 点</div>
+            </div>
+            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">彩蛋图鉴（${state.collection ? state.collection.found : 0}/${state.collection ? state.collection.total : 0}）</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                ${COLLECTION_DISPLAY.map(c => `
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px;border:1px solid ${state.collection && state.collection.unlocked.includes(c.key) ? '#ffe3b3' : '#eee'};border-radius:12px;background:${state.collection && state.collection.unlocked.includes(c.key) ? '#fffaf0' : '#fafafa'};font-size:11px;color:${state.collection && state.collection.unlocked.includes(c.key) ? '#8a6d3b' : '#bbb'};">
+                    <span style="font-size:22px;">${state.collection && state.collection.unlocked.includes(c.key) ? c.icon : '❔'}</span>
+                    <span>${c.label}</span>
+                  </div>`).join('')}
+              </div>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">默的日记</div>
@@ -1651,7 +1676,13 @@
               <div style="font-size:15px;font-weight:600;color:#333;">虚拟的我</div>
               <div style="font-size:32px;margin:8px 0;">${statusEmoji}</div>
               <div style="font-size:14px;color:#666;">状态：${state.her_status}</div>
-              <div style="font-size:13px;color:#888;margin-top:4px;">心情：${state.xue_mood} / 100</div>
+              <div style="font-size:13px;color:#888;margin-top:4px;">心情：${state.xue_mood} / 100 · 默好感：${state.affection}</div>
+              <div style="font-size:13px;color:#888;margin-top:10px;">虚拟的我正在：${state.virtual_activity ? `「${state.virtual_activity}」` : '发呆'}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+                ${['画画', '看书', '听音乐', '发呆'].map(a => `
+                  <button onclick="setVirtualActivity('${a}')" style="border:1px solid #e9e9e9;border-radius:14px;background:${state.virtual_activity === a ? '#eaf4ff' : '#fff'};color:${state.virtual_activity === a ? '#1e90ff' : '#555'};padding:5px 12px;font-size:12px;cursor:pointer;">${a}</button>`).join('')}
+                <button onclick="setVirtualActivity('')" style="border:1px solid #e9e9e9;border-radius:14px;background:#fff;color:#999;padding:5px 12px;font-size:12px;cursor:pointer;">清除</button>
+              </div>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:10px;">
@@ -1700,6 +1731,19 @@
         }
       }
       window.saveMyDiary = saveMyDiary;
+
+      // 设置虚拟雪的活动状态
+      async function setVirtualActivity(activity) {
+        try {
+          await fetch('/api/home-state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ virtual_activity: activity })
+          });
+          renderXueHome();
+        } catch (e) { /* ignore */ }
+      }
+      window.setVirtualActivity = setVirtualActivity;
 
       // 轻量转义（页面模板用）
       function escapeHtml2(text) {

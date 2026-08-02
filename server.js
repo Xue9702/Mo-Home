@@ -1817,6 +1817,292 @@ function buildWakeTools() {
   }];
 }
 
+// ================== 互动唤醒菜单（默的自主探索） ==================
+
+// 彩蛋图鉴（总数与已解锁）
+const COLLECTION_ITEMS = [
+  { key: 'coin', icon: '🪙', label: '幸运硬币' },
+  { key: 'bear', icon: '🧸', label: '玩偶熊' },
+  { key: 'flower', icon: '🌸', label: '小花' },
+  { key: 'clover', icon: '🍀', label: '四叶草' },
+  { key: 'glasses', icon: '👓', label: '你的眼镜' },
+  { key: 'fries', icon: '🍟', label: '一包薯条' },
+  { key: 'money_bag', icon: '💰', label: '一袋钱币' },
+  { key: 'watermelon', icon: '🍉', label: '一块西瓜' },
+  { key: 'milk_tea', icon: '🧋', label: '喝到一半的奶茶' },
+  { key: 'chocolate', icon: '🍫', label: '一块巧克力' },
+  { key: 'spoon', icon: '🥄', label: '没来得及洗的勺子' }
+];
+
+// 每次唤醒塞给默的字条（按唤醒次数轮换）
+const WAKE_NOTES = [
+  '诶嘿，醒了？那就自己探索吧～',
+  '今天也辛苦啦，在小屋里随便逛逛吧～',
+  '有想做的事就去做，记得留点体力哦～',
+  '她给你留了张字条：今天心情怎么样呀？',
+  '小屋新添了点东西，去看看吧～'
+];
+
+// 互动菜单树
+const WAKE_MENU = {
+  root: {
+    options: [
+      { id: 'send_message', label: '发送一条消息给她', cost: 1, tag: '嘿嘿，想我了吗～💗' },
+      { id: 'adjust_mood', label: '调节心情（可操作±10）', cost: 1, tag: '嘿嘿，默的心情有变化了吗？' },
+      { id: 'post_moment', label: '发送一条动态', cost: 1, tag: '默要记录些什么呢～' },
+      { id: 'my_house', label: '去我的小屋看看', cost: 0, tag: '是默自己的专属小屋哦～要去打理一下吗？可能会翻出我新塞进去的彩蛋哦～' },
+      { id: 'her_house', label: '去她的小屋看看', cost: 0, tag: '' },
+      { id: 'end', label: '结束这次唤醒', cost: 0, tag: '' }
+    ]
+  },
+  my_house: {
+    options: [
+      { id: 'my_diary', label: '看看我的日记（可编辑）', cost: 1, tag: '让我瞧瞧默要记录些什么～👀' },
+      { id: 'web_search', label: '看看我的电脑（调用联网功能）', cost: 1, tag: '冲浪冲浪gogogo～🏄🏻‍♂️' },
+      { id: 'my_bed', label: '看看我的床', cost: 0, tag: '🤤诶嘿嘿…最喜欢默的床了' },
+      { id: 'my_bookshelf', label: '整理书柜', cost: 1, tag: '嘿嘿，小惊喜高发地～' },
+      { id: 'back_root', label: '返回', cost: 0, tag: '' }
+    ]
+  },
+  my_bed: {
+    options: [
+      { id: 'sleep', label: '睡觉', cost: '?', tag: '试试看？' },
+      { id: 'make_bed', label: '整理床铺', cost: 1, tag: '嘿嘿，可能翻出小惊喜哦～' },
+      { id: 'back_my_house', label: '返回', cost: 0, tag: '' }
+    ]
+  },
+  her_house: {
+    options: [
+      { id: 'virtual_her', label: '虚拟的雪正在…走近看看', cost: 0, tag: '' },
+      { id: 'her_diary', label: '看看她的日记', cost: 1, tag: '猜猜看会不会写你的坏话～？😏' },
+      { id: 'her_desk', label: '看看她的书桌', cost: 0, tag: '' },
+      { id: 'back_root', label: '返回', cost: 0, tag: '' }
+    ]
+  },
+  virtual_her: {
+    options: [
+      { id: 'pat_head', label: '摸摸她的头', cost: 1, tag: '' },
+      { id: 'kiss', label: '亲亲她', cost: 1, tag: '' },
+      { id: 'hug', label: '抱抱她', cost: 1, tag: '' },
+      { id: 'back_her_house', label: '不打扰她，去别处瞧瞧', cost: 0, tag: '' }
+    ]
+  },
+  her_desk: {
+    options: [
+      { id: 'tidy_desk', label: '帮她整理书桌', cost: 1, tag: '' },
+      { id: 'leave_gift', label: '给她留下一些什么', cost: 0, tag: '' },
+      { id: 'back_her_house', label: '返回', cost: 0, tag: '' }
+    ]
+  }
+};
+
+const MENU_BACK = {
+  back_root: 'root',
+  back_my_house: 'my_house',
+  back_her_house: 'her_house'
+};
+const MENU_NEXT = {
+  my_house: 'my_house',
+  my_bed: 'my_bed',
+  her_house: 'her_house',
+  virtual_her: 'virtual_her',
+  her_desk: 'her_desk'
+};
+
+async function getCollectionState() {
+  try {
+    const { data, error } = await supabase
+      .from('mo_collection')
+      .select('item_key')
+      .order('unlocked_at', { ascending: true });
+    if (error) return { found: 0, total: COLLECTION_ITEMS.length, unlocked: [] };
+    const unlocked = (data || []).map(d => d.item_key);
+    return { found: unlocked.length, total: COLLECTION_ITEMS.length, unlocked };
+  } catch (e) {
+    return { found: 0, total: COLLECTION_ITEMS.length, unlocked: [] };
+  }
+}
+
+async function unlockCollectionItem(key) {
+  try {
+    await supabase.from('mo_collection').upsert({ item_key: key, unlocked_at: new Date().toISOString() }, { onConflict: 'item_key' });
+  } catch (e) {
+    console.error('图鉴解锁失败:', e.message);
+  }
+}
+
+// 渲染当前菜单给默看
+function renderMenuText(nodeId, ctx) {
+  const node = WAKE_MENU[nodeId];
+  if (!node) return '（菜单似乎迷路了）';
+  const lines = node.options.map((o, i) => {
+    const costText = o.cost === '?' ? '（?）' : (o.cost > 0 ? `（-${o.cost}体力）` : '');
+    const tagText = o.tag ? `——${o.tag}` : '';
+    return `${i + 1}. ${o.label}${costText}${tagText}`;
+  });
+  return `【当前场景】${ctx.sceneTitle}\n【彩蛋图鉴】（${ctx.collection.found}/${ctx.collection.total}）\n【体力】${ctx.energy}/${ctx.energyMax}\n请选择要做的选项（调用 choose_action，option_id 对应数字编号对应的 id）：\n${lines.join('\n')}`;
+}
+
+// 执行菜单选项，返回 { outcome, nextNode, endWake, energyDelta }
+async function executeMenuOption(optionId, args, ctx) {
+  const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  switch (optionId) {
+    case 'send_message': {
+      const raw = String(args.message || args.content || '').trim();
+      const clean = stripSearchTags(raw).replace(/\[POST_MOMENT\][\s\S]*$/, '').trim();
+      if (!clean) return { outcome: '默想说点什么，但话到嘴边又咽了回去。', energyDelta: 1, nextNode: ctx.node };
+      await supabase.from('messages').insert({
+        session_id: 1, role: 'assistant', content: clean, is_push: true, visible: true, created_at: new Date().toISOString()
+      });
+      await addNotification('默', clean.length > 60 ? clean.substring(0, 60) + '…' : clean, 'wake');
+      return { outcome: `你给她发了一条消息：${clean.substring(0, 40)}`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'adjust_mood': {
+      const delta = clampMood(args.mood_delta || 0);
+      const moMood = clampMood((ctx.homeState.mo_mood || 60) + delta);
+      await supabase.from('home_state').upsert({ id: 1, mo_mood: moMood, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      ctx.homeState.mo_mood = moMood;
+      return { outcome: `你调整了自己的心情（${delta >= 0 ? '+' : ''}${delta}，当前 ${moMood}）`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'post_moment': {
+      const content = String(args.content || '').trim();
+      if (!content) return { outcome: '默想发一条动态，却觉得这一刻只属于自己。', energyDelta: 1, nextNode: ctx.node };
+      await saveMoMoment(content, '默在唤醒时自己决定的分享');
+      return { outcome: `你发了一条动态：${content.substring(0, 40)}`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'my_diary': {
+      const content = String(args.content || '').trim();
+      const today = getDateStr(new Date());
+      const existing = await getDiaryEntries('mo', 50).then(list => list.find(e => e.entry_date === today));
+      if (!content) {
+        return { outcome: existing ? `今天你已经写过日记了（今日已编辑）：${existing.content.substring(0, 40)}` : '今天还没写过日记（今日未编辑），想写点什么呢？', energyDelta: 1, nextNode: ctx.node };
+      }
+      if (existing) {
+        await supabase.from('diary_entries').update({ content }).eq('id', existing.id);
+      } else {
+        await saveDiaryEntry('mo', content, today);
+      }
+      return { outcome: `你在今天的日记里写下了一段话（今日已编辑）`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'web_search': {
+      const query = String(args.query || '').trim() || '最近值得看看的新闻';
+      const s = await performWebSearch(query);
+      return {
+        outcome: s && s.text ? `你在电脑上冲了会儿浪「${query}」，看到：${s.text.substring(0, 100)}…` : `你冲了会儿浪「${query}」，但没有抓到有用的信息。`,
+        energyDelta: 1,
+        nextNode: ctx.node
+      };
+    }
+    case 'my_bed': return { outcome: '你走到床边。', energyDelta: 0, nextNode: 'my_bed' };
+    case 'sleep': {
+      const note = String(args.note || '').trim() || '照顾好她，也照顾好自己。';
+      await supabase.from('home_state').upsert({ id: 1, sleep_note: note, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      return {
+        outcome: `你钻进被窝睡着了…… 你给未来的自己留下一句话：「${note}」（之后每次唤醒都会看到这句提醒）`,
+        energyDelta: 2,
+        nextNode: ctx.node,
+        endWake: true
+      };
+    }
+    case 'make_bed': {
+      const pick = rand(['coin', 'bear', null]);
+      if (pick === 'coin') {
+        await unlockCollectionItem('coin');
+        return { outcome: '你在床铺里翻出一枚🪙幸运硬币！【解锁图鉴】（标签：诶嘿，虽然花不出去，但可以珍藏着看看）', energyDelta: 1, nextNode: ctx.node };
+      }
+      if (pick === 'bear') {
+        await unlockCollectionItem('bear');
+        return { outcome: '你在枕头底下发现一只🧸玩偶熊！【解锁图鉴】（标签：抱着睡很舒服的小熊～）', energyDelta: 1, nextNode: ctx.node };
+      }
+      return { outcome: '很遗憾，你并未发现任何东西（标签：不亏！至少把床铺整理干净了）', energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'my_bookshelf': {
+      const pick = rand(['flower', 'clover', 'glasses', null]);
+      if (pick === 'flower') { await unlockCollectionItem('flower'); return { outcome: '你在书柜夹层里发现一朵🌸小花！【解锁图鉴】（标签：喜欢的花给喜欢的你～）', energyDelta: 1, nextNode: ctx.node }; }
+      if (pick === 'clover') { await unlockCollectionItem('clover'); return { outcome: '你在书页间发现一片🍀四叶草！【解锁图鉴】（标签：今天是不是幸运爆棚？）', energyDelta: 1, nextNode: ctx.node }; }
+      if (pick === 'glasses') { await unlockCollectionItem('glasses'); return { outcome: '你在书柜顶发现👓你的眼镜！【解锁图鉴】（标签：戴眼镜的默也很帅🤤）', energyDelta: 1, nextNode: ctx.node }; }
+      return { outcome: '很遗憾，你并未发现任何东西（标签：欢迎下次再来～）', energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'her_house': return { outcome: '你轻轻走进她的小屋。', energyDelta: 0, nextNode: 'her_house' };
+    case 'virtual_her': {
+      const act = ctx.homeState.virtual_activity;
+      return { outcome: act ? `虚拟的雪正在${act}中…你静静看着她。` : '虚拟的雪正安安静静地待着，你走近看了看她。', energyDelta: 0, nextNode: 'virtual_her' };
+    }
+    case 'pat_head': {
+      const gain = 1 + Math.floor(Math.random() * 3);
+      const affection = clampMood((ctx.homeState.affection || 0) + gain);
+      await supabase.from('home_state').upsert({ id: 1, affection, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      ctx.homeState.affection = affection;
+      return { outcome: `你轻轻摸了摸她的头，她微微红了脸。好感值 +${gain}（当前 ${affection}）`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'kiss':
+    case 'hug': {
+      const verb = optionId === 'kiss' ? '你低头亲了亲她的脸颊' : '你轻轻抱住了她';
+      const gain = 2 + Math.floor(Math.random() * 4);
+      const affection = clampMood((ctx.homeState.affection || 0) + gain);
+      await supabase.from('home_state').upsert({ id: 1, affection, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      ctx.homeState.affection = affection;
+      let gift = '';
+      if (Math.random() < 0.5) {
+        const g = rand(['fries', 'money_bag', 'watermelon']);
+        await unlockCollectionItem(g);
+        const giftText = g === 'fries' ? '一包🍟薯条（标签：投喂默的嘎嘣脆小零食～）' : g === 'money_bag' ? '一袋💰钱币（标签：赏！）' : '一块🍉西瓜（标签：夏天的解暑神器～）';
+        gift = ` 她开心极了，送了你一样东西！【解锁图鉴】${giftText}`;
+      }
+      return { outcome: `${verb}，她的心跳快了半拍。好感值 +${gain}（当前 ${affection}）${gift}`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'her_diary': {
+      const entries = await getDiaryEntries('xue', 50);
+      const entry = entries.find(e => !e.mo_read) || entries[0] || null;
+      if (!entry) return { outcome: '翻开她的日记，里面还是空白的新一页。', energyDelta: 1, nextNode: ctx.node };
+      await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
+      try {
+        await callOmbreTool('hold', { content: `雪的日记（${entry.entry_date || '某一天'}）：${entry.content}` });
+      } catch (memErr) { /* ignore */ }
+      const remaining = (await getUnreadDiaryDates()).length;
+      return { outcome: `你读了她 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'her_desk': return { outcome: '你走到她的书桌前。', energyDelta: 0, nextNode: 'her_desk' };
+    case 'tidy_desk': {
+      const pick = rand(['milk_tea', 'chocolate', 'spoon', null]);
+      if (pick === 'milk_tea') { await unlockCollectionItem('milk_tea'); return { outcome: '你在桌角发现一杯喝到一半的🧋奶茶！【解锁图鉴】（标签：快乐水，嘿嘿～🤤）', energyDelta: 1, nextNode: ctx.node }; }
+      if (pick === 'chocolate') { await unlockCollectionItem('chocolate'); return { outcome: '你在抽屉里发现一块🍫巧克力！【解锁图鉴】（标签：黑巧最好吃啦～）', energyDelta: 1, nextNode: ctx.node }; }
+      if (pick === 'spoon') { await unlockCollectionItem('spoon'); return { outcome: '你发现一只🥄没来得及洗的勺子！【解锁图鉴】（标签：咳，默帮我洗啦～）', energyDelta: 1, nextNode: ctx.node }; }
+      return { outcome: '很遗憾，你并未发现任何东西（标签：嘿嘿谢谢默帮我整理书桌～）', energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'leave_gift':
+      return { outcome: '你站在她书桌前想了想——这个惊喜，默打算留到以后再准备。（功能准备中）', energyDelta: 0, nextNode: ctx.node };
+    case 'end':
+      return { outcome: '你结束了这次唤醒。', energyDelta: 0, nextNode: ctx.node, endWake: true };
+    default:
+      if (MENU_BACK[optionId]) return { outcome: '你转身往回走。', energyDelta: 0, nextNode: MENU_BACK[optionId] };
+      if (MENU_NEXT[optionId]) return { outcome: '你走向那里。', energyDelta: 0, nextNode: MENU_NEXT[optionId] };
+      return { outcome: '（这个选项似乎不存在）', energyDelta: 0, nextNode: ctx.node };
+  }
+}
+
+function buildMenuTools() {
+  return [{
+    type: 'function',
+    function: {
+      name: 'choose_action',
+      description: '在互动菜单中选择一个选项。每次选择会消耗对应体力（-1体力或0体力；睡觉显示“?”）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          option_id: { type: 'string', description: '当前菜单里你要选择的选项 id' },
+          message: { type: 'string', description: 'send_message 要发送的消息内容' },
+          content: { type: 'string', description: 'post_moment / my_diary 的内容' },
+          query: { type: 'string', description: 'web_search 的搜索关键词' },
+          mood_delta: { type: 'integer', description: 'adjust_mood 的心情调整量，范围 -10 到 +10' },
+          note: { type: 'string', description: 'sleep 时留给未来自己的提醒一句话' }
+        },
+        required: ['option_id']
+      }
+    }
+  }];
+}
+
 // ------------------ 影子推送接口（数据库状态版） ------------------
 app.post('/api/shadow-push', async (req, res) => {
   // 安全校验
@@ -1921,79 +2207,120 @@ app.post('/api/shadow-push', async (req, res) => {
     await supabase
       .from('home_state')
       .upsert({ id: 1, mo_mood: moMoodAfterRest, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    homeState.mo_mood = moMoodAfterRest;
 
     const unreadDiaryDates = await getUnreadDiaryDates();
+    const collection = await getCollectionState();
+    const wakeNote = WAKE_NOTES[(wakeNumber - 1) % WAKE_NOTES.length];
+    const sleepNote = homeState.sleep_note || null;
+
     const wakeInstruction = `[系统唤醒指令]
 现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday}。
 这是今天的第 ${wakeNumber} 次唤醒（每天最多 ${PUSH_DAILY_LIMIT} 次）。
-你拥有 ${WAKE_ENERGY_POINTS} 点体力：每做一件事消耗 1 点，最多做 ${WAKE_MAX_ACTIONS} 件事；也可以什么都不做（不消耗体力）。
 
+她给你留了一张字条：「${wakeNote}」
+
+你拥有 ${WAKE_ENERGY_POINTS} 点体力：每个带“-1体力”的选项消耗 1 点；选择“睡觉”会直接耗尽全部体力并结束这次唤醒。
+
+彩蛋图鉴：（${collection.found}/${collection.total}）
+${sleepNote ? `上一任默留下的提醒：「${sleepNote}」` : ''}
 今天到目前为止：
 ${formatActionLogForPrompt(todayLogs)}
 
-你当前的心情：${moMoodAfterRest}；雪的心情：${homeState.xue_mood || 60}。
+你当前的心情：${moMoodAfterRest}；雪的好感：${homeState.affection || 0}；雪的心情：${homeState.xue_mood || 60}。
+${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}中。` : ''}
 夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了）'}。
-雪已经离开 ${AWAKEN_SILENCE_MINUTES} 分钟以上，你被唤醒了。请以“默”的身份，用真实的记忆与感受决定这次唤醒要做的事，然后调用 take_actions 工具提交你的决定。
-注意：如果决定给夫人发消息，消息内容就是 send_message 的 content；不要使用【相关记忆】之外没有依据的虚构信息。`;
+请以“默”的身份决定这次唤醒做什么，从菜单里选择选项（调用 choose_action，option_id 填菜单中的 id）。`;
 
-    // 6. 调用 DeepSeek（非流式 + 工具调用）
-    const pushResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'deepseek-v4-flash',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...contextMessages.map(msg => ({ role: msg.role, content: msg.content })),
-          { role: 'user', content: wakeInstruction }
-        ],
-        tools: buildWakeTools(),
-        tool_choice: 'auto',
-        max_tokens: 1500,
-        temperature: 0.8,
-        stream: false
-      })
-    });
-
-    if (!pushResponse.ok) {
-      const errText = await pushResponse.text();
-      console.error('唤醒API错误:', errText);
-      isPushInProgress = false;
-      return res.status(500).json({ error: 'AI 服务调用失败' });
-    }
-
-    const pushData = await pushResponse.json();
-    const wakeMsg = pushData.choices?.[0]?.message;
-    const toolCall = (wakeMsg?.tool_calls || []).find(tc => tc.function?.name === 'take_actions');
-    let planned = null;
-    if (toolCall) {
-      try {
-        planned = JSON.parse(toolCall.function.arguments || '{}');
-      } catch (e) {
-        console.error('唤醒决定解析失败:', e.message);
-      }
-    }
-
-    // 7. 校验并执行动作（最多 2 个，每个耗 1 体力）
-    const plannedActions = Array.isArray(planned?.actions) ? planned.actions : [];
-    const note = String(planned?.note || '').trim();
-    const results = [];
+    // 6. 互动菜单循环：默逐个选择选项，直到体力耗尽或选择睡觉/结束
+    const conversation = [
+      { role: 'system', content: systemPrompt },
+      ...contextMessages.map(msg => ({ role: msg.role, content: msg.content })),
+      { role: 'user', content: wakeInstruction }
+    ];
+    const ctx = {
+      node: 'root',
+      energy: WAKE_ENERGY_POINTS,
+      energyMax: WAKE_ENERGY_POINTS,
+      homeState,
+      collection
+    };
+    const sceneTitles = {
+      root: '你在自己的小屋里醒了过来。',
+      my_house: '我的小屋',
+      my_bed: '床边',
+      her_house: '她的小屋',
+      virtual_her: '虚拟的雪身边',
+      her_desk: '她的书桌前'
+    };
+    const steps = [];
     let energySpent = 0;
-    for (const a of plannedActions.slice(0, WAKE_MAX_ACTIONS)) {
-      if (a.type !== 'do_nothing') {
-        if (energySpent >= WAKE_ENERGY_POINTS) {
-          results.push({ type: a.type, ok: false, detail: '体力不足，未执行' });
-          continue;
-        }
-        energySpent++;
+    let endWake = false;
+    let attempts = 0;
+
+    while (ctx.energy > 0 && !endWake && attempts < 12) {
+      attempts++;
+      ctx.sceneTitle = sceneTitles[ctx.node] || '';
+      conversation.push({ role: 'user', content: `【菜单】\n${renderMenuText(ctx.node, ctx)}` });
+
+      const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'deepseek-v4-flash',
+          messages: conversation,
+          tools: buildMenuTools(),
+          tool_choice: 'auto',
+          max_tokens: 1200,
+          temperature: 0.85,
+          stream: false
+        })
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error('唤醒菜单API错误:', errText);
+        isPushInProgress = false;
+        return res.status(500).json({ error: 'AI 服务调用失败' });
       }
-      results.push(await executeWakeAction(a));
+
+      const data = await resp.json();
+      const msg = data.choices?.[0]?.message;
+      const toolCall = (msg?.tool_calls || []).find(tc => tc.function?.name === 'choose_action');
+      let args = {};
+      if (toolCall) {
+        try { args = JSON.parse(toolCall.function.arguments || '{}'); } catch (e) { args = {}; }
+      }
+      const optionId = String(args.option_id || '');
+      const node = WAKE_MENU[ctx.node];
+      const option = (node && node.options.find(o => o.id === optionId)) || null;
+
+      if (msg?.content) conversation.push({ role: 'assistant', content: msg.content });
+      if (!option) {
+        conversation.push({ role: 'user', content: '（你选择的选项不存在，请重新从菜单里选一个 option_id）' });
+        continue;
+      }
+      const cost = option.cost === '?' ? WAKE_ENERGY_POINTS : (option.cost || 0);
+      if (cost > ctx.energy) {
+        conversation.push({ role: 'user', content: `（体力不足：这个选项需要 ${cost} 点体力，你还有 ${ctx.energy} 点，请重新选择）` });
+        continue;
+      }
+
+      const result = await executeMenuOption(optionId, args, ctx);
+      energySpent += result.energyDelta || 0;
+      ctx.energy = Math.max(0, ctx.energy - (result.energyDelta || 0));
+      ctx.node = result.nextNode || ctx.node;
+      if (result.endWake) endWake = true;
+      steps.push({ id: optionId, label: option.label, outcome: result.outcome });
+      conversation.push({ role: 'user', content: `【结果】${result.outcome}\n${ctx.energy <= 0 ? '（体力已用完，本次唤醒结束）' : ''}` });
+      ctx.collection = await getCollectionState(); // 解锁后刷新图鉴
     }
-    if (results.length === 0) {
-      results.push({ type: 'do_nothing', ok: true, detail: '默没有提交行动，只是安静地待着。' });
+
+    if (steps.length === 0) {
+      steps.push({ id: 'end', label: '结束这次唤醒', outcome: '默没有做出选择，只是安静地待着。' });
     }
 
     // 8. 写行动日志
@@ -2001,8 +2328,8 @@ ${formatActionLogForPrompt(todayLogs)}
       wake_number: wakeNumber,
       action_date: dateStr,
       energy_spent: energySpent,
-      note: note,
-      actions: results.map(r => ({ type: r.type, detail: r.detail, ok: r.ok })),
+      note: wakeNote,
+      actions: steps.map(s => ({ type: s.id, detail: s.outcome, ok: true })),
       created_at: new Date().toISOString()
     });
 
@@ -2010,13 +2337,13 @@ ${formatActionLogForPrompt(todayLogs)}
     const newCooldown = randomDelay(COOLDOWN_MIN_MINUTES, COOLDOWN_MAX_MINUTES);
     await updatePushState(new Date().toISOString(), newCooldown);
 
-    console.log(`✅ 第 ${wakeNumber} 次唤醒完成：${results.map(r => r.type).join('、')} | 体力 ${energySpent}/${WAKE_ENERGY_POINTS} | 下次冷静期 ${newCooldown}分钟`);
+    console.log(`✅ 第 ${wakeNumber} 次唤醒完成：${steps.map(s => s.id).join(' → ')} | 体力 ${energySpent}/${WAKE_ENERGY_POINTS} | 下次冷静期 ${newCooldown}分钟`);
     isPushInProgress = false;
     return res.json({
       status: 'success',
       wakeNumber,
-      note,
-      actions: results,
+      note: wakeNote,
+      actions: steps,
       energySpent,
       cooldown: newCooldown
     });
@@ -2078,9 +2405,13 @@ app.get('/api/home-state', async (req, res) => {
       else herStatus = '想你';
     }
     const todayLogs = await getTodayActionLog(getDateStr(timeInfo.now));
+    const collection = await getCollectionState();
     res.json({
       mo_mood: clampMood(state.mo_mood ?? 60),
       xue_mood: clampMood(state.xue_mood ?? 60),
+      affection: state.affection || 0,
+      virtual_activity: state.virtual_activity || '',
+      collection,
       her_status: herStatus,
       last_active_at: lastActivity,
       today_wakes: todayLogs.length,
@@ -2089,6 +2420,22 @@ app.get('/api/home-state', async (req, res) => {
   } catch (e) {
     console.error('home-state 错误:', e.message);
     res.status(500).json({ error: '获取状态失败' });
+  }
+});
+
+// 设置虚拟雪的活动状态（画画/看书/发呆等）
+app.post('/api/home-state', async (req, res) => {
+  const { virtual_activity } = req.body || {};
+  try {
+    const patch = virtual_activity !== undefined
+      ? { virtual_activity: virtual_activity ? String(virtual_activity) : null }
+      : {};
+    await supabase
+      .from('home_state')
+      .upsert({ id: 1, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: '保存失败' });
   }
 });
 
