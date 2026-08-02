@@ -2157,6 +2157,46 @@ function buildMenuTools() {
   }];
 }
 
+// 菜单选择调用：思考模式不支持强制 tool_choice，先关思考强制调用；
+// 若仍报错则自动退回 auto + medium（与聊天搜索一致的配置）
+async function callMenuChoice(messages) {
+  const base = {
+    model: 'deepseek-v4-flash',
+    messages,
+    tools: buildMenuTools(),
+    tool_choice: { type: 'function', function: { name: 'choose_action' } },
+    reasoning_effort: 'none',
+    max_tokens: 1200,
+    temperature: 0.85,
+    stream: false
+  };
+  let resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+    },
+    body: JSON.stringify(base)
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    if (/tool_choice|thinking/i.test(errText)) {
+      console.warn('⚠️ 思考模式不支持强制 tool_choice，退回 auto 模式重试');
+      base.tool_choice = 'auto';
+      base.reasoning_effort = 'medium';
+      resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+        },
+        body: JSON.stringify(base)
+      });
+    }
+  }
+  return resp;
+}
+
 // ------------------ 影子推送接口（数据库状态版） ------------------
 app.post('/api/shadow-push', async (req, res) => {
   // 安全校验
@@ -2302,22 +2342,7 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       ctx.sceneTitle = sceneTitles[ctx.node] || '';
       conversation.push({ role: 'user', content: `【菜单】\n${renderMenuText(ctx.node, ctx)}` });
 
-      const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'deepseek-v4-flash',
-          messages: conversation,
-          tools: buildMenuTools(),
-          tool_choice: { type: 'function', function: { name: 'choose_action' } },
-          max_tokens: 1200,
-          temperature: 0.85,
-          stream: false
-        })
-      });
+      const resp = await callMenuChoice(conversation);
 
       if (!resp.ok) {
         const errText = await resp.text();
@@ -2346,7 +2371,7 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
 
       if (msg?.content) conversation.push({ role: 'assistant', content: msg.content });
       if (!option) {
-        conversation.push({ role: 'user', content: '（你选择的选项不存在，请重新从菜单里选一个 option_id）' });
+        conversation.push({ role: 'user', content: '（你没有选择有效的选项：请调用 choose_action 工具，并填入菜单中显示的 option_id，例如 send_message，或直接填数字编号）' });
         continue;
       }
       const cost = option.cost === '?' ? WAKE_ENERGY_POINTS : (option.cost || 0);
