@@ -2389,7 +2389,7 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
     const newCooldown = randomDelay(COOLDOWN_MIN_MINUTES, COOLDOWN_MAX_MINUTES);
     await updatePushState(new Date().toISOString(), newCooldown);
 
-    console.log(`✅ 第 ${wakeNumber} 次唤醒完成：${steps.map(s => s.id).join(' → ')} | 体力 ${energySpent}/${WAKE_ENERGY_POINTS} | 下次冷静期 ${newCooldown}分钟`);
+    console.log(`✅ 第 ${wakeNumber} 次唤醒完成：${steps.map(s => s.id).join(' → ')} | 体力消耗 ${energySpent}，剩余 ${Math.max(0, WAKE_ENERGY_POINTS - energySpent)}/${WAKE_ENERGY_POINTS} | 下次冷静期 ${newCooldown}分钟`);
     isPushInProgress = false;
     return res.json({
       status: 'success',
