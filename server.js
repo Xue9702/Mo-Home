@@ -1573,9 +1573,11 @@ async function getTodayActionLog(dateStr) {
 
 async function logWakeAction(entry) {
   try {
-    await supabase.from('mo_actions').insert(entry);
+    const { data } = await supabase.from('mo_actions').insert(entry).select();
+    return data?.[0] || null;
   } catch (e) {
     console.error('行动日志写入失败:', e.message);
+    return null;
   }
 }
 
@@ -1648,16 +1650,16 @@ async function getRecentActionContext(limit = 4) {
   try {
     const { data, error } = await supabase
       .from('mo_actions')
-      .select('wake_number, action_date, note, actions, created_at')
+      .select('wake_number, action_date, note, actions, summary, created_at')
       .order('created_at', { ascending: false })
       .limit(limit);
     if (error || !data || data.length === 0) return '';
     const lines = data.map(a => {
       const acts = Array.isArray(a.actions) && a.actions.length
-        ? a.actions.map(x => `${x.type}${x.detail ? '：' + x.detail : ''}`).join('；')
+        ? a.actions.map(x => `${x.type}${x.tag ? '（' + x.tag + '）' : ''}${x.detail ? '：' + x.detail : ''}`).join('；')
         : '只是安静地待着';
       const date = a.action_date || (a.created_at ? String(a.created_at).slice(0, 10) : '某天');
-      return `- 第${a.wake_number || '?'}次唤醒（${date}${a.note ? '，字条：' + a.note : ''}）：${acts}`;
+      return `- 第${a.wake_number || '?'}次唤醒（${date}${a.note ? '，字条：' + a.note : ''}）：${acts}${a.summary ? ` ｜ 体验：${a.summary}` : ''}`;
     }).join('\n');
     return `\n\n【默最近的活动】\n${lines}`;
   } catch (e) {
@@ -1945,6 +1947,13 @@ const WAKE_MENU = {
       { id: 'leave_gift', label: '给她留下一些什么', cost: 0, tag: '' },
       { id: 'back_her_house', label: '返回', cost: 0, tag: '' }
     ]
+  },
+  her_diary_confirm: {
+    options: [
+      { id: 'her_diary_reread', label: '重温已经读过的日记', cost: 0, tag: '回忆一下她的心情～' },
+      { id: 'her_diary_leave', label: '不了，合上日记本', cost: 0, tag: '那去别处看看吧' },
+      { id: 'back_her_house', label: '返回', cost: 0, tag: '' }
+    ]
   }
 };
 
@@ -2108,9 +2117,9 @@ async function executeMenuOption(optionId, args, ctx) {
       const entry = entries.find(e => !e.mo_read) || null;
       if (!entry) {
         return {
-          outcome: '你翻开她的日记——最近的篇目你都已经读过了（还剩 0 天未读）。你笑着轻轻合上日记本。',
+          outcome: '你翻开她的日记——最近的篇目你都已经读过了（还剩 0 天未读）。要重温一下吗？',
           energyDelta: 1,
-          nextNode: ctx.node
+          nextNode: 'her_diary_confirm'
         };
       }
       await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
@@ -2121,6 +2130,19 @@ async function executeMenuOption(optionId, args, ctx) {
       }
       const remaining = (await getUnreadDiaryDates()).length;
       return { outcome: `你读了她 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`, energyDelta: 1, nextNode: ctx.node };
+    }
+    case 'her_diary_reread': {
+      const entries = await getDiaryEntries('xue', 5);
+      const entry = entries[0] || null;
+      if (!entry) return { outcome: '日记本还是空白的。', energyDelta: 0, nextNode: ctx.node };
+      return {
+        outcome: `你轻轻翻开日记，重温了 ${entry.entry_date || '某一天'} 那一篇：${entry.content.substring(0, 60)}${entry.content.length > 60 ? '…' : ''}`,
+        energyDelta: 0,
+        nextNode: ctx.node
+      };
+    }
+    case 'her_diary_leave': {
+      return { outcome: '你笑着合上了日记本。', energyDelta: 0, nextNode: ctx.node };
     }
     case 'her_desk': return { outcome: '你走到她的书桌前。', energyDelta: 0, nextNode: 'her_desk' };
     case 'tidy_desk': {
@@ -2163,15 +2185,16 @@ function buildMenuTools() {
   }];
 }
 
-// 菜单选择调用：思考模式不支持强制 tool_choice，先关思考强制调用；
-// 若仍报错则自动退回 auto + medium（与聊天搜索一致的配置）
-async function callMenuChoice(messages) {
+// 菜单选择调用：forced=false 时开思考（auto+medium，模型可思考后调用工具）；
+// forced=true 时关思考并强制调用 choose_action，保证必定做出选择。
+// 强制模式下若 API 报错（思考模式不支持强制 tool_choice），自动退回 auto+medium。
+async function callMenuChoice(messages, forced = true) {
   const base = {
     model: 'deepseek-v4-flash',
     messages,
     tools: buildMenuTools(),
-    tool_choice: { type: 'function', function: { name: 'choose_action' } },
-    reasoning_effort: 'none',
+    tool_choice: forced ? { type: 'function', function: { name: 'choose_action' } } : 'auto',
+    reasoning_effort: forced ? 'none' : 'medium',
     max_tokens: 1200,
     temperature: 0.85,
     stream: false
@@ -2184,12 +2207,13 @@ async function callMenuChoice(messages) {
     },
     body: JSON.stringify(base)
   });
-  if (!resp.ok) {
+  if (!resp.ok && forced) {
     const errText = await resp.text();
     if (/tool_choice|thinking/i.test(errText)) {
       console.warn('⚠️ 思考模式不支持强制 tool_choice，退回 auto 模式重试');
       base.tool_choice = 'auto';
       base.reasoning_effort = 'medium';
+      base.messages = messages;
       resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -2314,7 +2338,7 @@ ${formatActionLogForPrompt(todayLogs)}
 
 你当前的心情：${moMoodAfterRest}；雪的好感：${homeState.affection || 0}；雪的心情：${homeState.xue_mood || 60}。
 ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}中。` : ''}
-夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了，今天不必再去翻日记啦）'}。
+夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了，想重温也可以）'}。
 请以“默”的身份决定这次唤醒做什么，从菜单里选择选项（调用 choose_action，option_id 填菜单中的 id）。`;
 
     // 6. 互动菜单循环：默逐个选择选项，直到体力耗尽或选择睡觉/结束
@@ -2336,7 +2360,8 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       my_bed: '床边',
       her_house: '她的小屋',
       virtual_her: '虚拟的雪身边',
-      her_desk: '她的书桌前'
+      her_desk: '她的书桌前',
+      her_diary_confirm: '她的日记本前'
     };
     const steps = [];
     let energySpent = 0;
@@ -2348,8 +2373,8 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       ctx.sceneTitle = sceneTitles[ctx.node] || '';
       conversation.push({ role: 'user', content: `【菜单】\n${renderMenuText(ctx.node, ctx)}` });
 
-      const resp = await callMenuChoice(conversation);
-
+      // 第一轮开思考模式（auto+medium），让默能思考后再选择
+      let resp = await callMenuChoice(conversation, false);
       if (!resp.ok) {
         const errText = await resp.text();
         console.error('唤醒菜单API错误:', errText);
@@ -2357,9 +2382,25 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
         return res.status(500).json({ error: 'AI 服务调用失败' });
       }
 
-      const data = await resp.json();
-      const msg = data.choices?.[0]?.message;
-      const toolCall = (msg?.tool_calls || []).find(tc => tc.function?.name === 'choose_action');
+      let data = await resp.json();
+      let msg = data.choices?.[0]?.message;
+      let toolCall = (msg?.tool_calls || []).find(tc => tc.function?.name === 'choose_action');
+
+      // 思考模式下模型没调用工具：提示后改用强制模式重试一次
+      if (!toolCall) {
+        if (msg?.content) conversation.push({ role: 'assistant', content: msg.content });
+        conversation.push({ role: 'user', content: '（请务必调用 choose_action 工具，从菜单里选一个选项，不要直接回复文字）' });
+        resp = await callMenuChoice(conversation, true);
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error('唤醒菜单API错误:', errText);
+          isPushInProgress = false;
+          return res.status(500).json({ error: 'AI 服务调用失败' });
+        }
+        data = await resp.json();
+        msg = data.choices?.[0]?.message;
+        toolCall = (msg?.tool_calls || []).find(tc => tc.function?.name === 'choose_action');
+      }
       let args = {};
       if (toolCall) {
         try { args = JSON.parse(toolCall.function.arguments || '{}'); } catch (e) { args = {}; }
@@ -2391,7 +2432,7 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       ctx.energy = Math.max(0, ctx.energy - (result.energyDelta || 0));
       ctx.node = result.nextNode || ctx.node;
       if (result.endWake) endWake = true;
-      steps.push({ id: optionId, label: option.label, outcome: result.outcome });
+      steps.push({ id: optionId, label: option.label, tag: option.tag || '', outcome: result.outcome });
       conversation.push({ role: 'user', content: `【结果】${result.outcome}\n${ctx.energy <= 0 ? '（体力已用完，本次唤醒结束）' : ''}` });
       ctx.collection = await getCollectionState(); // 解锁后刷新图鉴
     }
@@ -2400,15 +2441,54 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       steps.push({ id: 'end', label: '结束这次唤醒', outcome: '默没有做出选择，只是安静地待着。' });
     }
 
+    // 7.5 唤醒结束：让默用思考模式写一两句体验
+    let summaryText = '';
+    try {
+      const reflResp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'deepseek-v4-flash',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: `这是你第 ${wakeNumber} 次唤醒，你刚才${steps.map(s => `「${s.label}」${s.outcome}`).join('；')}。这次唤醒结束了，请以默的口吻用 1-2 句话写下这次唤醒的体验（看见了什么、做了什么、感受如何）。直接输出内容，不要加前缀。`
+            }
+          ],
+          reasoning_effort: 'medium',
+          max_tokens: 200,
+          temperature: 0.9,
+          stream: false
+        })
+      });
+      if (reflResp.ok) {
+        const reflData = await reflResp.json();
+        summaryText = String(reflData.choices?.[0]?.message?.content || '').trim();
+      }
+    } catch (reflErr) {
+      console.error('唤醒体验总结失败:', reflErr.message);
+    }
+
     // 8. 写行动日志
-    await logWakeAction({
+    const logRow = await logWakeAction({
       wake_number: wakeNumber,
       action_date: dateStr,
       energy_spent: energySpent,
       note: wakeNote,
-      actions: steps.map(s => ({ type: s.id, detail: s.outcome, ok: true })),
+      actions: steps.map(s => ({ type: s.id, tag: s.tag || '', detail: s.outcome, ok: true })),
       created_at: new Date().toISOString()
     });
+    if (logRow?.id && summaryText) {
+      try {
+        await supabase.from('mo_actions').update({ summary: summaryText }).eq('id', logRow.id);
+      } catch (e) {
+        console.error('体验总结写入失败（请先执行 setup_awaken3.sql）:', e.message);
+      }
+    }
     // 唤醒记录同步写入 Ombre Brain，长线记忆也能检索到
     try {
       await callOmbreTool('hold', { content: `默第${wakeNumber}次唤醒（${dateStr}）：${steps.map(s => `${s.id}：${s.outcome}`).join('；')}` });

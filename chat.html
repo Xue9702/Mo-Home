@@ -1646,7 +1646,8 @@
               ${actions.length ? actions.map(a => `
                 <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f3f3f3;">
                   <div style="color:#999;font-size:12px;">第 ${a.wake_number} 次唤醒 · ${new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${a.note ? ' · ' + escapeHtml2(a.note) : ''}</div>
-                  <div style="margin-top:4px;">${(a.actions || []).map(x => `${x.type}${x.detail ? '：' + escapeHtml2(x.detail) : ''}`).join('<br>')}</div>
+                  <div style="margin-top:4px;">${(a.actions || []).map(x => `${x.type}${x.tag ? '（' + escapeHtml2(x.tag) + '）' : ''}${x.detail ? '：' + escapeHtml2(x.detail) : ''}`).join('<br>')}</div>
+                  ${a.summary ? `<div style="margin-top:4px;color:#888;font-style:italic;">✨ ${escapeHtml2(a.summary)}</div>` : ''}
                 </div>`).join('') : '<div style="font-size:13px;color:#bbb;">还没有行动记录</div>'}
             </div>`;
           box.innerHTML = html;
