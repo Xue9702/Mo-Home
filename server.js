@@ -1323,7 +1323,14 @@ app.post('/api/regenerate', async (req, res) => {
     // 4.5 检索相关记忆和朋友圈动态（与 /api/chat 保持一致）
     let memoryContext = '';
     try {
-      const memoryResult = await callOmbreTool('breath', { text: userContent });
+      let memoryResult = await callOmbreTool('breath', { text: userContent });
+      // 记忆库里可能存有旧版回复，重新生成时不能让默读到刷新前的自己
+      if (memoryResult && targetMsg.content) {
+        const oldClean = stripSearchTags(String(targetMsg.content)).replace(/\[POST_MOMENT\][\s\S]*$/, '').trim();
+        if (oldClean && memoryResult.includes(oldClean)) {
+          memoryResult = memoryResult.split(oldClean).join('').trim();
+        }
+      }
       if (memoryResult) {
         memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
         console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
@@ -1353,11 +1360,8 @@ app.post('/api/regenerate', async (req, res) => {
     );
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
-    // 重新生成时把上一版回复作为参考，并明确要求换角度重写，避免两版一模一样
-    const prevReply = stripSearchTags(String(targetMsg.content || '')).replace(/\[POST_MOMENT\][\s\S]*$/, '').trim();
-    const regenUserContent = prevReply
-      ? `${userContent}\n\n[重新生成要求] 请重新回答上面这条消息，但不要照搬上一版（${prevReply.substring(0, 120)}）的措辞——换个角度、换个说法或不同的情绪侧重，给出一个不一样的新版本。`
-      : userContent;
+    // 重新生成时不要喂旧版回复给默（他读不到刷新前的自己），只提示写一个不同版本
+    const regenUserContent = `${userContent}\n\n[重新生成要求] 这是重新生成：请给出一个与之前不同的新版本，换个角度、换个说法或不同的情绪侧重。`;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
       ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
