@@ -2105,8 +2105,14 @@ async function executeMenuOption(optionId, args, ctx) {
     }
     case 'her_diary': {
       const entries = await getDiaryEntries('xue', 50);
-      const entry = entries.find(e => !e.mo_read) || entries[0] || null;
-      if (!entry) return { outcome: '翻开她的日记，里面还是空白的新一页。', energyDelta: 1, nextNode: ctx.node };
+      const entry = entries.find(e => !e.mo_read) || null;
+      if (!entry) {
+        return {
+          outcome: '你翻开她的日记——最近的篇目你都已经读过了（还剩 0 天未读）。你笑着轻轻合上日记本。',
+          energyDelta: 1,
+          nextNode: ctx.node
+        };
+      }
       await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
       try {
         await callOmbreTool('hold', { content: `雪的日记（${entry.entry_date || '某一天'}）：${entry.content}` });
@@ -2308,7 +2314,7 @@ ${formatActionLogForPrompt(todayLogs)}
 
 你当前的心情：${moMoodAfterRest}；雪的好感：${homeState.affection || 0}；雪的心情：${homeState.xue_mood || 60}。
 ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}中。` : ''}
-夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了）'}。
+夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了，今天不必再去翻日记啦）'}。
 请以“默”的身份决定这次唤醒做什么，从菜单里选择选项（调用 choose_action，option_id 填菜单中的 id）。`;
 
     // 6. 互动菜单循环：默逐个选择选项，直到体力耗尽或选择睡觉/结束
