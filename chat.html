@@ -2728,35 +2728,12 @@
 
         if (target) {
           target.appendChild(nav);
-          arrangeMetaRow(target);
         } else {
           messageList.appendChild(nav);
         }
 
         prevBtn.style.opacity = currentVersion > 1 ? '1' : '0.4';
         nextBtn.style.opacity = currentVersion < totalVersions ? '1' : '0.4';
-      }
-
-      // 把版本角标和刷新按钮放进同一行（右侧对齐）
-      function arrangeMetaRow(msgEl) {
-        if (!msgEl) return;
-        const nav = msgEl.querySelector(':scope > .version-nav');
-        const btn = msgEl.querySelector(':scope > .refresh-btn');
-        if (!nav && !btn) return;
-        let row = msgEl.querySelector(':scope > .meta-row');
-        if (!row) {
-          row = document.createElement('div');
-          row.className = 'meta-row';
-          row.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:4px;';
-          msgEl.appendChild(row);
-        }
-        if (btn && btn.parentNode !== row) row.appendChild(btn);
-        if (nav && nav.parentNode !== row) row.appendChild(nav);
-        if (nav) {
-          nav.style.width = 'auto';
-          nav.style.flex = '1';
-          nav.style.padding = '0';
-        }
       }
 
       function switchVersion(groupId, targetVersion) {
@@ -2962,7 +2939,6 @@
               btn.dataset.messageId = last.dataset.messageId || 'temp-' + Date.now();
               btn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(btn, last); });
               last.appendChild(btn);
-              arrangeMetaRow(last);
             }
           }
         } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
@@ -3091,7 +3067,6 @@
                     refreshBtn.dataset.messageId = json.assistantMessageId;
                     refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
                     currentMsgDiv.appendChild(refreshBtn);
-                    arrangeMetaRow(currentMsgDiv);
                   }
 
                   // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
@@ -3247,7 +3222,6 @@
             refreshBtn.dataset.messageId = doneInfo.assistantMessageId;
             refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
             currentMsgDiv.appendChild(refreshBtn);
-            arrangeMetaRow(currentMsgDiv);
           }
 
           // 只显示最新版本，并挂上版本角标（多个版本时）
@@ -3262,7 +3236,6 @@
               if (latestUser) navTarget = latestUser;
             }
             addVersionNavigator(doneInfo.groupId, doneInfo.currentVersion, doneInfo.totalVersions, navTarget);
-            arrangeMetaRow(currentMsgDiv);
           }
           messageList.scrollTop = messageList.scrollHeight;
         } catch (err) {
