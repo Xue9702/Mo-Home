@@ -1,5 +1,5 @@
 // sw.js - 基础 Service Worker
-const CACHE_NAME = 'mo-home-v2';
+const CACHE_NAME = 'mo-home-v3';
 const urlsToCache = [
   '/',
   '/chat.html',
@@ -62,5 +62,19 @@ self.addEventListener('activate', function(event) {
     }).then(function() {
       return self.clients.claim();
     })
+  );
+});
+
+// 点击浏览器通知时回到小屋
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then(function(clientList) {
+        for (const client of clientList) {
+          if ('focus' in client) return client.focus();
+        }
+        return clients.openWindow('/');
+      })
   );
 });

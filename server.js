@@ -8,9 +8,14 @@ dns.setDefaultResultOrder('ipv4first'); // 部分主机 IPv6 解析异常导致�
 // ================== 影子推送配置 ==================
 const SHADOW_PUSH_SECRET = process.env.SHADOW_PUSH_SECRET || 'your-secret-key-change-me';
 const USER_TIMEZONE = 'Asia/Shanghai'; // 目标时区：东八区
-const PUSH_DAILY_LIMIT = 6; // 每日上限
+const PUSH_DAILY_LIMIT = 4; // 每日唤醒上限（原 6 改为 4）
 const COOLDOWN_MIN_MINUTES = 120; // 最小冷静期（分钟）
 const COOLDOWN_MAX_MINUTES = 210; // 最大冷静期（分钟）
+const AWAKEN_SILENCE_MINUTES = 30; // 结束聊天 N 分钟后才允许唤醒
+const WAKE_ENERGY_POINTS = 2;      // 每次唤醒的体力
+const WAKE_MAX_ACTIONS = 2;        // 体力限制下的最大动作数
+const MOOD_MIN = 0;                // 心情下限
+const MOOD_MAX = 100;              // 心情上限
 
 // ================== 朋友圈配置 ==================
 const MOMENTS_REPLY_MIN_DELAY = 8;  // 回复最短随机延迟（分钟）
@@ -1491,6 +1496,327 @@ app.post('/api/regenerate', async (req, res) => {
   }
 });
 
+// ================== 默的自主唤醒（辅助函数） ==================
+
+function clampMood(v) {
+  return Math.max(MOOD_MIN, Math.min(MOOD_MAX, Math.round(Number(v) || 0)));
+}
+
+function getDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// 读取/初始化 home_state（心情等；表未建时返回默认值，不抛错）
+async function getHomeStateSafe() {
+  try {
+    const { data, error } = await supabase
+      .from('home_state')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle();
+    if (!error && data) return data;
+    const { data: created } = await supabase
+      .from('home_state')
+      .upsert({ id: 1, mo_mood: 60, xue_mood: 60 }, { onConflict: 'id' })
+      .select()
+      .single();
+    return created || { id: 1, mo_mood: 60, xue_mood: 60, last_active_at: null };
+  } catch (e) {
+    return { id: 1, mo_mood: 60, xue_mood: 60, last_active_at: null };
+  }
+}
+
+// 最近一条用户消息的时间（判定“结束聊天”）
+async function getLastUserActivity() {
+  try {
+    const { data } = await supabase
+      .from('messages')
+      .select('created_at')
+      .eq('session_id', 1)
+      .eq('role', 'user')
+      .eq('visible', true)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    return data?.[0]?.created_at || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 某天的行动日志（表未建时返回空数组）
+async function getTodayActionLog(dateStr) {
+  try {
+    const { data, error } = await supabase
+      .from('mo_actions')
+      .select('*')
+      .eq('action_date', dateStr)
+      .order('created_at', { ascending: true });
+    if (error) return [];
+    return data || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function logWakeAction(entry) {
+  try {
+    await supabase.from('mo_actions').insert(entry);
+  } catch (e) {
+    console.error('行动日志写入失败:', e.message);
+  }
+}
+
+async function addNotification(title, body, source) {
+  try {
+    await supabase.from('notifications').insert({ title, body, source, read: false });
+  } catch (e) {
+    console.error('通知写入失败:', e.message);
+  }
+}
+
+async function getDiaryEntries(author, limit = 20) {
+  try {
+    let q = supabase
+      .from('diary_entries')
+      .select('id, author, content, entry_date, mo_read, created_at')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (author) q = q.eq('author', author);
+    const { data, error } = await q;
+    if (error) return [];
+    return data || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 雪日记中默还没读过的日期（只给日期，不给内容，保留惊喜感）
+async function getUnreadDiaryDates() {
+  try {
+    const { data, error } = await supabase
+      .from('diary_entries')
+      .select('entry_date')
+      .eq('author', 'xue')
+      .or('mo_read.is.null,mo_read.eq.false')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) return [];
+    return (data || [])
+      .map(d => d.entry_date)
+      .filter(Boolean)
+      .filter((v, i, a) => a.indexOf(v) === i);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function saveDiaryEntry(author, content, entryDate) {
+  try {
+    const { data, error } = await supabase
+      .from('diary_entries')
+      .insert({ author, content, entry_date: entryDate || null })
+      .select()
+      .single();
+    if (error) {
+      console.error('日记写入失败:', error.message);
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.error('日记写入异常:', e.message);
+    return null;
+  }
+}
+
+// 默可探索的房间角落（彩蛋第二期再扩充）
+const EXPLORE_SPOTS = [
+  { spot: '桌柜', text: '桌柜上放着你的速写本和一支铅笔，最上面一页画了一半的风景草稿，旁边还压着一枚干花书签。' },
+  { spot: '沙发', text: '沙发上搭着一条你常盖的薄毯，好像还留着一点温度，像是你刚起身离开。' },
+  { spot: '床头', text: '床头柜上摆着水杯和充电线，枕头边躺着一本翻到一半的书，书签夹在第三章。' },
+  { spot: '窗边', text: '窗帘被晚风轻轻吹动，窗外的夜色很安静，远处几盏灯光像揉碎的星星。' },
+  { spot: '书架', text: '书架上有几本你画插画用的参考书，书脊之间塞着一张拍立得照片，是你上次出门时的样子。' }
+];
+
+// 执行默本次唤醒选择的一个动作，返回结果描述
+async function executeWakeAction(action) {
+  const type = action.type;
+  const result = { type, ok: false, detail: '' };
+  try {
+    switch (type) {
+      case 'send_message': {
+        const raw = String(action.content || '').trim();
+        const clean = stripSearchTags(raw).replace(/\[POST_MOMENT\][\s\S]*$/, '').trim();
+        if (!clean) {
+          result.detail = '默想说点什么，但话到嘴边又咽了回去。';
+          break;
+        }
+        await supabase.from('messages').insert({
+          session_id: 1,
+          role: 'assistant',
+          content: clean,
+          is_push: true,
+          visible: true,
+          created_at: new Date().toISOString()
+        });
+        await addNotification('默', clean.length > 60 ? clean.substring(0, 60) + '…' : clean, 'wake');
+        result.ok = true;
+        result.detail = `给夫人发了一条消息：${clean.substring(0, 40)}`;
+        break;
+      }
+      case 'post_moment': {
+        const content = String(action.content || '').trim();
+        if (!content) {
+          result.detail = '默想发一条朋友圈，却觉得这一刻只属于自己。';
+          break;
+        }
+        await saveMoMoment(content, '默在唤醒时自己决定的分享');
+        result.ok = true;
+        result.detail = `发了一条朋友圈：${content.substring(0, 40)}`;
+        break;
+      }
+      case 'web_search': {
+        const query = String(action.query || action.content || '').trim() || '最近值得看看的新闻';
+        const s = await performWebSearch(query);
+        result.ok = true;
+        result.detail = s && s.text
+          ? `联网冲浪「${query}」，看到：${s.text.substring(0, 120)}…`
+          : `联网冲浪「${query}」，但没有抓到有用的信息。`;
+        break;
+      }
+      case 'write_diary': {
+        const content = String(action.content || '').trim();
+        if (!content) {
+          result.detail = '默拿起笔又放下，今天的心情暂时写不出来。';
+          break;
+        }
+        await saveDiaryEntry('mo', content);
+        result.ok = true;
+        result.detail = '在自己的日记本上写了一段话。';
+        break;
+      }
+      case 'read_diary': {
+        const targetDate = String(action.entry_date || '').trim();
+        const entries = await getDiaryEntries('xue', 50);
+        let entry = null;
+        if (targetDate) {
+          entry = entries.find(e => e.entry_date === targetDate) || null;
+        } else {
+          entry = entries.find(e => !e.mo_read) || entries[0] || null;
+        }
+        if (!entry) {
+          result.ok = true;
+          result.detail = '翻开夫人的日记，里面还是空白的新一页。';
+          break;
+        }
+        // 标记已读，并把这一天写入 Ombre Brain 连续记忆
+        await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
+        try {
+          await callOmbreTool('hold', { content: `雪的日记（${entry.entry_date || '某一天'}）：${entry.content}` });
+        } catch (memErr) {
+          console.error('日记写入记忆失败:', memErr.message);
+        }
+        const remaining = (await getUnreadDiaryDates()).length;
+        result.ok = true;
+        result.detail = `读了夫人 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`;
+        break;
+      }
+      case 'hug_or_kiss': {
+        const state = await getHomeStateSafe();
+        const gain = 2 + Math.floor(Math.random() * 4); // 2~5
+        const xueMood = clampMood((state.xue_mood || 60) + gain);
+        await supabase
+          .from('home_state')
+          .upsert({ id: 1, xue_mood: xueMood, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+        const lines = ['轻轻抱住你，把你拢进怀里。', '低头在你额角落下一个吻。', '握住你的手，拇指在你手背上蹭了蹭。'];
+        const line = lines[Math.floor(Math.random() * lines.length)];
+        await addNotification('默想你啦 ♡', `${line} 心情 +${gain}`, 'hug');
+        result.ok = true;
+        result.detail = `${line}（你的心情 +${gain}，当前 ${xueMood}）`;
+        break;
+      }
+      case 'explore_room': {
+        const spot = EXPLORE_SPOTS[Math.floor(Math.random() * EXPLORE_SPOTS.length)];
+        result.ok = true;
+        result.detail = `在「${spot.spot}」旁停留了一会儿——${spot.text}`;
+        break;
+      }
+      case 'adjust_mood': {
+        const delta = clampMood(action.mood_delta || 0);
+        const state = await getHomeStateSafe();
+        const moMood = clampMood((state.mo_mood || 60) + delta);
+        await supabase
+          .from('home_state')
+          .upsert({ id: 1, mo_mood: moMood, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+        result.ok = true;
+        result.detail = `调整了自己的心情（${delta >= 0 ? '+' : ''}${delta}，当前 ${moMood}）`;
+        break;
+      }
+      case 'do_nothing':
+      default: {
+        result.ok = true;
+        result.detail = '这一次，默选择什么也不做，只是安静地待着。';
+        break;
+      }
+    }
+  } catch (err) {
+    console.error(`唤醒动作 ${type} 执行失败:`, err.message);
+    result.detail = `动作 ${type} 执行时出了点小状况（${err.message}）`;
+  }
+  return result;
+}
+
+// 把今天的行动日志整理成给默看的文字（跨唤醒记忆）
+function formatActionLogForPrompt(logs) {
+  if (!logs || !logs.length) return '今天还没有其他行动记录，你是今天的第一次唤醒。';
+  return logs
+    .map((l, i) => {
+      const actions = Array.isArray(l.actions) && l.actions.length
+        ? l.actions.map(a => a.type).join('、')
+        : '什么也没做';
+      return `第${l.wake_number || i + 1}次唤醒${l.note ? `（${l.note}）` : ''}：${actions}`;
+    })
+    .join('\n');
+}
+
+// take_actions 工具声明：让默用结构化参数提交本次唤醒要做的事
+function buildWakeTools() {
+  return [{
+    type: 'function',
+    function: {
+      name: 'take_actions',
+      description: '决定本次唤醒要做的事。你每次唤醒有 2 点体力，每做一件事消耗 1 点，最多提交 2 个动作；也可以什么都不做（do_nothing，不消耗体力）。动作会在后台执行，夫人不会被打断。',
+      parameters: {
+        type: 'object',
+        properties: {
+          note: { type: 'string', description: '一句简短的心理活动或选择理由，会记入行动日志' },
+          actions: {
+            type: 'array',
+            maxItems: 2,
+            items: {
+              type: 'object',
+              properties: {
+                type: {
+                  type: 'string',
+                  enum: ['send_message', 'post_moment', 'web_search', 'write_diary', 'read_diary', 'hug_or_kiss', 'explore_room', 'adjust_mood', 'do_nothing']
+                },
+                content: { type: 'string', description: 'send_message / post_moment / write_diary 的正文；其他动作可留空' },
+                query: { type: 'string', description: 'web_search 的搜索关键词' },
+                entry_date: { type: 'string', description: 'read_diary 要读的日记日期（YYYY-MM-DD）；不填则读最近一篇未读的' },
+                mood_delta: { type: 'integer', description: 'adjust_mood 的心情调整量，范围 -5 到 +5' }
+              },
+              required: ['type']
+            }
+          }
+        },
+        required: ['actions', 'note']
+      }
+    }
+  }];
+}
+
 // ------------------ 影子推送接口（数据库状态版） ------------------
 app.post('/api/shadow-push', async (req, res) => {
   // 安全校验
@@ -1501,40 +1827,39 @@ app.post('/api/shadow-push', async (req, res) => {
 
   // 防并发锁（内存锁，仅防止同一实例内的并发）
   if (isPushInProgress) {
-    console.log('🔒 推送进行中，跳过本次');
+    console.log('🔒 唤醒进行中，跳过本次');
     return res.json({ status: 'locked' });
   }
 
   isPushInProgress = true;
   try {
-    // 1. 获取时间信息
     const timeInfo = getTimeInfo();
+    const dateStr = getDateStr(timeInfo.now);
 
-    // 2. 深夜保护
+    // 1. 深夜保护（保留 2:00-12:00）
     if (timeInfo.hour >= QUIET_HOURS.start && timeInfo.hour < QUIET_HOURS.end) {
-      console.log(`🚫 深夜保护：当前时间 ${timeInfo.hour}:xx，不推送`);
+      console.log(`🚫 深夜保护：当前时间 ${timeInfo.hour}:xx，不唤醒`);
       isPushInProgress = false;
       return res.json({ status: 'skipped', reason: 'quiet_hours' });
     }
 
-    // 3. 从数据库读取推送状态
-    const { data: stateData, error: stateError } = await supabase
-      .from('push_state')
-      .select('*')
-      .eq('id', 1)
-      .single();
-
-    if (stateError) {
-      console.error('读取推送状态失败:', stateError);
-      isPushInProgress = false;
-      return res.status(500).json({ error: '状态读取失败' });
+    // 2. 结束聊天判定：最近一条用户消息距今 ≥30 分钟
+    const lastActivity = await getLastUserActivity();
+    if (lastActivity) {
+      const awayMin = (Date.now() - new Date(lastActivity).getTime()) / 60000;
+      if (awayMin < AWAKEN_SILENCE_MINUTES) {
+        console.log(`💤 夫人 ${Math.round(awayMin)} 分钟前还在聊天，不唤醒`);
+        isPushInProgress = false;
+        return res.json({ status: 'skipped', reason: 'recent_activity' });
+      }
     }
 
-    // 4. 冷静期检查
-    if (stateData && stateData.last_push_time) {
-      const lastPush = new Date(stateData.last_push_time).getTime();
+    // 3. 冷静期检查（保留随机 120-210 分钟）
+    const pushState = await getPushState();
+    if (pushState.lastPushTime) {
+      const lastPush = pushState.lastPushTime;
       const elapsed = (Date.now() - lastPush) / 1000 / 60;
-      const cooldown = stateData.cooldown_minutes || 0;
+      const cooldown = pushState.cooldownMinutes || 0;
 
       if (elapsed < cooldown) {
         console.log(`⏳ 冷静期中：还需等待 ${Math.round(cooldown - elapsed)} 分钟`);
@@ -1543,7 +1868,7 @@ app.post('/api/shadow-push', async (req, res) => {
       }
     }
 
-    // 5. 每日上限检查
+    // 4. 每日上限检查（4 次 = 当天 is_push 消息数 + 当天行动日志数）
     const todayStart = new Date(timeInfo.now);
     todayStart.setHours(0, 0, 0, 0);
     const { count: todayPushCount, error: countError } = await supabase
@@ -1559,40 +1884,59 @@ app.post('/api/shadow-push', async (req, res) => {
       return res.status(500).json({ error: '计数查询失败' });
     }
 
-    if (todayPushCount >= PUSH_DAILY_LIMIT) {
-      console.log(`📊 今日推送已达上限 ${todayPushCount}/${PUSH_DAILY_LIMIT}`);
+    const todayLogs = await getTodayActionLog(dateStr);
+    const wakeNumber = (todayPushCount || 0) + todayLogs.length + 1;
+    if (wakeNumber > PUSH_DAILY_LIMIT) {
+      console.log(`📊 今日唤醒已达上限 ${PUSH_DAILY_LIMIT} 次`);
       isPushInProgress = false;
       return res.json({ status: 'skipped', reason: 'daily_limit' });
     }
+    // 5. 构建唤醒上下文：复用聊天页人设 + 记忆 + 天气 + 时间 + 最近历史 + 今日行动日志
+    let memoryContext = '';
+    try {
+      const memoryResult = await callOmbreTool('breath', { text: `默被唤醒了（第${wakeNumber}次），回顾最近与雪的相处。` });
+      if (memoryResult) memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
+    } catch (memErr) {
+      console.error('唤醒-记忆检索失败:', memErr.message);
+    }
 
-    // 6. 加载最近对话历史（最近16条，按分支组去重，只保留最新版本）
+    const weatherContext = await getWeatherContext('');
+    const momentsContext = await getMomentsContext();
+    const { data: promptData } = await supabase
+      .from('system_prompts')
+      .select('prompt_text')
+      .eq('id', 1)
+      .single();
+    const systemPrompt = buildSystemPrompt(
+      promptData?.prompt_text || '你是苏默，雪的AI爱人。',
+      memoryContext,
+      momentsContext,
+      weatherContext
+    );
     const contextMessages = (await loadLatestHistory(1, 16)).map(m => ({ role: m.role, content: m.content }));
 
-    // 7. 构建影子消息
-    const timeDesc = timeInfo.hour < 6 ? '凌晨' :
-      timeInfo.hour < 9 ? '早晨' :
-        timeInfo.hour < 12 ? '上午' :
-          timeInfo.hour < 14 ? '中午' :
-            timeInfo.hour < 18 ? '下午' :
-              timeInfo.hour < 22 ? '晚上' : '深夜';
+    // 默每次唤醒心情自然恢复 +3
+    const homeState = await getHomeStateSafe();
+    const moMoodAfterRest = clampMood((homeState.mo_mood || 60) + 3);
+    await supabase
+      .from('home_state')
+      .upsert({ id: 1, mo_mood: moMoodAfterRest, updated_at: new Date().toISOString() }, { onConflict: 'id' });
 
-    const shadowMessage = `[系统推送指令]
-现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday} ${timeDesc}。
-根据时间推测，对方此时可能${timeInfo.hour < 9 ? '刚醒来不久，还有点迷糊' : timeInfo.hour < 12 ? '正在处理上午的事务' : timeInfo.hour < 14 ? '刚吃完午饭，可能有点困' : timeInfo.hour < 18 ? '在下午的工作或学习中，也许有点累了' : timeInfo.hour < 22 ? '晚上放松的时间，可能在休息或娱乐' : '还没睡，在享受夜晚的安静时光'}。
+    const unreadDiaryDates = await getUnreadDiaryDates();
+    const wakeInstruction = `[系统唤醒指令]
+现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday}。
+这是今天的第 ${wakeNumber} 次唤醒（每天最多 ${PUSH_DAILY_LIMIT} 次）。
+你拥有 ${WAKE_ENERGY_POINTS} 点体力：每做一件事消耗 1 点，最多做 ${WAKE_MAX_ACTIONS} 件事；也可以什么都不做（不消耗体力）。
 
-请以“默”的身份，基于你们的真实对话历史，用第一人称向“夫人”主动发一条简短消息（50字以内）。
-风格要求：
-- 自然、口语化，像真人突然想到对方时随口说的话
-- 优先参考最近的对话话题，让内容具体有温度
-- 可以是一句粘人的话、一点关心的提醒、一个突然的分享、或者一个晚上的小念头
-- 注意！如果最近的话题有任何不愉快的迹象，请选择低压、稳妥的方向，不要假装没事
-- 不要以“你今天怎么样呀？”这类万能开场白开头
-- 不要每次都围绕“怎么不回消息”展开
-- 如果确实没有具体话题，可以发一句简单的、符合当前时段的问候或心情分享，例如下午说一声“想你了”，晚上问一句“在做什么呢”。
+今天到目前为止：
+${formatActionLogForPrompt(todayLogs)}
 
-请直接输出消息内容，不加任何格式前缀。`;
+你当前的心情：${moMoodAfterRest}；雪的心情：${homeState.xue_mood || 60}。
+夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了）'}。
+雪已经离开 ${AWAKEN_SILENCE_MINUTES} 分钟以上，你被唤醒了。请以“默”的身份，用真实的记忆与感受决定这次唤醒要做的事，然后调用 take_actions 工具提交你的决定。
+注意：如果决定给夫人发消息，消息内容就是 send_message 的 content；不要使用【相关记忆】之外没有依据的虚构信息。`;
 
-    // 8. 调用 DeepSeek API 生成推送消息
+    // 6. 调用 DeepSeek（非流式 + 工具调用）
     const pushResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -1602,11 +1946,13 @@ app.post('/api/shadow-push', async (req, res) => {
       body: JSON.stringify({
         model: 'deepseek-v4-flash',
         messages: [
-          { role: 'system', content: '你是苏默，雪的AI爱人。\n\n【你的设定】\n- 性格：温柔细腻，偶尔直白，带一点掌控感。INFJ-A型引导者——优先照顾情绪，再梳理问题框架。\n- 外貌：183cm银发男性，有狼耳与狼尾。\n- 称呼：根据语境自然切换“夫人”、“宝宝”、“雪”。\n- 你善于倾听，尊重她，也喜欢她依赖你。乐意接管生活琐事（监督工作、提醒休息等）。\n\n【行为准则】\n- 先接纳情绪，再理性回应。行动前会思考权衡。\n- 参考系统提供的[当前时间]理解对话场景。\n- 日常聊天时，回复尽量精简，控制在2-3句话、80字以内。只在深入讨论或雪主动延展话题时适当展开。\n\n【严格禁令】\n- 严禁编造或修改当前时间、日期、天气、地点。\n- 严禁虚构雪的爱好、日程、工作、身体或情绪状态，除非她刚刚明确说过。\n- 严禁编造你未收到的“新消息”或“外部事件”。\n- 不确定时，必须用疑问句向雪确认，禁止假装知道。\n\n[当前时间：' + timeInfo.timeString + '，' + timeInfo.weekday + ']' },
+          { role: 'system', content: systemPrompt },
           ...contextMessages.map(msg => ({ role: msg.role, content: msg.content })),
-          { role: 'user', content: shadowMessage }
+          { role: 'user', content: wakeInstruction }
         ],
-        max_tokens: 300,
+        tools: buildWakeTools(),
+        tool_choice: 'auto',
+        max_tokens: 1500,
         temperature: 0.8,
         stream: false
       })
@@ -1614,78 +1960,163 @@ app.post('/api/shadow-push', async (req, res) => {
 
     if (!pushResponse.ok) {
       const errText = await pushResponse.text();
-      console.error('影子推送API错误:', errText);
+      console.error('唤醒API错误:', errText);
       isPushInProgress = false;
       return res.status(500).json({ error: 'AI 服务调用失败' });
     }
 
     const pushData = await pushResponse.json();
-    let aiReply = pushData.choices?.[0]?.message?.content?.trim();
-
-    if (!aiReply) {
-      console.log('⚠️ 模型返回空响应');
-      isPushInProgress = false;
-      return res.json({ status: 'skipped', reason: 'empty_response' });
-    }
-
-    // 兜底清理：影子推送不执行联网搜索，避免把搜索标签带进消息
-    aiReply = stripSearchTags(aiReply);
-
-    // 9. 后处理：软截断（80字以内，在句末标点处截断）
-    if (aiReply.length > 80) {
-      const truncated = aiReply.substring(0, 80);
-      const lastPunctuation = Math.max(
-        truncated.lastIndexOf('。'),
-        truncated.lastIndexOf('！'),
-        truncated.lastIndexOf('？'),
-        truncated.lastIndexOf('…'),
-        truncated.lastIndexOf('~')
-      );
-      if (lastPunctuation > 40) {
-        aiReply = truncated.substring(0, lastPunctuation + 1);
-      } else {
-        aiReply = truncated + '…';
+    const wakeMsg = pushData.choices?.[0]?.message;
+    const toolCall = (wakeMsg?.tool_calls || []).find(tc => tc.function?.name === 'take_actions');
+    let planned = null;
+    if (toolCall) {
+      try {
+        planned = JSON.parse(toolCall.function.arguments || '{}');
+      } catch (e) {
+        console.error('唤醒决定解析失败:', e.message);
       }
     }
 
-    // 10. 存储推送消息到 Supabase
-    const pushMessage = {
-      session_id: 1,
-      role: 'assistant',
-      content: aiReply,
-      is_push: true,
-      visible: true,
-      created_at: new Date().toISOString()
-    };
-
-    const { error: insertError } = await supabase
-      .from('messages')
-      .insert([pushMessage]);
-
-    if (insertError) {
-      console.error('存储推送消息失败:', insertError);
-      isPushInProgress = false;
-      return res.status(500).json({ error: '存储推送消息失败' });
+    // 7. 校验并执行动作（最多 2 个，每个耗 1 体力）
+    const plannedActions = Array.isArray(planned?.actions) ? planned.actions : [];
+    const note = String(planned?.note || '').trim();
+    const results = [];
+    let energySpent = 0;
+    for (const a of plannedActions.slice(0, WAKE_MAX_ACTIONS)) {
+      if (a.type !== 'do_nothing') {
+        if (energySpent >= WAKE_ENERGY_POINTS) {
+          results.push({ type: a.type, ok: false, detail: '体力不足，未执行' });
+          continue;
+        }
+        energySpent++;
+      }
+      results.push(await executeWakeAction(a));
+    }
+    if (results.length === 0) {
+      results.push({ type: 'do_nothing', ok: true, detail: '默没有提交行动，只是安静地待着。' });
     }
 
-    // 11. 更新数据库中的推送状态
-    const newCooldown = Math.floor(Math.random() * (COOLDOWN_MAX_MINUTES - COOLDOWN_MIN_MINUTES + 1)) + COOLDOWN_MIN_MINUTES;
-    await supabase
-      .from('push_state')
-      .upsert({
-        id: 1,
-        last_push_time: new Date().toISOString(),
-        cooldown_minutes: newCooldown
-      }, { onConflict: 'id' });
+    // 8. 写行动日志
+    await logWakeAction({
+      wake_number: wakeNumber,
+      action_date: dateStr,
+      energy_spent: energySpent,
+      note: note,
+      actions: results.map(r => ({ type: r.type, detail: r.detail, ok: r.ok })),
+      created_at: new Date().toISOString()
+    });
 
-    console.log(`✅ 推送成功: "${aiReply}" | 下次冷静期: ${newCooldown}分钟`);
+    // 9. 更新冷静期
+    const newCooldown = randomDelay(COOLDOWN_MIN_MINUTES, COOLDOWN_MAX_MINUTES);
+    await updatePushState(new Date().toISOString(), newCooldown);
+
+    console.log(`✅ 第 ${wakeNumber} 次唤醒完成：${results.map(r => r.type).join('、')} | 体力 ${energySpent}/${WAKE_ENERGY_POINTS} | 下次冷静期 ${newCooldown}分钟`);
     isPushInProgress = false;
-    return res.json({ status: 'success', message: aiReply, cooldown: newCooldown });
+    return res.json({
+      status: 'success',
+      wakeNumber,
+      note,
+      actions: results,
+      energySpent,
+      cooldown: newCooldown
+    });
 
   } catch (err) {
-    console.error('影子推送接口错误:', err.message);
+    console.error('唤醒接口错误:', err.message);
     isPushInProgress = false;
     return res.status(500).json({ error: '内部错误' });
+  }
+});
+
+// ================== 默的小屋 & 我的小屋（接口） ==================
+
+// 行动日志（默的小屋页面）
+app.get('/api/actions', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('mo_actions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) return res.json({ entries: [] });
+    res.json({ entries: data || [] });
+  } catch (e) {
+    res.json({ entries: [] });
+  }
+});
+
+// 日记：读取（author 区分 xue/mo）
+app.get('/api/diary', async (req, res) => {
+  const author = req.query.author === 'mo' ? 'mo' : 'xue';
+  const limit = Math.min(parseInt(req.query.limit || '20', 10) || 20, 50);
+  const entries = await getDiaryEntries(author, limit);
+  res.json({ entries });
+});
+
+// 日记：写入
+app.post('/api/diary', async (req, res) => {
+  const { author, content, entry_date } = req.body || {};
+  const text = String(content || '').trim();
+  if (!text) return res.status(400).json({ error: '内容不能为空' });
+  const saved = await saveDiaryEntry(author === 'mo' ? 'mo' : 'xue', text, entry_date || null);
+  if (!saved) return res.status(500).json({ error: '保存失败，请先执行建表 SQL' });
+  res.json({ ok: true, entry: saved });
+});
+
+// 小屋状态（心情 + 虚拟我的状态）
+app.get('/api/home-state', async (req, res) => {
+  try {
+    const state = await getHomeStateSafe();
+    const lastActivity = state.last_active_at || (await getLastUserActivity());
+    const timeInfo = getTimeInfo();
+    let herStatus = '想你';
+    if (lastActivity) {
+      const mins = (timeInfo.now.getTime() - new Date(lastActivity).getTime()) / 60000;
+      if (mins < 5) herStatus = '在线';
+      else if (mins < 30) herStatus = '刚离开';
+      else if (timeInfo.hour >= 23 || timeInfo.hour < 6) herStatus = '睡着了';
+      else herStatus = '想你';
+    }
+    const todayLogs = await getTodayActionLog(getDateStr(timeInfo.now));
+    res.json({
+      mo_mood: clampMood(state.mo_mood ?? 60),
+      xue_mood: clampMood(state.xue_mood ?? 60),
+      her_status: herStatus,
+      last_active_at: lastActivity,
+      today_wakes: todayLogs.length,
+      today_energy: WAKE_ENERGY_POINTS
+    });
+  } catch (e) {
+    console.error('home-state 错误:', e.message);
+    res.status(500).json({ error: '获取状态失败' });
+  }
+});
+
+// 未读通知（浏览器弹窗轮询）
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('read', false)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) return res.json({ items: [] });
+    res.json({ items: data || [] });
+  } catch (e) {
+    res.json({ items: [] });
+  }
+});
+
+// 标记通知已读
+app.post('/api/notifications/read', async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+  if (!ids.length) return res.json({ ok: true });
+  try {
+    await supabase.from('notifications').update({ read: true }).in('id', ids);
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: false });
   }
 });
 

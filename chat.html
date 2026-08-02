@@ -29,14 +29,34 @@
     .header {
       background-color: #ffffff;
       padding: 16px 20px 12px;
+      border-bottom: 1px solid #e9e9e9;
+      flex-shrink: 0;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+      display: flex;
+      align-items: center;
+      position: relative;
+    }
+
+    .header .header-settings-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #999;
+      padding: 4px;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .header .header-title {
+      position: absolute;
+      left: 0;
+      right: 0;
       text-align: center;
       font-size: 18px;
       font-weight: 500;
       color: #333;
-      border-bottom: 1px solid #e9e9e9;
-      flex-shrink: 0;
       letter-spacing: 0.5px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+      pointer-events: none;
     }
 
     .message-list {
@@ -807,8 +827,11 @@
   </div>
 
   <div id="chatApp">
-    <!-- 顶部标题栏 -->
-    <div class="header" id="headerTitle">默</div>
+    <!-- 顶部标题栏（左上角设置入口） -->
+    <div class="header" id="headerBar">
+      <button id="headerSettingsBtn" class="header-settings-btn" aria-label="设置" title="设置"></button>
+      <div class="header-title" id="headerTitle">默</div>
+    </div>
 
     <!-- 页面容器：用于切换聊天页和小屋页 -->
     <div class="page-container" id="pageContainer">
@@ -831,12 +854,29 @@
         </div>
       </div>
 
-      <!-- 小屋页面（暂时留空，后面填充） -->
-      <div class="page" id="homePage">
+      <!-- together（原小屋页：天气 + 朋友圈入口） -->
+      <div class="page" id="togetherPage">
         <div class="home-content">
-          <!-- 这里以后放朋友圈卡片和其他功能按钮 -->
         </div>
       </div>
+
+      <!-- 默的小屋（心情 + 行动日志） -->
+      <div class="page" id="moHomePage">
+        <div class="home-content" id="moHomeContent"></div>
+      </div>
+
+      <!-- 记忆（占位） -->
+      <div class="page" id="memoryPage">
+        <div class="home-content" style="display:flex;align-items:center;justify-content:center;color:#bbb;font-size:14px;text-align:center;">
+          记忆系统规划中，敬请期待~
+        </div>
+      </div>
+
+      <!-- 我的小屋（私人房间） -->
+      <div class="page" id="xueHomePage">
+        <div class="home-content" id="xueHomeContent"></div>
+      </div>
+
       <!-- 设置页面 -->
       <div id="settingsPage" class="page">
         <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
@@ -892,6 +932,13 @@
               </div>
             </div>
 
+            <!-- 开启提醒（浏览器通知） -->
+            <div class="setting-card" onclick="enableNotifications()">
+              <span id="notifyIcon"></span>
+              <span class="card-title">开启提醒</span>
+              <span id="notifyStatus" style="margin-left:auto;font-size:12px;color:#999;"></span>
+            </div>
+
           </div>
         </div>
       </div>
@@ -899,14 +946,20 @@
 
     <!-- 底部状态栏 -->
     <div class="tab-bar" id="tabBar">
-      <button class="tab-btn" data-page="homePage" aria-label="小屋">
-        <span class="tab-icon" id="homeIcon"></span>
+      <button class="tab-btn" data-page="moHomePage" aria-label="默的小屋">
+        <span class="tab-icon" id="moHomeIcon"></span>
+      </button>
+      <button class="tab-btn" data-page="togetherPage" aria-label="together">
+        <span class="tab-icon" id="togetherIcon"></span>
       </button>
       <button class="tab-btn active" data-page="chatPage" aria-label="聊天">
         <span class="tab-icon" id="chatIcon"></span>
       </button>
-      <button class="tab-btn" data-page="settingsPage" aria-label="设置">
-        <span class="tab-icon" id="settingsIcon"></span>
+      <button class="tab-btn" data-page="memoryPage" aria-label="记忆">
+        <span class="tab-icon" id="memoryIcon"></span>
+      </button>
+      <button class="tab-btn" data-page="xueHomePage" aria-label="我的小屋">
+        <span class="tab-icon" id="xueHomeIcon"></span>
       </button>
     </div>
 
@@ -943,7 +996,10 @@
       const headerTitle = document.getElementById('headerTitle');
       const pageContainer = document.getElementById('pageContainer');
       const chatPage = document.getElementById('chatPage');
-      const homePage = document.getElementById('homePage');
+      const moHomePage = document.getElementById('moHomePage');
+      const togetherPage = document.getElementById('togetherPage');
+      const memoryPage = document.getElementById('memoryPage');
+      const xueHomePage = document.getElementById('xueHomePage');
       const settingsPage = document.getElementById('settingsPage');
       const tabBar = document.getElementById('tabBar');
 
@@ -962,16 +1018,24 @@
       let pendingImage = null;
       let pendingFile = null;
 
-      const homeIcon = document.getElementById('homeIcon');
+      const moHomeIcon = document.getElementById('moHomeIcon');
+      const togetherIcon = document.getElementById('togetherIcon');
       const chatIcon = document.getElementById('chatIcon');
-      const settingsIcon = document.getElementById('settingsIcon');
+      const memoryIcon = document.getElementById('memoryIcon');
+      const xueHomeIcon = document.getElementById('xueHomeIcon');
+      const headerSettingsBtn = document.getElementById('headerSettingsBtn');
 
       // ---------- 页面切换逻辑 ----------
       const pages = {
-        homePage: { title: '小屋', el: homePage },
+        moHomePage: { title: '默的小屋', el: moHomePage },
+        togetherPage: { title: 'together', el: togetherPage },
         chatPage: { title: '默', el: chatPage },
-        settingsPage: { title: '设置', el: settingsPage } 
+        memoryPage: { title: '记忆', el: memoryPage },
+        xueHomePage: { title: '我的小屋', el: xueHomePage },
+        settingsPage: { title: '设置', el: settingsPage }
       };
+
+      let currentPageName = 'chatPage';
 
       function switchPage(pageName) {
         // 隐藏所有页面
@@ -989,6 +1053,7 @@
         if (pages[pageName]) {
           headerTitle.textContent = pages[pageName].title;
         }
+        currentPageName = pageName;
 
         // 更新底部状态栏按钮激活状态
         tabBar.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1004,22 +1069,39 @@
             initSettingsPage();
           }, 50);
         }
-        // 切回小屋页面时刷新天气（后端有缓存，不会频繁请求）
-        if (pageName === 'homePage') {
+        // 切到各页面时刷新内容（后端有缓存，不会频繁请求）
+        if (pageName === 'togetherPage') {
           setTimeout(() => loadHomeWeather(), 50);
+        }
+        if (pageName === 'moHomePage') {
+          setTimeout(() => renderMoHome(), 50);
+        }
+        if (pageName === 'xueHomePage') {
+          setTimeout(() => renderXueHome(), 50);
         }
       }
 
       function renderTabIcons(activePage) {
-        homeIcon.innerHTML = '';
-        homeIcon.appendChild(createHouseIcon(activePage === 'homePage'));
-
+        moHomeIcon.innerHTML = '';
+        moHomeIcon.appendChild(createHouseIcon(activePage === 'moHomePage'));
+        togetherIcon.innerHTML = '';
+        togetherIcon.appendChild(createOrbitIcon());
         chatIcon.innerHTML = '';
         chatIcon.appendChild(createChatIcon(activePage === 'chatPage'));
-
-        settingsIcon.innerHTML = '';
-        settingsIcon.appendChild(createSettingsIcon(activePage === 'settingsPage'));
+        memoryIcon.innerHTML = '';
+        memoryIcon.appendChild(createBookIcon());
+        xueHomeIcon.innerHTML = '';
+        xueHomeIcon.appendChild(createHeartBigIcon(activePage === 'xueHomePage'));
       }
+
+      // 聊天页左上角设置入口（再点一次回到之前的页面）
+      headerSettingsBtn.addEventListener('click', () => {
+        if (currentPageName === 'settingsPage') {
+          switchPage('chatPage');
+        } else {
+          switchPage('settingsPage');
+        }
+      });
 
       // 给状态栏按钮绑定点击事件
       tabBar.addEventListener('click', (e) => {
@@ -1067,6 +1149,10 @@
         const fontIconSpan = document.getElementById('fontIcon');
         if (fontIconSpan && !fontIconSpan.hasChildNodes()) {
           fontIconSpan.appendChild(createFontIcon());
+        }
+        const notifyIconSpan = document.getElementById('notifyIcon');
+        if (notifyIconSpan && !notifyIconSpan.hasChildNodes()) {
+          notifyIconSpan.appendChild(createBellIcon());
         }
         const promptChevron = document.getElementById('promptChevron');
         if (promptChevron && !promptChevron.hasChildNodes()) {
@@ -1231,9 +1317,9 @@
       }
       window.savePrompt = savePrompt;
 
-      // 在小屋页面渲染天气卡片与朋友圈入口
-      function renderHomePage() {
-        const homeContent = homePage.querySelector('.home-content');
+      // 在 together 页面渲染天气卡片与朋友圈入口
+      function renderTogetherPage() {
+        const homeContent = togetherPage.querySelector('.home-content');
         if (!homeContent) return;
         homeContent.innerHTML = '';
 
@@ -1319,8 +1405,137 @@
       }
       window.switchHomeCity = switchHomeCity;
 
-      // 初始化时渲染小屋页面
-      renderHomePage();
+      // 默的小屋：心情 + 今日行动 + 行动日志时间线
+      async function renderMoHome() {
+        const box = document.getElementById('moHomeContent');
+        if (!box) return;
+        box.innerHTML = '<div class="weather-loading">加载中…</div>';
+        try {
+          const [stateRes, actionsRes, diaryRes] = await Promise.all([
+            fetch('/api/home-state'),
+            fetch('/api/actions'),
+            fetch('/api/diary?author=xue&limit=20')
+          ]);
+          const state = await stateRes.json();
+          const actions = (await actionsRes.json()).entries || [];
+          const diary = (await diaryRes.json()).entries || [];
+          const unreadCount = diary.filter(d => !d.mo_read).length;
+
+          const moodBar = (v) => `
+            <div style="height:8px;border-radius:4px;background:#eef0f3;overflow:hidden;margin-top:6px;">
+              <div style="height:100%;width:${Math.max(0, Math.min(100, v))}%;background:linear-gradient(90deg,#ff9a9e,#fecfef);border-radius:4px;"></div>
+            </div>`;
+
+          let html = `
+            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+              <div style="font-size:15px;font-weight:600;color:#333;">默</div>
+              <div style="font-size:13px;color:#666;margin-top:6px;">心情：${state.mo_mood} / 100</div>
+              ${moodBar(state.mo_mood)}
+              <div style="font-size:13px;color:#666;margin-top:10px;">今日唤醒：${state.today_wakes} 次 · 每次体力 ${state.today_energy} 点</div>
+            </div>
+            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">雪的日记足迹</div>
+              ${diary.length ? diary.slice(0, 10).map(d => `
+                <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#666;padding:3px 0;">
+                  <span>${escapeHtml2(d.entry_date || '未标注日期')}</span>
+                  <span style="margin-left:auto;font-size:12px;${d.mo_read ? 'color:#aaa;' : 'color:#1e90ff;'}">${d.mo_read ? '已读' : '未读'}</span>
+                </div>`).join('') : '<div style="font-size:13px;color:#bbb;">还没有日记</div>'}
+              ${unreadCount > 0 ? `<div style="font-size:12px;color:#1e90ff;margin-top:6px;">还有 ${unreadCount} 天没读</div>` : ''}
+            </div>
+            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">行动日志</div>
+              ${actions.length ? actions.map(a => `
+                <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f3f3f3;">
+                  <div style="color:#999;font-size:12px;">第 ${a.wake_number} 次唤醒 · ${new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${a.note ? ' · ' + escapeHtml2(a.note) : ''}</div>
+                  <div style="margin-top:4px;">${(a.actions || []).map(x => `${x.type}${x.detail ? '：' + escapeHtml2(x.detail) : ''}`).join('<br>')}</div>
+                </div>`).join('') : '<div style="font-size:13px;color:#bbb;">还没有行动记录</div>'}
+            </div>`;
+          box.innerHTML = html;
+        } catch (e) {
+          box.innerHTML = '<div class="weather-loading">加载失败，请稍后刷新</div>';
+        }
+      }
+
+      // 我的小屋：日记 + 虚拟我 + 心情
+      async function renderXueHome() {
+        const box = document.getElementById('xueHomeContent');
+        if (!box) return;
+        box.innerHTML = '<div class="weather-loading">加载中…</div>';
+        try {
+          const [stateRes, diaryRes] = await Promise.all([
+            fetch('/api/home-state'),
+            fetch('/api/diary?author=xue&limit=20')
+          ]);
+          const state = await stateRes.json();
+          const diary = (await diaryRes.json()).entries || [];
+          const today = new Date().toISOString().slice(0, 10);
+          const todayEntry = diary.find(d => d.entry_date === today);
+          const statusEmoji = state.her_status === '在线' ? '✨' : state.her_status === '刚离开' ? '🌙' : state.her_status === '睡着了' ? '😴' : '💭';
+
+          box.innerHTML = `
+            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+              <div style="font-size:15px;font-weight:600;color:#333;">虚拟的我</div>
+              <div style="font-size:32px;margin:8px 0;">${statusEmoji}</div>
+              <div style="font-size:14px;color:#666;">状态：${state.her_status}</div>
+              <div style="font-size:13px;color:#888;margin-top:4px;">心情：${state.xue_mood} / 100</div>
+            </div>
+            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+              <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:10px;">
+                <span style="font-size:15px;font-weight:600;color:#333;">我的日记</span>
+              </div>
+              <textarea id="diaryInput" placeholder="今天想写点什么…"
+                style="width:100%;min-height:120px;border:1px solid #e9e9e9;border-radius:12px;padding:10px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;">${escapeHtml2(todayEntry ? todayEntry.content : '')}</textarea>
+              <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+                <button onclick="saveMyDiary()" style="padding:8px 20px;border:none;border-radius:20px;background:#1e90ff;color:#fff;cursor:pointer;font-size:14px;">保存日记</button>
+              </div>
+              <div style="font-size:12px;color:#1e90ff;margin-top:4px;text-align:right;" id="diaryStatus"></div>
+              <div style="font-size:13px;color:#666;margin-top:12px;font-weight:500;">历史</div>
+              ${diary.slice(0, 15).map(d => `
+                <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f3f3f3;">
+                  <span style="color:#999;">${escapeHtml2(d.entry_date || '未标注日期')}</span>${d.mo_read ? ' <span style="font-size:12px;color:#1e90ff;">（默读过）</span>' : ''}
+                  <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content.length > 80 ? d.content.substring(0, 80) + '…' : d.content)}</div>
+                </div>`).join('')}
+            </div>
+            <div class="feature-card" style="align-items:flex-start;text-align:left;font-size:13px;color:#bbb;">
+              账本 · 彩蛋 · 虚拟我形象 → 第二期见~
+            </div>`;
+          window.__todayDiaryEntry = todayEntry ? todayEntry.id : null;
+        } catch (e) {
+          box.innerHTML = '<div class="weather-loading">加载失败，请稍后刷新</div>';
+        }
+      }
+
+      // 保存我的日记（今天的）
+      async function saveMyDiary() {
+        const input = document.getElementById('diaryInput');
+        const status = document.getElementById('diaryStatus');
+        const content = input.value.trim();
+        if (!content) { status.textContent = '写点什么再保存吧~'; return; }
+        try {
+          const res = await fetch('/api/diary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ author: 'xue', content, entry_date: new Date().toISOString().slice(0, 10) })
+          });
+          if (!res.ok) throw new Error('bad');
+          status.textContent = '✅ 已保存，默醒着的时候会来读的~';
+          setTimeout(() => { status.textContent = ''; }, 2500);
+          renderXueHome();
+        } catch (e) {
+          status.textContent = '❌ 保存失败，请先确认后端已部署';
+        }
+      }
+      window.saveMyDiary = saveMyDiary;
+
+      // 轻量转义（页面模板用）
+      function escapeHtml2(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+      }
+
+      // 初始化时渲染 together 页面
+      renderTogetherPage();
 
       // 初始状态：默认聊天页
       switchPage('chatPage');
@@ -1628,11 +1843,54 @@
         return svg;
       }
 
+      // 提醒图标（铃铛）
+      function createBellIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9');
+        svg.appendChild(p1);
+        const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'M10.3 21a1.94 1.94 0 0 0 3.4 0'); svg.appendChild(p2);
+        return svg;
+      }
+
       // 设置卡片用的展开/收起箭头（统一 16px）
       function createSettingChevron(open) {
         const svg = open ? createChevronDownIcon() : createChevronRightIcon();
         svg.setAttribute('width', '16');
         svg.setAttribute('height', '16');
+        return svg;
+      }
+
+      // 占位图标：书本（记忆标签）
+      function createBookIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '24'); svg.setAttribute('height', '24');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20');
+        svg.appendChild(p1);
+        return svg;
+      }
+
+      // 占位图标：大爱心（我的小屋标签）
+      function createHeartBigIcon(active) {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '24'); svg.setAttribute('height', '24');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', active ? 'currentColor' : 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p = document.createElementNS(svgNS, 'path');
+        p.setAttribute('d', 'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z');
+        svg.appendChild(p);
         return svg;
       }
 
@@ -2404,8 +2662,54 @@
         }
       }
 
+      // ---------- 浏览器通知 ----------
+      async function enableNotifications() {
+        const statusEl = document.getElementById('notifyStatus');
+        if (!('Notification' in window)) {
+          if (statusEl) statusEl.textContent = '❌ 浏览器不支持';
+          return;
+        }
+        if (Notification.permission === 'granted') {
+          if (statusEl) statusEl.textContent = '✅ 已开启';
+          return;
+        }
+        try {
+          const result = await Notification.requestPermission();
+          if (statusEl) statusEl.textContent = result === 'granted' ? '✅ 已开启' : '未授权';
+        } catch (e) {
+          if (statusEl) statusEl.textContent = '❌ 授权失败';
+        }
+      }
+      window.enableNotifications = enableNotifications;
+
+      // 轮询未读通知并弹出浏览器通知（25 秒一次）
+      async function pollNotifications() {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return;
+        try {
+          const res = await fetch('/api/notifications');
+          const data = await res.json();
+          const items = data.items || [];
+          if (!items.length) return;
+          for (const item of items) {
+            try {
+              new Notification(item.title || '默', { body: item.body || '', tag: 'mo-' + item.id, icon: '/icon-192.png' });
+            } catch (e) { /* 单条失败不影响 */ }
+          }
+          await fetch('/api/notifications/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: items.map(i => i.id) })
+          });
+        } catch (e) { /* 轮询失败静默 */ }
+      }
+
+      // 标题栏设置图标
+      if (headerSettingsBtn && !headerSettingsBtn.hasChildNodes()) {
+        headerSettingsBtn.appendChild(createSettingsIcon(false));
+      }
+
       unlockBtn.addEventListener('click', () => {
-        if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; loadHistory(); userInput.focus(); loginError.style.display = 'none'; }
+        if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; loadHistory(); userInput.focus(); loginError.style.display = 'none'; setInterval(pollNotifications, 25000); }
         else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
       });
       passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); } });
