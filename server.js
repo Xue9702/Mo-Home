@@ -985,6 +985,9 @@ app.post('/api/chat', async (req, res) => {
     // 默读过的雪日记稳定注入，保证聊天窗口的他记得
     const readDiaryContext = await getReadDiaryContext();
     if (readDiaryContext) memoryContext += readDiaryContext;
+    // 默最近几次唤醒的活动记录，保持唤醒与聊天连贯
+    const recentActionContext = await getRecentActionContext();
+    if (recentActionContext) memoryContext += recentActionContext;
 
     // 构建动态的 System Prompt
     const momentsContext = await getMomentsContext();
@@ -1330,6 +1333,8 @@ app.post('/api/regenerate', async (req, res) => {
     }
     const readDiaryContext = await getReadDiaryContext();
     if (readDiaryContext) memoryContext += readDiaryContext;
+    const recentActionContext = await getRecentActionContext();
+    if (recentActionContext) memoryContext += recentActionContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
@@ -1633,6 +1638,28 @@ async function getReadDiaryContext() {
       .map(d => `- ${d.entry_date || '某一天'}：${d.content}`)
       .join('\n');
     return `\n\n【默读过的雪日记】\n${lines}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+// 默最近几次唤醒的活动记录（稳定注入聊天上下文，保持唤醒与聊天的连贯性）
+async function getRecentActionContext(limit = 4) {
+  try {
+    const { data, error } = await supabase
+      .from('mo_actions')
+      .select('wake_number, action_date, note, actions, created_at')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error || !data || data.length === 0) return '';
+    const lines = data.map(a => {
+      const acts = Array.isArray(a.actions) && a.actions.length
+        ? a.actions.map(x => `${x.type}${x.detail ? '：' + x.detail : ''}`).join('；')
+        : '只是安静地待着';
+      const date = a.action_date || (a.created_at ? String(a.created_at).slice(0, 10) : '某天');
+      return `- 第${a.wake_number || '?'}次唤醒（${date}${a.note ? '，字条：' + a.note : ''}）：${acts}`;
+    }).join('\n');
+    return `\n\n【默最近的活动】\n${lines}`;
   } catch (e) {
     return '';
   }
@@ -2359,6 +2386,12 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       actions: steps.map(s => ({ type: s.id, detail: s.outcome, ok: true })),
       created_at: new Date().toISOString()
     });
+    // 唤醒记录同步写入 Ombre Brain，长线记忆也能检索到
+    try {
+      await callOmbreTool('hold', { content: `默第${wakeNumber}次唤醒（${dateStr}）：${steps.map(s => `${s.id}：${s.outcome}`).join('；')}` });
+    } catch (memErr) {
+      console.error('唤醒记录写入记忆失败:', memErr.message);
+    }
 
     // 9. 更新冷静期
     const newCooldown = randomDelay(COOLDOWN_MIN_MINUTES, COOLDOWN_MAX_MINUTES);
@@ -3147,6 +3180,8 @@ app.post('/api/edit-message', async (req, res) => {
     }
     const readDiaryContext = await getReadDiaryContext();
     if (readDiaryContext) memoryContext += readDiaryContext;
+    const recentActionContext = await getRecentActionContext();
+    if (recentActionContext) memoryContext += recentActionContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
