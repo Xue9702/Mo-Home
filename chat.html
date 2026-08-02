@@ -810,6 +810,226 @@
       margin-bottom: 6px;
       word-break: break-all;
     }
+    /* ========== 粉蓝玻璃风（第一版） ========== */
+    :root {
+      --pb-pink: #ff9eb5;
+      --pb-blue: #8ec5ff;
+      --pb-grad: linear-gradient(135deg, #ff9db4, #7fb8ff);
+      --pb-grad-soft: linear-gradient(135deg, #ffe3ec, #dcebff);
+      --glass-bg: rgba(255, 255, 255, 0.58);
+      --glass-border: rgba(255, 255, 255, 0.75);
+      --glass-shadow: 0 8px 28px rgba(180, 140, 190, 0.16);
+    }
+
+    body {
+      background: linear-gradient(165deg, #fdf0f4 0%, #f4f6ff 45%, #eaf1ff 100%) fixed;
+    }
+
+    body::before,
+    body::after {
+      content: '';
+      position: fixed;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      filter: blur(100px);
+      opacity: 0.5;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    body::before {
+      background: #ffc3d4;
+      top: -140px;
+      right: -110px;
+    }
+
+    body::after {
+      background: #a9cdff;
+      bottom: -160px;
+      left: -120px;
+    }
+
+    #loginBox,
+    #chatApp {
+      position: relative;
+      z-index: 1;
+    }
+
+    .header {
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.7);
+      box-shadow: 0 4px 20px rgba(180, 140, 190, 0.08);
+    }
+
+    .header-title {
+      background: linear-gradient(135deg, #e1789a, #7fb8ff);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+
+    .header .header-settings-btn {
+      color: #c98bab;
+    }
+
+    .login-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px) saturate(160%);
+      -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border: 1px solid var(--glass-border);
+      box-shadow: 0 16px 48px rgba(180, 140, 190, 0.22);
+    }
+
+    .tab-bar {
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(20px) saturate(170%);
+      -webkit-backdrop-filter: blur(20px) saturate(170%);
+      border: 1px solid var(--glass-border);
+      border-radius: 26px;
+      margin: 0 14px 12px;
+      padding: 6px 4px;
+      box-shadow: 0 8px 28px rgba(180, 140, 190, 0.18);
+      width: auto;
+    }
+
+    .tab-btn.active .tab-icon {
+      color: #e1789a;
+    }
+
+    .feature-card,
+    .setting-card,
+    .setting-sub-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px) saturate(160%);
+      -webkit-backdrop-filter: blur(16px) saturate(160%);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+    }
+
+    .weather-card {
+      background: var(--pb-grad-soft);
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      box-shadow: 0 10px 30px rgba(200, 150, 190, 0.18);
+    }
+
+    .setting-panel,
+    .font-dropdown {
+      background: rgba(255, 255, 255, 0.5);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-color: rgba(255, 255, 255, 0.7);
+    }
+
+    .font-row.selected {
+      background: rgba(255, 158, 181, 0.14);
+      color: #e1789a;
+    }
+
+    #inputArea {
+      background: rgba(255, 255, 255, 0.5);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border-top: 1px solid rgba(255, 255, 255, 0.7);
+    }
+
+    #userInput {
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+      border-radius: 20px;
+      box-shadow: inset 0 1px 3px rgba(180, 140, 190, 0.08);
+    }
+
+    .attach-btn,
+    #sendBtn {
+      background: var(--pb-grad);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(240, 130, 160, 0.35);
+    }
+
+    .message.assistant .bubble {
+      background: rgba(255, 255, 255, 0.66);
+      backdrop-filter: blur(12px) saturate(150%);
+      -webkit-backdrop-filter: blur(12px) saturate(150%);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      box-shadow: 0 4px 16px rgba(180, 140, 190, 0.12);
+    }
+
+    .message.user .bubble {
+      background: var(--pb-grad);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(240, 130, 160, 0.3);
+    }
+
+    .thinking-content {
+      background: rgba(255, 255, 255, 0.5);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+    }
+
+    .timestamp {
+      color: #b0a6c4;
+    }
+
+    .file-tag,
+    .image-preview {
+      background: rgba(255, 255, 255, 0.6);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+    }
+
+    #attachSheet {
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(24px) saturate(170%);
+      -webkit-backdrop-filter: blur(24px) saturate(170%);
+      border: 1px solid rgba(255, 255, 255, 0.9);
+    }
+
+    .attach-sheet-item {
+      background: rgba(255, 240, 245, 0.7);
+    }
+
+    .attach-sheet-item .menu-icon {
+      color: #e1789a;
+    }
+
+    .version-nav {
+      color: #b0a6c4;
+    }
+
+    .weather-loading {
+      color: #b0a6c4;
+    }
+
+    /* 主要蓝色按钮/文字统一换成粉蓝渐变与粉调强调色 */
+    [style*="background: #1e90ff"],
+    [style*="background:#1e90ff"] {
+      background: var(--pb-grad) !important;
+      border: none !important;
+    }
+
+    [style*="color: #1e90ff"],
+    [style*="color:#1e90ff"] {
+      color: #e1789a !important;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(225, 120, 154, 0.35);
+      border-radius: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
   </style>
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/fonts/lxgw-wenkai/lxgwwenkai-regular.css">

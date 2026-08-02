@@ -220,6 +220,95 @@
             padding: 60px 20px;
             font-size: 15px;
         }
+        /* ========== 粉蓝玻璃风（第一版） ========== */
+        :root {
+            --pb-grad: linear-gradient(135deg, #ff9db4, #7fb8ff);
+            --glass-bg: rgba(255, 255, 255, 0.58);
+            --glass-border: rgba(255, 255, 255, 0.75);
+            --glass-shadow: 0 8px 28px rgba(180, 140, 190, 0.16);
+        }
+
+        body {
+            background: linear-gradient(165deg, #fdf0f4 0%, #f4f6ff 45%, #eaf1ff 100%) fixed;
+        }
+
+        body::before,
+        body::after {
+            content: '';
+            position: fixed;
+            width: 420px;
+            height: 420px;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.5;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::before {
+            background: #ffc3d4;
+            top: -140px;
+            right: -110px;
+        }
+
+        body::after {
+            background: #a9cdff;
+            bottom: -160px;
+            left: -120px;
+        }
+
+        .header,
+        .post-box,
+        .moment-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px) saturate(160%);
+            -webkit-backdrop-filter: blur(16px) saturate(160%);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+        }
+
+        .back-btn {
+            color: #e1789a;
+        }
+
+        .post-box textarea {
+            background: rgba(255, 255, 255, 0.65);
+            border-radius: 12px;
+            padding: 8px 10px;
+        }
+
+        .post-box button,
+        .comment-input-row button {
+            background: var(--pb-grad);
+            border: none;
+            box-shadow: 0 4px 12px rgba(240, 130, 160, 0.3);
+        }
+
+        .comment-input-row input {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.9);
+        }
+
+        .moment-reply {
+            background: rgba(255, 240, 245, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .empty-state {
+            color: #b0a6c4;
+        }
+
+        [style*="background: #1e90ff"],
+        [style*="background:#1e90ff"] {
+            background: var(--pb-grad) !important;
+            border: none !important;
+        }
+
+        [style*="color: #1e90ff"],
+        [style*="color:#1e90ff"] {
+            color: #e1789a !important;
+        }
     </style>
 </head>
 

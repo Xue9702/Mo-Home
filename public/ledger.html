@@ -203,6 +203,92 @@
             padding: 40px 20px;
             font-size: 14px;
         }
+        /* ========== 粉蓝玻璃风（第一版） ========== */
+        :root {
+            --pb-grad: linear-gradient(135deg, #ff9db4, #7fb8ff);
+            --pb-grad-soft: linear-gradient(135deg, #ffe3ec, #dcebff);
+            --glass-bg: rgba(255, 255, 255, 0.58);
+            --glass-border: rgba(255, 255, 255, 0.75);
+            --glass-shadow: 0 8px 28px rgba(180, 140, 190, 0.16);
+        }
+
+        body {
+            background: linear-gradient(165deg, #fdf0f4 0%, #f4f6ff 45%, #eaf1ff 100%) fixed;
+        }
+
+        body::before,
+        body::after {
+            content: '';
+            position: fixed;
+            width: 420px;
+            height: 420px;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.5;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::before {
+            background: #ffc3d4;
+            top: -140px;
+            right: -110px;
+        }
+
+        body::after {
+            background: #a9cdff;
+            bottom: -160px;
+            left: -120px;
+        }
+
+        .header,
+        .add-box {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px) saturate(160%);
+            -webkit-backdrop-filter: blur(16px) saturate(160%);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+        }
+
+        .back-btn {
+            color: #e1789a;
+        }
+
+        .summary-card {
+            background: var(--pb-grad-soft);
+            border: 1px solid rgba(255, 255, 255, 0.85);
+            box-shadow: 0 10px 30px rgba(200, 150, 190, 0.18);
+        }
+
+        .add-box input {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.9);
+        }
+
+        .type-toggle button {
+            background: rgba(255, 255, 255, 0.65);
+            border: 1px solid rgba(255, 255, 255, 0.9);
+        }
+
+        .add-box .save-btn {
+            background: var(--pb-grad);
+            border: none;
+            box-shadow: 0 4px 12px rgba(240, 130, 160, 0.3);
+        }
+
+        .entry-item {
+            background: rgba(255, 255, 255, 0.45);
+            border-radius: 14px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .empty-state {
+            color: #b0a6c4;
+        }
     </style>
 </head>
 
