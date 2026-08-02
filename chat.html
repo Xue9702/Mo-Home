@@ -2935,7 +2935,18 @@
         } catch (err) {
           console.error('重新生成失败:', err);
           msgDiv.style.display = '';
-          if (newMsgDiv && newMsgDiv.parentNode) newMsgDiv.remove();
+          // 有部分内容时保留现场并提示，而不是让消息直接消失
+          let kept = null;
+          if (currentMsgDiv && currentMsgDiv.parentNode && currentBubble && currentBubble.textContent.trim()) {
+            currentMsgDiv.id = '';
+            currentBubble.textContent += '\n⚠️ 生成中断，请点重试';
+            finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking);
+            kept = currentMsgDiv;
+          }
+          if (!kept) {
+            if (newMsgDiv && newMsgDiv.parentNode) newMsgDiv.remove();
+            if (currentMsgDiv && currentMsgDiv.parentNode && currentMsgDiv !== newMsgDiv) currentMsgDiv.remove();
+          }
           btn.textContent = '❌ 失败，点击重试'; btn.disabled = false;
           setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; }, 3000);
         }

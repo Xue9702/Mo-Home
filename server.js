@@ -1353,10 +1353,15 @@ app.post('/api/regenerate', async (req, res) => {
     );
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
+    // 重新生成时把上一版回复作为参考，并明确要求换角度重写，避免两版一模一样
+    const prevReply = stripSearchTags(String(targetMsg.content || '')).replace(/\[POST_MOMENT\][\s\S]*$/, '').trim();
+    const regenUserContent = prevReply
+      ? `${userContent}\n\n[重新生成要求] 请重新回答上面这条消息，但不要照搬上一版（${prevReply.substring(0, 120)}）的措辞——换个角度、换个说法或不同的情绪侧重，给出一个不一样的新版本。`
+      : userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
       ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
-      { role: 'user', content: userContent }
+      { role: 'user', content: regenUserContent }
     ];
 
     // 6. 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
