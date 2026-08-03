@@ -3185,17 +3185,32 @@ async function extractAevumMemories(texts, episodeId = null) {
     .join('\n');
   if (!dialogue.trim()) return 0;
 
-  const system = `你是 Aevum Memory 的记忆提取器，负责从对话中提炼值得长期记住的信息。
-规则：
-- 只提取明确出现在对话里的信息，不脑补、不编造
-- event=客观发生的事；fact=稳定的用户信息/偏好/情况；meaning=这件事对用户的意义（解释性，置信度<0.9）
-- relationship=互动规律；personality=AI 稳定行为倾向；这两类只在很有把握时提取
-- perspective 视角必须准确：USER=雪是什么样的人；AGENT=默形成了什么行为倾向；RELATIONSHIP=双方互动模式；SYSTEM=小屋与系统如何运行。AI 自己的内容绝不能标成 USER。
+  const system = `你是 Aevum Memory 的记忆提取器，从对话中提炼值得长期记住的信息。
+核心判断：这句话改变了谁的长期状态？雪→USER，默→AGENT，双方关系→RELATIONSHIP，小屋/系统→SYSTEM，无长期影响→不保存。
+
+【perspective 归属，先判断主体，禁止混淆】
+- USER=雪：记录雪的经历、偏好、价值观、行为模式（例如"雪喜欢通过创作表达自己"）
+- AGENT=默：记录默形成的行为倾向、回复方式、工作模式（例如"默倾向优先保持诚实"）；禁止从单次对话推断默的人格
+- RELATIONSHIP=雪与默之间的互动模式、沟通方式、长期约定（例如"雪倾向通过深入讨论共同设计系统"）
+- SYSTEM=小屋与系统的开发：项目开发、架构设计、Prompt 调整、Bug 修复、数据迁移、技术决策（例如"Aevum 采用语义块作为记忆提取基础"）
+- 黑名单提示：内容出现 系统/代码/部署/bug/修复/prompt/数据库/API/模型/架构/功能/测试/版本/更新 等词时，默认归 SYSTEM，除非明确在描述雪本人
+- AI 自己的内容绝不能标成 USER
+
+【Memory Layer 层级，严格分类】
+- event=客观发生了什么（"发生了X事件"）
+- fact=从事件中提取的稳定客观信息（"关于对象的客观信息"）
+- meaning=极其严格：只允许分析雪对某件事的个人价值/情感/人生意义；主体必须是雪，且必须有雪明确表达或多次行为支持；不能解释系统价值或 AI 价值（"这次系统升级提高了可靠性"是 SYSTEM，不是 meaning）
+- relationship=只涉及雪↔默的互动模式时使用
+- personality=只有长期重复模式才允许生成；禁止单次事件生成人格
+
+【不要强行提取】
+- 技术讨论、系统调试、临时决定、普通聊天、一次性话题、AI 客套话 → 不提取
+- 没有记忆，比错误记忆更好；每次最多 3 条，宁缺毋滥
+
+【其他字段】
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、其他
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(激动)，只作辅助参数
 - importance 重要度 0-10：按 明确程度+重复频率+长期影响+关系影响+情绪权重 估分；一次性的小事给低分
-- 不要提取：日常寒暄、一次性话题、情绪化即兴表达、AI 的客套话
-- 每次最多 3 条，宁缺毋滥
 - tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - 输出格式：只输出 [AEVUM_MEMORIES]{"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"memories":[{"type":"event|fact|meaning|relationship|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
@@ -3505,6 +3520,8 @@ app.post('/api/aevum/:id/analyze-layers', async (req, res) => {
 - 严格忠实于原始记忆与证据，只调整抽象层级，不编造、不脑补新信息
 - 每一层能写才写：信息不足以支撑的高层输出空字符串 ""（例如只凭一句话难以可靠推断 relationship/personality）
 - 低层内容通常都能写；event 必须非空
+- meaning 层极其严格：只描述雪对某件事的个人价值/情感/人生意义；系统价值、AI 价值、技术改动不属于 meaning，应留空
+- 涉及 系统/代码/部署/bug/修复/prompt/数据库/API/模型/架构/功能/测试/版本/更新 等技术内容时，最多写到 fact（客观技术事实），不要生成 meaning/relationship/personality
 - 输出格式：只输出 [AEVUM_LAYERS]{"event":"...","fact":"...","meaning":"...","relationship":"...","personality":"...","self_candidate":"..."}`;
 
     const evidenceText = (Array.isArray(mem.evidence) ? mem.evidence : []).slice(0, 2).join('\n');
