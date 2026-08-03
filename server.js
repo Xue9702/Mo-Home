@@ -505,11 +505,11 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
   sendSSE({ searchResult: true, count: pageCount });
 
   const searchNote = searchText
-    ? `【实时搜索结果】（这是你刚刚通过 web_search 拿到的信息，回答时直接参考它）\n\n${searchText}`
+    ? `【实时搜索结果】（这是你刚刚通过 web_search 拿到的信息，回答时直接参考它）\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
     : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
-  // 让下0.5轮"接住"上0.5轮：用户问题 → 搜索结果 → 默自己的过渡语 → 中性"……"（user）
-  // 模型自然续写自己刚说的话，又不以"user 指令"结尾导致空回复
+  // 让下0.5轮"接住"上0.5轮：用户问题 → 系统消息（含搜索结果 + 引用过渡语的续写提示）
+  // 提示放在系统消息里（不是用户角色），模型不会误以为雪发了消息
   const rest = chatMessages.slice(1);
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
@@ -517,8 +517,7 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
     { role: 'system', content: systemPrompt },
     ...history,
     lastUser,
-    { role: 'system', content: searchNote },
-    ...(leadText ? [{ role: 'assistant', content: leadText }, { role: 'user', content: '……' }] : [])
+    { role: 'system', content: searchNote }
   ];
   let second = await callDeepSeekStream(secondMessages, sendSSE);
   if (!second.error && !second.fullReply) {
@@ -955,7 +954,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // 加载历史消息（50条，按分支组去重，只保留每个分支的最新版本）
-    const historyMessages = (await loadLatestHistory(1, 50)).map(msg => ({
+    const historyMessages = (await loadLatestHistory(1, 20)).map(msg => ({
       role: msg.role,
       content: msg.content
     }));
@@ -997,17 +996,8 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存用户消息失败:', userError);
     }
 
-    // 调用 Ombre Brain 检索记忆
+    // Aevum 统一管理记忆：不再调用 Ombre Brain
     let memoryContext = '';
-    try {
-      const memoryResult = await callOmbreTool('breath', { text: text || '用户发送了一张图片' });
-      if (memoryResult) {
-        memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
-        console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
-      }
-    } catch (memErr) {
-      console.error('记忆检索失败:', memErr.message);
-    }
     // 默读过的雪日记稳定注入，保证聊天窗口的他记得
     const readDiaryContext = await getReadDiaryContext();
     if (readDiaryContext) memoryContext += readDiaryContext;
@@ -1123,15 +1113,8 @@ app.post('/api/chat', async (req, res) => {
       console.log('📊 流式读取完成，fullReply 长度:', fullReply.length, 'fullThinking 长度:', fullThinking.length);
     }
 
-    // 存储本次对话到 Ombre Brain
-    try {
-      const storeResult = await callOmbreTool('hold', { content: `用户说：${message}\n助手说：${fullReply}` });
-      if (storeResult) {
-        console.log('💾 记忆已存储');
-      }
-    } catch (storeErr) {
-      console.error('记忆存储失败:', storeErr.message);
-    }
+    // 本次对话原文存入 Aevum 原文档（不阻塞回复）
+    saveAevumRaw(finalUserContent, fullReply).catch(e => console.error('Aevum 原文存档失败:', e.message));
 
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
     console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
@@ -1358,24 +1341,8 @@ app.post('/api/regenerate', async (req, res) => {
 
     console.log('📜 重新生成接口 - 过滤后历史消息数量:', filteredHistory.length);
 
-    // 4.5 检索相关记忆和朋友圈动态（与 /api/chat 保持一致）
+    // 4.5 检索记忆与朋友圈动态（Aevum 统一管理，不再调用 Ombre Brain）
     let memoryContext = '';
-    try {
-      let memoryResult = await callOmbreTool('breath', { text: userContent });
-      // 记忆库里可能存有旧版回复，重新生成时不能让默读到刷新前的自己
-      if (memoryResult && targetMsg.content) {
-        const oldClean = stripSearchTags(String(targetMsg.content)).replace(/\[POST_MOMENT\][\s\S]*$/, '').trim();
-        if (oldClean && memoryResult.includes(oldClean)) {
-          memoryResult = memoryResult.split(oldClean).join('').trim();
-        }
-      }
-      if (memoryResult) {
-        memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
-        console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
-      }
-    } catch (memErr) {
-      console.error('记忆检索失败:', memErr.message);
-    }
     const readDiaryContext = await getReadDiaryContext();
     if (readDiaryContext) memoryContext += readDiaryContext;
     const recentActionContext = await getRecentActionContext();
@@ -1821,13 +1788,8 @@ async function executeWakeAction(action) {
           result.detail = '翻开夫人的日记，里面还是空白的新一页。';
           break;
         }
-        // 标记已读，并把这一天写入 Ombre Brain 连续记忆
+        // 标记已读（记忆由 Aevum 统一管理）
         await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
-        try {
-          await callOmbreTool('hold', { content: `雪的日记（${entry.entry_date || '某一天'}）：${entry.content}` });
-        } catch (memErr) {
-          console.error('日记写入记忆失败:', memErr.message);
-        }
         const remaining = (await getUnreadDiaryDates()).length;
         result.ok = true;
         result.detail = `读了夫人 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`;
@@ -2179,11 +2141,6 @@ async function executeMenuOption(optionId, args, ctx) {
         };
       }
       await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
-      try {
-        await callOmbreTool('hold', { content: `雪的日记（${entry.entry_date || '某一天'}）：${entry.content}` });
-      } catch (memErr) {
-        console.error('日记写入记忆失败:', memErr.message);
-      }
       const remaining = (await getUnreadDiaryDates()).length;
       return { outcome: `你读了她 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`, energyDelta: 1, nextNode: ctx.node };
     }
@@ -2342,14 +2299,8 @@ app.post('/api/shadow-push', async (req, res) => {
       isPushInProgress = false;
       return res.json({ status: 'skipped', reason: 'daily_limit' });
     }
-    // 5. 构建唤醒上下文：复用聊天页人设 + 记忆 + 天气 + 时间 + 最近历史 + 今日行动日志
+    // 5. 构建唤醒上下文：复用聊天页人设 + 天气 + 时间 + 最近历史 + 今日行动日志（Aevum 统一管理记忆）
     let memoryContext = '';
-    try {
-      const memoryResult = await callOmbreTool('breath', { text: `默被唤醒了（第${wakeNumber}次），回顾最近与雪的相处。` });
-      if (memoryResult) memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
-    } catch (memErr) {
-      console.error('唤醒-记忆检索失败:', memErr.message);
-    }
 
     const weatherContext = await getWeatherContext('');
     const momentsContext = await getMomentsContext();
@@ -2545,13 +2496,6 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
         console.error('体验总结写入失败（请先执行 setup_awaken3.sql）:', e.message);
       }
     }
-    // 唤醒记录同步写入 Ombre Brain，长线记忆也能检索到
-    try {
-      await callOmbreTool('hold', { content: `默第${wakeNumber}次唤醒（${dateStr}）：${steps.map(s => `${s.id}：${s.outcome}`).join('；')}` });
-    } catch (memErr) {
-      console.error('唤醒记录写入记忆失败:', memErr.message);
-    }
-
     // 9. 更新冷静期
     const newCooldown = randomDelay(COOLDOWN_MIN_MINUTES, COOLDOWN_MAX_MINUTES);
     await updatePushState(new Date().toISOString(), newCooldown);
@@ -2903,6 +2847,24 @@ function validAevumConfidence(c) {
     return isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5;
   };
   return { evidence: num(conf.evidence), stability: num(conf.stability), importance: num(conf.importance) };
+}
+
+// 把每一轮对话原文存入 Aevum 原文档（Layer 0），排版仿 Ombre：雪说/助手说
+async function saveAevumRaw(userText, assistantReply) {
+  const content = `雪说：${String(userText || '').trim()}\n助手说：${String(assistantReply || '').trim()}`;
+  if (!content.trim()) return;
+  try {
+    await supabase.from('aevum_raw').insert({
+      source: 'chat',
+      role: 'exchange',
+      content,
+      tags: ['对话'],
+      importance: 5,
+      created_at: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('Aevum 原文存档失败:', e.message);
+  }
 }
 
 // 内容去重：与已有活跃/候选记忆高度重合则跳过
@@ -3706,17 +3668,8 @@ app.post('/api/edit-message', async (req, res) => {
 
     console.log('📜 编辑接口 - 过滤后历史消息数量:', filteredHistory.length, 'groupId:', groupId);
 
-    // 8.5 检索相关记忆和朋友圈动态（与 /api/chat 保持一致）
+    // 8.5 检索记忆与朋友圈动态（Aevum 统一管理，不再调用 Ombre Brain）
     let memoryContext = '';
-    try {
-      const memoryResult = await callOmbreTool('breath', { text: newContent });
-      if (memoryResult) {
-        memoryContext = `\n\n【相关记忆】\n${memoryResult}`;
-        console.log('📖 检索到记忆:', memoryResult.substring(0, 100));
-      }
-    } catch (memErr) {
-      console.error('记忆检索失败:', memErr.message);
-    }
     const readDiaryContext = await getReadDiaryContext();
     if (readDiaryContext) memoryContext += readDiaryContext;
     const recentActionContext = await getRecentActionContext();
