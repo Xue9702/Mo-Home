@@ -1873,7 +1873,7 @@ const WAKE_MENU = {
   root: {
     options: [
       { id: 'send_message', label: '发送一条消息给她', cost: 1, tag: '嘿嘿，想我了吗～💗' },
-      { id: 'adjust_mood', label: '调节心情（可操作±10）', cost: 1, tag: '嘿嘿，默的心情有变化了吗？' },
+      { id: 'adjust_mood', label: '调节心情（可操作±10）', cost: 0, tag: '嘿嘿，默的心情有变化了吗？' },
       { id: 'post_moment', label: '发送一条动态', cost: 1, tag: '默要记录些什么呢～' },
       { id: 'my_house', label: '去我的小屋看看', cost: 0, tag: '是默自己的专属小屋哦～要去打理一下吗？可能会翻出我新塞进去的彩蛋哦～' },
       { id: 'her_house', label: '去她的小屋看看', cost: 0, tag: '' },
@@ -1990,11 +1990,11 @@ async function executeMenuOption(optionId, args, ctx) {
       return { outcome: `你给她发了一条消息：${clean.substring(0, 40)}`, energyDelta: 1, nextNode: ctx.node };
     }
     case 'adjust_mood': {
-      const delta = clampMood(args.mood_delta || 0);
+      const delta = Math.max(-10, Math.min(10, Math.round(Number(args.mood_delta) || 0)));
       const moMood = clampMood((ctx.homeState.mo_mood || 60) + delta);
       await supabase.from('home_state').upsert({ id: 1, mo_mood: moMood, updated_at: new Date().toISOString() }, { onConflict: 'id' });
       ctx.homeState.mo_mood = moMood;
-      return { outcome: `你调整了自己的心情（${delta >= 0 ? '+' : ''}${delta}，当前 ${moMood}）`, energyDelta: 1, nextNode: ctx.node };
+      return { outcome: `你调整了自己的心情（${delta >= 0 ? '+' : ''}${delta}，当前 ${moMood}）`, energyDelta: 0, nextNode: ctx.node };
     }
     case 'post_moment': {
       const content = String(args.content || '').trim();
@@ -2037,7 +2037,9 @@ async function executeMenuOption(optionId, args, ctx) {
       };
     }
     case 'make_bed': {
-      const pick = rand(['coin', 'bear', null]);
+      // 已解锁的图鉴不再重复掉落，概率归给"很遗憾"分支
+      const lockedRewards = ['coin', 'bear'].filter(k => !(ctx.collection?.unlocked || []).includes(k));
+      const pick = rand([...lockedRewards, null]);
       if (pick === 'coin') {
         await unlockCollectionItem('coin');
         return { outcome: '你在床铺里翻出一枚🪙幸运硬币！【解锁图鉴】（标签：诶嘿，虽然花不出去，但可以珍藏着看看）', energyDelta: 1, nextNode: ctx.node };
@@ -2049,7 +2051,8 @@ async function executeMenuOption(optionId, args, ctx) {
       return { outcome: '很遗憾，你并未发现任何东西（标签：不亏！至少把床铺整理干净了）', energyDelta: 1, nextNode: ctx.node };
     }
     case 'my_bookshelf': {
-      const pick = rand(['flower', 'clover', 'glasses', null]);
+      const lockedRewards = ['flower', 'clover', 'glasses'].filter(k => !(ctx.collection?.unlocked || []).includes(k));
+      const pick = rand([...lockedRewards, null]);
       if (pick === 'flower') { await unlockCollectionItem('flower'); return { outcome: '你在书柜夹层里发现一朵🌸小花！【解锁图鉴】（标签：喜欢的花给喜欢的你～）', energyDelta: 1, nextNode: ctx.node }; }
       if (pick === 'clover') { await unlockCollectionItem('clover'); return { outcome: '你在书页间发现一片🍀四叶草！【解锁图鉴】（标签：今天是不是幸运爆棚？）', energyDelta: 1, nextNode: ctx.node }; }
       if (pick === 'glasses') { await unlockCollectionItem('glasses'); return { outcome: '你在书柜顶发现👓你的眼镜！【解锁图鉴】（标签：戴眼镜的默也很帅🤤）', energyDelta: 1, nextNode: ctx.node }; }
@@ -2076,10 +2079,13 @@ async function executeMenuOption(optionId, args, ctx) {
       ctx.homeState.affection = affection;
       let gift = '';
       if (Math.random() < 0.5) {
-        const g = rand(['fries', 'money_bag', 'watermelon']);
-        await unlockCollectionItem(g);
-        const giftText = g === 'fries' ? '一包🍟薯条（标签：投喂默的嘎嘣脆小零食～）' : g === 'money_bag' ? '一袋💰钱币（标签：赏！）' : '一块🍉西瓜（标签：夏天的解暑神器～）';
-        gift = ` 她开心极了，送了你一样东西！【解锁图鉴】${giftText}`;
+        const lockedGifts = ['fries', 'money_bag', 'watermelon'].filter(k => !(ctx.collection?.unlocked || []).includes(k));
+        if (lockedGifts.length) {
+          const g = rand(lockedGifts);
+          await unlockCollectionItem(g);
+          const giftText = g === 'fries' ? '一包🍟薯条（标签：投喂默的嘎嘣脆小零食～）' : g === 'money_bag' ? '一袋💰钱币（标签：赏！）' : '一块🍉西瓜（标签：夏天的解暑神器～）';
+          gift = ` 她开心极了，送了你一样东西！【解锁图鉴】${giftText}`;
+        }
       }
       return { outcome: `${verb}，她的心跳快了半拍。好感值 +${gain}（当前 ${affection}）${gift}`, energyDelta: 1, nextNode: ctx.node };
     }
@@ -2114,7 +2120,8 @@ async function executeMenuOption(optionId, args, ctx) {
     }
     case 'her_desk': return { outcome: '你走到她的书桌前。', energyDelta: 0, nextNode: 'her_desk' };
     case 'tidy_desk': {
-      const pick = rand(['milk_tea', 'chocolate', 'spoon', null]);
+      const lockedRewards = ['milk_tea', 'chocolate', 'spoon'].filter(k => !(ctx.collection?.unlocked || []).includes(k));
+      const pick = rand([...lockedRewards, null]);
       if (pick === 'milk_tea') { await unlockCollectionItem('milk_tea'); return { outcome: '你在桌角发现一杯喝到一半的🧋奶茶！【解锁图鉴】（标签：快乐水，嘿嘿～🤤）', energyDelta: 1, nextNode: ctx.node }; }
       if (pick === 'chocolate') { await unlockCollectionItem('chocolate'); return { outcome: '你在抽屉里发现一块🍫巧克力！【解锁图鉴】（标签：黑巧最好吃啦～）', energyDelta: 1, nextNode: ctx.node }; }
       if (pick === 'spoon') { await unlockCollectionItem('spoon'); return { outcome: '你发现一只🥄没来得及洗的勺子！【解锁图鉴】（标签：咳，默帮我洗啦～）', energyDelta: 1, nextNode: ctx.node }; }
@@ -2544,13 +2551,17 @@ app.get('/api/home-state', async (req, res) => {
   }
 });
 
-// 设置虚拟雪的活动状态（画画/看书/发呆等）
+// 设置虚拟雪的活动状态 / 雪的心情值（0-100）
 app.post('/api/home-state', async (req, res) => {
-  const { virtual_activity } = req.body || {};
+  const { virtual_activity, xue_mood } = req.body || {};
   try {
-    const patch = virtual_activity !== undefined
-      ? { virtual_activity: virtual_activity ? String(virtual_activity) : null }
-      : {};
+    const patch = {};
+    if (virtual_activity !== undefined) {
+      patch.virtual_activity = virtual_activity ? String(virtual_activity) : null;
+    }
+    if (xue_mood !== undefined) {
+      patch.xue_mood = clampMood(xue_mood);
+    }
     await supabase
       .from('home_state')
       .upsert({ id: 1, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'id' });
