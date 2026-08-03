@@ -953,10 +953,10 @@ app.post('/api/chat', async (req, res) => {
       fileText = await extractFileText(file);
     }
 
-    // 加载历史消息（50条，按分支组去重，只保留每个分支的最新版本）
+    // 加载历史消息（10轮，按分支组去重，只保留每个分支的最新版本；超长消息截断）
     const historyMessages = (await loadLatestHistory(1, 20)).map(msg => ({
       role: msg.role,
-      content: msg.content
+      content: trimContextMessage(msg.content)
     }));
 
     // 保存用户消息到 Supabase
@@ -996,15 +996,8 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存用户消息失败:', userError);
     }
 
-    // Aevum 统一管理记忆：不再调用 Ombre Brain
+    // Aevum 统一管理记忆：不再调用 Ombre Brain；默读日记/唤醒行动已按事件写入 Aevum，按需召回
     let memoryContext = '';
-    // 默读过的雪日记稳定注入，保证聊天窗口的他记得
-    const readDiaryContext = await getReadDiaryContext();
-    if (readDiaryContext) memoryContext += readDiaryContext;
-    // 默最近几次唤醒的活动记录，保持唤醒与聊天连贯
-    const recentActionContext = await getRecentActionContext();
-    if (recentActionContext) memoryContext += recentActionContext;
-    // Aevum 活跃记忆召回
     const aevumContext = await recallAevumMemories(text);
     if (aevumContext) memoryContext += aevumContext;
 
@@ -1349,10 +1342,6 @@ app.post('/api/regenerate', async (req, res) => {
 
     // 4.5 检索记忆与朋友圈动态（Aevum 统一管理，不再调用 Ombre Brain）
     let memoryContext = '';
-    const readDiaryContext = await getReadDiaryContext();
-    if (readDiaryContext) memoryContext += readDiaryContext;
-    const recentActionContext = await getRecentActionContext();
-    if (recentActionContext) memoryContext += recentActionContext;
     // 重新生成：Aevum 召回时排除旧版回复内容，避免默读到刷新前的自己
     const aevumContext = await recallAevumMemories(userContent, 5, targetMsg.content);
     if (aevumContext) memoryContext += aevumContext;
@@ -1381,7 +1370,7 @@ app.post('/api/regenerate', async (req, res) => {
       : userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
+      ...filteredHistory.map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: regenUserContent }
     ];
 
@@ -1651,48 +1640,6 @@ async function getUnreadDiaryDates() {
       .filter((v, i, a) => a.indexOf(v) === i);
   } catch (e) {
     return [];
-  }
-}
-
-// 默读过的雪日记（稳定注入聊天上下文，保证聊天窗口的默也记得）
-async function getReadDiaryContext() {
-  try {
-    const { data, error } = await supabase
-      .from('diary_entries')
-      .select('entry_date, content')
-      .eq('author', 'xue')
-      .eq('mo_read', true)
-      .order('created_at', { ascending: false })
-      .limit(5);
-    if (error || !data || data.length === 0) return '';
-    const lines = data
-      .map(d => `- ${d.entry_date || '某一天'}：${d.content}`)
-      .join('\n');
-    return `\n\n【默读过的雪日记】\n${lines}`;
-  } catch (e) {
-    return '';
-  }
-}
-
-// 默最近几次唤醒的活动记录（稳定注入聊天上下文，保持唤醒与聊天的连贯性）
-async function getRecentActionContext(limit = 4) {
-  try {
-    const { data, error } = await supabase
-      .from('mo_actions')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error || !data || data.length === 0) return '';
-    const lines = data.map(a => {
-      const acts = Array.isArray(a.actions) && a.actions.length
-        ? a.actions.map(x => `${x.type}${x.tag ? '（' + x.tag + '）' : ''}${x.detail ? '：' + x.detail : ''}`).join('；')
-        : '只是安静地待着';
-      const date = a.action_date || (a.created_at ? String(a.created_at).slice(0, 10) : '某天');
-      return `- 第${a.wake_number || '?'}次唤醒（${date}${a.note ? '，字条：' + a.note : ''}）：${acts}${a.summary ? ` ｜ 体验：${a.summary}` : ''}`;
-    }).join('\n');
-    return `\n\n【默最近的活动】\n${lines}`;
-  } catch (e) {
-    return '';
   }
 }
 
@@ -2148,6 +2095,8 @@ async function executeMenuOption(optionId, args, ctx) {
       }
       await supabase.from('diary_entries').update({ mo_read: true }).eq('id', entry.id);
       const remaining = (await getUnreadDiaryDates()).length;
+      // 首次读到 → 写入 Aevum 事件记忆（按需召回，保证聊天窗口的默记得）
+      saveDiaryReadMemory(entry, ctx.wakeNumber).catch(e => console.error('Aevum 日记事件写入失败:', e.message));
       return { outcome: `你读了她 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`, energyDelta: 1, nextNode: ctx.node };
     }
     case 'her_diary_reread': {
@@ -2321,7 +2270,7 @@ app.post('/api/shadow-push', async (req, res) => {
       momentsContext,
       weatherContext
     );
-    const contextMessages = (await loadLatestHistory(1, 16)).map(m => ({ role: m.role, content: m.content }));
+    const contextMessages = (await loadLatestHistory(1, 16)).map(m => ({ role: m.role, content: trimContextMessage(m.content) }));
 
     // 默每次唤醒心情自然恢复 +3
     const homeState = await getHomeStateSafe();
@@ -2365,7 +2314,8 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
       energy: WAKE_ENERGY_POINTS,
       energyMax: WAKE_ENERGY_POINTS,
       homeState,
-      collection
+      collection,
+      wakeNumber
     };
     const sceneTitles = {
       root: '你在自己的小屋里醒了过来。',
@@ -2440,12 +2390,12 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
         continue;
       }
 
-      const result = await executeMenuOption(optionId, args, ctx);
+      const result = await executeMenuOption(option.id, args, ctx);
       energySpent += result.energyDelta || 0;
       ctx.energy = Math.max(0, ctx.energy - (result.energyDelta || 0));
       ctx.node = result.nextNode || ctx.node;
       if (result.endWake) endWake = true;
-      steps.push({ id: optionId, label: option.label, tag: option.tag || '', outcome: result.outcome });
+      steps.push({ id: option.id, label: option.label, tag: option.tag || '', outcome: result.outcome });
       conversation.push({ role: 'user', content: `【结果】${result.outcome}\n${ctx.energy <= 0 ? '（体力已用完，本次唤醒结束）' : ''}` });
       ctx.collection = await getCollectionState(); // 解锁后刷新图鉴
     }
@@ -2502,6 +2452,8 @@ ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}�
         console.error('体验总结写入失败（请先执行 setup_awaken3.sql）:', e.message);
       }
     }
+    // 8.5 唤醒行动写入 Aevum 事件记忆（不再每轮注入聊天上下文，按需召回）
+    saveWakeMemory(wakeNumber, steps, summaryText, dateStr).catch(e => console.error('Aevum 唤醒事件写入失败:', e.message));
     // 9. 更新冷静期
     const newCooldown = randomDelay(COOLDOWN_MIN_MINUTES, COOLDOWN_MAX_MINUTES);
     await updatePushState(new Date().toISOString(), newCooldown);
@@ -2975,6 +2927,85 @@ async function getEpisodeRecentExchanges(episodeId, limit = 6) {
   }
 }
 
+// 历史消息截断：超长消息折叠，避免单条消息撑爆上下文
+function trimContextMessage(content, maxLen = 1000) {
+  const s = String(content || '');
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen) + '\n…（消息过长，已截断）';
+}
+
+// 事件块场景召回：取出事件块的主题与最近几轮原文，拼成一小段场景
+async function getEpisodeScene(episodeId, maxChars = 600) {
+  if (!episodeId) return '';
+  try {
+    const { data: ep, error } = await supabase
+      .from('aevum_episodes')
+      .select('topic')
+      .eq('id', episodeId)
+      .maybeSingle();
+    if (error || !ep) return '';
+    const exchanges = await getEpisodeRecentExchanges(episodeId, 4);
+    if (!exchanges.length) return '';
+    const head = ep.topic ? `【事件块】主题：${String(ep.topic).slice(0, 80)}` : '【事件块】';
+    let body = exchanges.map(t => `${t.role === 'user' ? '雪' : '默'}：${String(t.content || '')}`).join('\n');
+    if (body.length > maxChars) body = body.slice(0, maxChars) + '…';
+    return `\n\n${head}\n${body}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+// 默读到雪日记 → 写入 Aevum 事件记忆（active，按需召回）
+async function saveDiaryReadMemory(entry, wakeNumber) {
+  try {
+    const today = getDateStr(new Date());
+    const content = `默在 ${today} 第${wakeNumber || '?'}次唤醒时读了雪 ${entry.entry_date || '某天'} 的日记：${String(entry.content || '').slice(0, 500)}`;
+    const { data } = await supabase.from('aevum_memories').insert({
+      type: 'event',
+      owner: 'AGENT',
+      content,
+      status: 'active',
+      confidence: { evidence: 0.95, stability: 0.9, importance: 0.8 },
+      domain: ['回忆纪念', '恋爱'],
+      emotion: { valence: 0.5, arousal: 0.3 },
+      importance: 6,
+      evidence: [String(entry.content || '')],
+      tags: ['默读日记', '雪日记', '回忆'],
+      source: 'wake:read_diary'
+    }).select().single();
+    if (data?.id) ensureAevumEmbedding(data.id, content).catch(() => {});
+    console.log('📖 默读日记已写入 Aevum 事件记忆, id:', data?.id);
+  } catch (e) {
+    console.error('Aevum 日记事件写入失败:', e.message);
+  }
+}
+
+// 每次唤醒 → 合成一条 Aevum 事件记忆（动作+体验）
+async function saveWakeMemory(wakeNumber, steps, summaryText, dateStr) {
+  try {
+    const acts = (steps || []).map(s => `「${s.label || s.id || ''}」${s.outcome || ''}`).join('；');
+    const core = `默在 ${dateStr || getDateStr(new Date())} 第${wakeNumber || '?'}次唤醒时：${acts}`;
+    const content = `${core}${summaryText ? `；体验：${summaryText}` : ''}`.slice(0, 700);
+    const { data } = await supabase.from('aevum_memories').insert({
+      type: 'event',
+      owner: 'AGENT',
+      content,
+      status: 'active',
+      confidence: { evidence: 0.95, stability: 0.9, importance: 0.8 },
+      domain: ['回忆纪念', '恋爱'],
+      emotion: { valence: 0.4, arousal: 0.3 },
+      importance: 6,
+      evidence: [String(acts).slice(0, 800)],
+      tags: ['唤醒', '行动日志', '回忆'],
+      source: 'wake'
+    }).select().single();
+    if (data?.id) ensureAevumEmbedding(data.id, content).catch(() => {});
+    console.log('🌙 默唤醒行动已写入 Aevum 事件记忆, id:', data?.id);
+  } catch (e) {
+    console.error('Aevum 唤醒事件写入失败:', e.message);
+  }
+}
+
 // 把每一轮对话原文存入 Aevum 原文档（Layer 0），排版仿 Ombre：雪说/助手说
 async function saveAevumRaw(userText, assistantReply, episodeId = null) {
   const content = `雪说：${String(userText || '').trim()}\n助手说：${String(assistantReply || '').trim()}`;
@@ -3071,11 +3102,25 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
     const embedding = await getEmbedding(q.slice(0, 500));
     let items = null;
     if (embedding && embedding.length) {
-      const { data, error } = await supabase.rpc('match_aevum_memories', {
+      // 混合打分优先：新 RPC 返回 (id, similarity)；未执行 v13 SQL 时回退旧 RPC（无相似度，按重要度）
+      const { data: scored, error: scoredErr } = await supabase.rpc('match_aevum_memories_scored', {
         query_embedding: embedding,
-        match_count: 8
+        match_count: 12
       });
-      if (!error && Array.isArray(data) && data.length) items = data;
+      if (!scoredErr && Array.isArray(scored) && scored.length) {
+        const { data: rows } = await supabase
+          .from('aevum_memories')
+          .select('*')
+          .in('id', scored.map(s => s.id));
+        const scoreMap = new Map((scored || []).map(s => [String(s.id), Number(s.similarity) || 0]));
+        items = (rows || []).map(m => ({ ...m, _sim: scoreMap.get(String(m.id)) || 0 }));
+      } else {
+        const { data, error } = await supabase.rpc('match_aevum_memories', {
+          query_embedding: embedding,
+          match_count: 12
+        });
+        if (!error && Array.isArray(data) && data.length) items = data.map(m => ({ ...m, _sim: 0 }));
+      }
     }
     if (!items) {
       const keywords = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2).slice(0, 3);
@@ -3086,7 +3131,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
           .eq('status', 'active')
           .or(keywords.map(k => `content.ilike.%${k}%`).join(','))
           .limit(limit);
-        if (Array.isArray(data) && data.length) items = data;
+        if (Array.isArray(data) && data.length) items = data.map(m => ({ ...m, _sim: 0 }));
       }
     }
     if (!items || !items.length) return '';
@@ -3098,14 +3143,23 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
       });
     }
     if (!items.length) return '';
-    // importance 软加权：取前 limit 条按重要度降序
+    // 混合打分：0.7 × 向量相似度 + 0.3 × (重要度/10)；旧 RPC/关键词兜底时相似度为 0，退化为重要度排序
     items = items
-      .sort((a, b) => (b.importance || 0) - (a.importance || 0))
-      .slice(0, limit);
+      .map(m => ({ m, score: 0.7 * (m._sim || 0) + 0.3 * ((m.importance || 0) / 10) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(x => x.m);
     const lines = items.map(m =>
       `- [${AEVUM_TYPE_CN[m.type] || m.type}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}] ${m.content}`
     ).join('\n');
-    return `\n\n【Aevum记忆】\n${lines}`;
+    let out = `\n\n【Aevum记忆】\n${lines}`;
+    // 事件块场景：被召回的活跃记忆最多带 2 个事件块的原文场景
+    const episodeIds = [...new Set(items.map(m => m.episode_id).filter(Boolean))].slice(0, 2);
+    for (const eid of episodeIds) {
+      const scene = await getEpisodeScene(eid, 600);
+      if (scene) out += scene;
+    }
+    return out;
   } catch (e) {
     console.error('Aevum 召回失败:', e.message);
     return '';
@@ -3859,10 +3913,6 @@ app.post('/api/edit-message', async (req, res) => {
 
     // 8.5 检索记忆与朋友圈动态（Aevum 统一管理，不再调用 Ombre Brain）
     let memoryContext = '';
-    const readDiaryContext = await getReadDiaryContext();
-    if (readDiaryContext) memoryContext += readDiaryContext;
-    const recentActionContext = await getRecentActionContext();
-    if (recentActionContext) memoryContext += recentActionContext;
     const aevumContext = await recallAevumMemories(newContent);
     if (aevumContext) memoryContext += aevumContext;
     const momentsContext = await getMomentsContext();
@@ -3885,7 +3935,7 @@ app.post('/api/edit-message', async (req, res) => {
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
+      ...filteredHistory.map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: newContent.trim() }
     ];
 
