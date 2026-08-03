@@ -508,21 +508,30 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
     ? `【实时搜索结果】（这是你刚刚通过 web_search 拿到的信息，回答时直接参考它）\n\n${searchText}`
     : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
-  // 让下0.5轮"接住"上0.5轮：用户问题 → 搜索结果 → 默自己的过渡语（作为这条消息的结尾）
-  // 模型会自然接着自己刚说的话往下写，结果又已经读过了，不需要任何强制指令
+  // 让下0.5轮"接住"上0.5轮：用户问题 → 搜索结果 → 默自己的过渡语 → 中性"……"（user）
+  // 模型自然续写自己刚说的话，又不以"user 指令"结尾导致空回复
   const rest = chatMessages.slice(1);
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
-  const second = await callDeepSeekStream(
-    [
-      { role: 'system', content: systemPrompt },
-      ...history,
-      lastUser,
-      { role: 'system', content: searchNote },
-      ...(leadText ? [{ role: 'assistant', content: leadText }] : [])
-    ],
-    sendSSE
-  );
+  const secondMessages = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    lastUser,
+    { role: 'system', content: searchNote },
+    ...(leadText ? [{ role: 'assistant', content: leadText }, { role: 'user', content: '……' }] : [])
+  ];
+  let second = await callDeepSeekStream(secondMessages, sendSSE);
+  if (!second.error && !second.fullReply) {
+    // 兜底：续写方式偶发返回空正文，用标准结构重试一次
+    second = await callDeepSeekStream(
+      [
+        { role: 'system', content: `${systemPrompt}\n\n${searchNote}` },
+        ...history,
+        lastUser
+      ],
+      sendSSE
+    );
+  }
 
   if (second.error) return { error: second.error };
   return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking, pageCount };
@@ -1103,8 +1112,10 @@ app.post('/api/chat', async (req, res) => {
         return;
       }
 
-      fullReply = phase.reply + (phase.pageCount ? `\n\n🔍 已搜索到 ${phase.pageCount} 个网页` : '');
-      fullThinking = phase.thinking;
+      fullReply = phase.reply;
+      fullThinking = phase.thinking
+        ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
+        : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
       console.log('🔍 联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
@@ -1464,8 +1475,10 @@ app.post('/api/regenerate', async (req, res) => {
         return;
       }
 
-      fullReply = phase.reply + (phase.pageCount ? `\n\n🔍 已搜索到 ${phase.pageCount} 个网页` : '');
-      fullThinking = phase.thinking;
+      fullReply = phase.reply;
+      fullThinking = phase.thinking
+        ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
+        : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
       console.log('🔍 重新生成-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
@@ -3797,8 +3810,10 @@ app.post('/api/edit-message', async (req, res) => {
         return;
       }
 
-      fullReply = phase.reply + (phase.pageCount ? `\n\n🔍 已搜索到 ${phase.pageCount} 个网页` : '');
-      fullThinking = phase.thinking;
+      fullReply = phase.reply;
+      fullThinking = phase.thinking
+        ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
+        : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
       console.log('🔍 编辑-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
