@@ -505,10 +505,11 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
   sendSSE({ searchResult: true, count: pageCount });
 
   const searchNote = searchText
-    ? `【实时搜索结果】\n以下是默刚刚搜索到的实时信息：\n\n${searchText}\n\n请基于这些搜索结果回答雪的问题，用自己的语气自然组织；如果搜索结果与问题无关或信息不足，请如实说明。`
+    ? `【实时搜索结果】（这是你刚刚通过 web_search 拿到的信息，回答时直接参考它）\n\n${searchText}`
     : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
-  // 让下0.5轮"接住"上0.5轮：用户问题 → 默自己的过渡语 → 搜索结果 → 继续把话说完成
+  // 让下0.5轮"接住"上0.5轮：用户问题 → 搜索结果 → 默自己的过渡语（作为这条消息的结尾）
+  // 模型会自然接着自己刚说的话往下写，结果又已经读过了，不需要任何强制指令
   const rest = chatMessages.slice(1);
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
@@ -517,9 +518,8 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
       { role: 'system', content: systemPrompt },
       ...history,
       lastUser,
-      ...(leadText ? [{ role: 'assistant', content: leadText }] : []),
       { role: 'system', content: searchNote },
-      { role: 'user', content: '（请基于上面的搜索结果，自然地接着把这句话说完，语气与刚才保持一致）' }
+      ...(leadText ? [{ role: 'assistant', content: leadText }] : [])
     ],
     sendSSE
   );
