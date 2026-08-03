@@ -3406,6 +3406,7 @@ app.put('/api/aevum/:id', async (req, res) => {
     const text = String(content).trim();
     if (!text) return res.status(400).json({ error: '内容不能为空' });
     patch.content = text;
+    patch.layer_content = null; // 内容已变，旧层级变体过期，需重新分析
   }
   if (confidence !== undefined) patch.confidence = validAevumConfidence(confidence);
   if (domain !== undefined) patch.domain = validAevumDomains(domain);
@@ -3417,7 +3418,12 @@ app.put('/api/aevum/:id', async (req, res) => {
   if (review_note !== undefined) patch.review_note = review_note ? String(review_note) : null;
   patch.updated_at = new Date().toISOString();
   try {
-    const { data, error } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single();
+    let { data, error } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single();
+    // setup_aevum_v15.sql 未执行时 layer_content 列不存在：去掉该字段重试
+    if (error && patch.layer_content === null && /layer_content/i.test(error.message)) {
+      delete patch.layer_content;
+      ({ data, error } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single());
+    }
     if (error) return res.status(500).json({ error: error.message });
     if (data?.id) ensureAevumEmbedding(data.id, data.content).catch(e => console.error('Aevum embedding 失败:', e.message));
     res.json({ ok: true, memory: data });
@@ -3480,6 +3486,106 @@ app.post('/api/aevum/:id/promote', async (req, res) => {
     res.json({ ok: true, memory: updated });
   } catch (e) {
     res.status(500).json({ error: '晋升失败' });
+  }
+});
+
+// 六层级内容分析：AI 一次评定六个层级并写出各自内容，到不了的层级留空
+app.post('/api/aevum/:id/analyze-layers', async (req, res) => {
+  try {
+    const { data: mem, error } = await supabase
+      .from('aevum_memories')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !mem) return res.status(404).json({ error: '未找到' });
+    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
+
+    const system = `你是 Aevum Memory 的层级分析器。把一条记忆按六个认知层级分别改写为各自的内容。
+规则：
+- 严格忠实于原始记忆与证据，只调整抽象层级，不编造、不脑补新信息
+- 每一层能写才写：信息不足以支撑的高层输出空字符串 ""（例如只凭一句话难以可靠推断 relationship/personality）
+- 低层内容通常都能写；event 必须非空
+- 输出格式：只输出 [AEVUM_LAYERS]{"event":"...","fact":"...","meaning":"...","relationship":"...","personality":"...","self_candidate":"..."}`;
+
+    const evidenceText = (Array.isArray(mem.evidence) ? mem.evidence : []).slice(0, 2).join('\n');
+    const userContent = `原始记忆（当前层级：${AEVUM_TYPE_CN[mem.type] || mem.type}）：\n${mem.content}`
+      + (evidenceText ? `\n\n证据片段：\n${evidenceText}` : '')
+      + (mem.tags && mem.tags.length ? `\n\n标签：${mem.tags.join('、')}` : '')
+      + (mem.domain && mem.domain.length ? `\n领域：${mem.domain.join('、')}` : '');
+
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userContent }
+        ],
+        reasoning_effort: 'low',
+        max_tokens: 900,
+        temperature: 0.4,
+        stream: false
+      })
+    });
+    if (!resp.ok) return res.status(502).json({ error: 'AI 分析失败，请稍后重试' });
+    const data = await resp.json();
+    const reply = String(data.choices?.[0]?.message?.content || '');
+    const marker = '[AEVUM_LAYERS]';
+    const idx = reply.indexOf(marker);
+    if (idx === -1) return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(reply.substring(idx + marker.length).trim());
+    } catch (e) {
+      return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
+    }
+    const layers = {};
+    for (const t of AEVUM_PROMOTE_CHAIN) {
+      const v = String(parsed?.[t] || '').trim();
+      if (v) layers[t] = v;
+    }
+    if (!layers.event) layers.event = String(mem.content || '').trim(); // 事件层保底
+    const { data: updated, error: updErr } = await supabase
+      .from('aevum_memories')
+      .update({ layer_content: layers, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (updErr) return res.status(500).json({ error: updErr.message });
+    res.json({ ok: true, memory: updated });
+  } catch (e) {
+    res.status(500).json({ error: '分析失败' });
+  }
+});
+
+// 切换层级：把记忆切到 layer_content 中已有内容的层级（type 与 content 同步更新）
+app.post('/api/aevum/:id/switch-layer', async (req, res) => {
+  const layer = String(req.body?.layer || '');
+  if (!AEVUM_PROMOTE_CHAIN.includes(layer)) return res.status(400).json({ error: '层级无效' });
+  try {
+    const { data: mem, error } = await supabase
+      .from('aevum_memories')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !mem) return res.status(404).json({ error: '未找到' });
+    const layers = (mem.layer_content && typeof mem.layer_content === 'object') ? mem.layer_content : {};
+    const text = String(layers[layer] || '').trim();
+    if (!text) return res.status(400).json({ error: '这一层还没有内容（还没分析过，或 AI 认为这条记忆暂时到不了这层）' });
+    const { data: updated, error: updErr } = await supabase
+      .from('aevum_memories')
+      .update({ type: layer, content: text, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (updErr) return res.status(500).json({ error: updErr.message });
+    res.json({ ok: true, memory: updated });
+  } catch (e) {
+    res.status(500).json({ error: '切换失败' });
   }
 });
 

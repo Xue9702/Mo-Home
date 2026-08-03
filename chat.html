@@ -2199,19 +2199,35 @@
       function renderAevumCard(m) {
         const conf = m.confidence || {};
         const canReview = ['candidate', 'raw', 'extracted', 'verified'].includes(m.status);
+        const layers = (m.layer_content && typeof m.layer_content === 'object') ? m.layer_content : {};
+        const hasLayers = Object.keys(layers).length > 0;
         const chainIdx = AEVUM_PROMOTE_CHAIN.indexOf(m.type);
-        const nextLabel = chainIdx >= 0 && chainIdx < AEVUM_PROMOTE_CHAIN.length - 1
-          ? (AEVUM_TYPE_LABELS[AEVUM_PROMOTE_CHAIN[chainIdx + 1]] || AEVUM_PROMOTE_CHAIN[chainIdx + 1])
-          : '';
-        const canPromoteHint = !!nextLabel && (m.importance ?? 0) >= 7 && (conf.stability || 0) >= 0.7;
-        const chainHtml = chainIdx >= 0
-          ? AEVUM_PROMOTE_CHAIN.map((t, i) => {
-              const label = AEVUM_TYPE_LABELS[t] || t;
-              const color = i === chainIdx ? '#c084fc' : i < chainIdx ? '#aaa' : '#e3d9f2';
-              const weight = i === chainIdx ? 'bold' : 'normal';
-              return `${i > 0 ? ' → ' : ''}<span style="color:${color};font-weight:${weight};">${label}</span>`;
-            }).join('')
-          : '';
+        let nextFilled = '';
+        if (chainIdx >= 0) {
+          for (let i = chainIdx + 1; i < AEVUM_PROMOTE_CHAIN.length; i++) {
+            if (layers[AEVUM_PROMOTE_CHAIN[i]]) {
+              nextFilled = AEVUM_TYPE_LABELS[AEVUM_PROMOTE_CHAIN[i]] || AEVUM_PROMOTE_CHAIN[i];
+              break;
+            }
+          }
+        }
+        const chainChips = AEVUM_PROMOTE_CHAIN.map((t, i) => {
+          const label = AEVUM_TYPE_LABELS[t] || t;
+          const isCurrent = i === chainIdx;
+          const hasContent = !!layers[t];
+          const clickable = isCurrent ? false : (hasLayers ? hasContent : true);
+          let style;
+          if (isCurrent) style = 'background:#ffd3de;color:#fff;font-weight:600;';
+          else if (hasContent) style = 'background:#f7eefb;color:#8a5fb5;border:1px solid #e3d9f2;';
+          else style = 'background:#fff;color:#ccc;border:1px solid #eee;';
+          const clickAttr = clickable ? `onclick="aevumSwitchLayer(${m.id}, '${t}')"` : '';
+          return `<span ${clickAttr} style="cursor:${clickable ? 'pointer' : 'default'};padding:5px 12px;border-radius:16px;font-size:12px;${style}">${label}</span>`;
+        }).join('');
+        const hintHtml = hasLayers
+          ? (nextFilled
+              ? `<div style="font-size:11px;color:#c084fc;">💡 可晋升为「${nextFilled}」</div>`
+              : '<div style="font-size:11px;color:#b0a6c4;">已分析：AI 认为这条记忆已到最高可表述层级</div>')
+          : '<div style="font-size:11px;color:#b0a6c4;">💡 还没分析层级：点「✨ 分析层级」让 AI 评定各层级</div>';
         const statusBg = m.status === 'active' ? '#e8f9f0' : m.status === 'rejected' ? '#fdecec' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6';
         const statusColor = m.status === 'active' ? '#2ecc71' : m.status === 'rejected' ? '#e74c3c' : m.status === 'archived' ? '#aaa' : '#b8860b';
         return `
@@ -2227,15 +2243,15 @@
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
             ${m.domain && m.domain.length ? `<div style="font-size:11px;color:#7f9fd9;">${m.domain.map(escapeHtml2).join(' · ')}</div>` : ''}
             <div style="font-size:11px;color:#aaa;">重要度 ${m.importance ?? 5} · 来源 ${(conf.evidence || 0).toFixed(2)} · 稳定 ${(conf.stability || 0).toFixed(2)} · 效价 ${((m.emotion && m.emotion.valence) || 0).toFixed(1)} · 唤醒 ${((m.emotion && m.emotion.arousal) || 0).toFixed(1)}</div>
-            ${chainHtml ? `<div style="font-size:11px;color:#8a83a8;">${chainHtml}</div>` : ''}
-            ${canPromoteHint ? `<div style="font-size:11px;color:#c084fc;">💡 可晋升为「${nextLabel}」：重要度与稳定性达标，可尝试提升层级</div>` : ''}
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">${chainChips}</div>
+            ${hintHtml}
             <div style="display:flex;gap:10px;justify-content:flex-end;font-size:13px;flex-wrap:wrap;">
               ${canReview ? `<span style="cursor:pointer;color:#2ecc71;" onclick="aevumReview(${m.id},'approve')">✓ 确认</span>
               <span style="cursor:pointer;color:#e74c3c;" onclick="aevumReview(${m.id},'reject')">✕ 拒绝</span>` : ''}
               ${m.status === 'archived' || m.status === 'rejected'
                 ? `<span style="cursor:pointer;color:#1e90ff;" onclick="aevumReview(${m.id},'approve')">↺ 恢复</span>`
                 : `<span style="cursor:pointer;color:#888;" onclick="aevumArchive(${m.id})">归档</span>`}
-              ${nextLabel ? `<span style="cursor:pointer;color:#c084fc;" onclick="aevumPromote(${m.id})">↑ 晋升为 ${nextLabel}</span>` : ''}
+              <span style="cursor:pointer;color:#c084fc;font-weight:600;" data-analyze="${m.id}" onclick="aevumAnalyzeLayers(${m.id})">✨ 分析层级</span>
               <span style="cursor:pointer;color:#888;" onclick="aevumEdit(${m.id})">✎ 修改</span>
             </div>
           </div>`;
@@ -2358,15 +2374,57 @@
       }
       window.aevumArchive = aevumArchive;
 
-      async function aevumPromote(id) {
-        if (!confirm('确定晋升这条记忆吗？晋升只会提升层级（事件→事实→意义→关系→人格→Self候选），内容保持不变，封顶为 Self候选。')) return;
-        const res = await fetch('/api/aevum/' + id + '/promote', { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) { alert(data.error || '晋升失败，请确认后端已部署'); return; }
-        alert('✅ 已晋升为「' + (AEVUM_TYPE_LABELS[data.memory.type] || data.memory.type) + '」：层级提升，内容保持不变');
-        renderAevum();
+      // 让 AI 一次性评定六个层级内容
+      async function aevumAnalyzeLayers(id) {
+        let hasLayers = false;
+        try {
+          const res = await fetch('/api/aevum/' + id);
+          const data = await res.json();
+          const layers = (data.memory && data.memory.layer_content && typeof data.memory.layer_content === 'object') ? data.memory.layer_content : {};
+          hasLayers = Object.keys(layers).length > 0;
+        } catch (e) { /* ignore */ }
+        if (hasLayers && !confirm('重新分析会覆盖现有各层级内容，确定吗？')) return;
+        const btn = document.querySelector(`[data-analyze="${id}"]`);
+        if (btn) btn.textContent = '⏳ 分析中…';
+        try {
+          const res = await fetch('/api/aevum/' + id + '/analyze-layers', { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '分析失败，请稍后重试'); return; }
+          alert('✅ 已生成六个层级的候选内容，点上面的圆框即可切换层级');
+          renderAevum();
+        } catch (e) {
+          alert('分析失败，请稍后重试');
+        } finally {
+          if (btn) btn.textContent = '✨ 分析层级';
+        }
       }
-      window.aevumPromote = aevumPromote;
+      window.aevumAnalyzeLayers = aevumAnalyzeLayers;
+
+      // 点击晋升链圆框：未分析先自动分析，再切换到目标层级
+      async function aevumSwitchLayer(id, layer) {
+        try {
+          const memRes = await fetch('/api/aevum/' + id);
+          const memData = await memRes.json();
+          const layers = (memData.memory && memData.memory.layer_content && typeof memData.memory.layer_content === 'object') ? memData.memory.layer_content : {};
+          if (!Object.keys(layers).length) {
+            const ar = await fetch('/api/aevum/' + id + '/analyze-layers', { method: 'POST' });
+            const arData = await ar.json().catch(() => ({}));
+            if (!ar.ok) { alert(arData.error || '分析失败，请稍后重试'); return; }
+          }
+          const res = await fetch('/api/aevum/' + id + '/switch-layer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ layer })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '切换失败'); renderAevum(); return; }
+          alert('✅ 已切换到「' + (AEVUM_TYPE_LABELS[data.memory.type] || data.memory.type) + '」');
+          renderAevum();
+        } catch (e) {
+          alert('切换失败，请稍后重试');
+        }
+      }
+      window.aevumSwitchLayer = aevumSwitchLayer;
 
       async function aevumEdit(id) {
         try {
