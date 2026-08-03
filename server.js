@@ -2839,6 +2839,26 @@ app.delete('/api/day-tags/:id', async (req, res) => {
 // ================== Aevum Memory（v1 Phase 1） ==================
 const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate', 'self_model'];
 const AEVUM_OWNERS = ['USER', 'RELATIONSHIP', 'AGENT', 'SYSTEM'];
+const AEVUM_DOMAINS = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
+
+function validAevumDomains(d) {
+  if (!Array.isArray(d)) return [];
+  return d.map(String).filter(x => AEVUM_DOMAINS.includes(x)).slice(0, 3);
+}
+
+function validAevumEmotion(e) {
+  const em = (e && typeof e === 'object') ? e : {};
+  const num = (v, min, max, def) => {
+    const n = Number(v);
+    return isFinite(n) ? Math.max(min, Math.min(max, n)) : def;
+  };
+  return { valence: num(em.valence, -1, 1, 0), arousal: num(em.arousal, 0, 1, 0) };
+}
+
+function validAevumImportance(v) {
+  const n = Number(v);
+  return isFinite(n) ? Math.max(0, Math.min(10, Math.round(n))) : 5;
+}
 
 function validAevumConfidence(c) {
   const conf = (c && typeof c === 'object') ? c : {};
@@ -2867,22 +2887,23 @@ async function saveAevumRaw(userText, assistantReply) {
   }
 }
 
-// 内容去重：与已有活跃/候选记忆高度重合则跳过
-async function aevumContentExists(content) {
+// 内容去重：与已有活跃/候选记忆高度重合则返回匹配的那条（供 importance 自增）；无则 null
+async function aevumFindDuplicate(content) {
   try {
     const { data } = await supabase
       .from('aevum_memories')
-      .select('content')
+      .select('id, content, importance')
       .in('status', ['active', 'candidate', 'verified'])
       .limit(300);
     const norm = String(content || '').replace(/\s+/g, '');
-    if (!norm) return true;
-    return (data || []).some(m => {
+    if (!norm) return null;
+    const hit = (data || []).find(m => {
       const mn = String(m.content).replace(/\s+/g, '');
       return mn.includes(norm) || norm.includes(mn);
     });
+    return hit || null;
   } catch (e) {
-    return true; // 表缺失或出错时保守跳过
+    return null; // 表缺失或出错时保守跳过插入
   }
 }
 
@@ -2944,7 +2965,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
     if (embedding && embedding.length) {
       const { data, error } = await supabase.rpc('match_aevum_memories', {
         query_embedding: embedding,
-        match_count: limit
+        match_count: 8
       });
       if (!error && Array.isArray(data) && data.length) items = data;
     }
@@ -2969,7 +2990,13 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
       });
     }
     if (!items.length) return '';
-    const lines = items.map(m => `- [${AEVUM_TYPE_CN[m.type] || m.type}] ${m.content}`).join('\n');
+    // importance 软加权：取前 limit 条按重要度降序
+    items = items
+      .sort((a, b) => (b.importance || 0) - (a.importance || 0))
+      .slice(0, limit);
+    const lines = items.map(m =>
+      `- [${AEVUM_TYPE_CN[m.type] || m.type}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}] ${m.content}`
+    ).join('\n');
     return `\n\n【Aevum记忆】\n${lines}`;
   } catch (e) {
     console.error('Aevum 召回失败:', e.message);
@@ -2990,9 +3017,14 @@ async function extractAevumMemories(texts) {
 - 只提取明确出现在对话里的信息，不脑补、不编造
 - event=客观发生的事；fact=稳定的用户信息/偏好/情况；meaning=这件事对用户的意义（解释性，置信度<0.9）
 - relationship=互动规律；personality=AI 稳定行为倾向；这两类只在很有把握时提取
+- perspective 视角必须准确：USER=雪是什么样的人；AGENT=默形成了什么行为倾向；RELATIONSHIP=双方互动模式；SYSTEM=小屋与系统如何运行。AI 自己的内容绝不能标成 USER。
+- domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、其他
+- emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(激动)，只作辅助参数
+- importance 重要度 0-10：按 明确程度+重复频率+长期影响+关系影响+情绪权重 估分；一次性的小事给低分
 - 不要提取：日常寒暄、一次性话题、情绪化即兴表达、AI 的客套话
 - 每次最多 3 条，宁缺毋滥
-- 输出格式：只输出 [AEVUM_MEMORIES]{"memories":[{"type":"event|fact|meaning|relationship|personality","owner":"USER|RELATIONSHIP|AGENT","content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+- tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
+- 输出格式：只输出 [AEVUM_MEMORIES]{"memories":[{"type":"event|fact|meaning|relationship|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3031,15 +3063,26 @@ async function extractAevumMemories(texts) {
     for (const m of memories.slice(0, 3)) {
       const content = String(m.content || '').trim();
       if (!content || !AEVUM_TYPES.includes(m.type)) continue;
-      if (await aevumContentExists(content)) continue;
+      const dup = await aevumFindDuplicate(content);
+      if (dup) {
+        // 重复出现：重要度自增（封顶 10）
+        const imp = validAevumImportance(dup.importance) + 1;
+        if (imp <= 10) {
+          await supabase.from('aevum_memories').update({ importance: imp }).eq('id', dup.id);
+        }
+        continue;
+      }
       const { data: insData } = await supabase.from('aevum_memories').insert({
         type: m.type,
-        owner: AEVUM_OWNERS.includes(m.owner) ? m.owner : 'USER',
+        owner: AEVUM_OWNERS.includes(m.perspective) ? m.perspective : AEVUM_OWNERS.includes(m.owner) ? m.owner : 'USER',
         content,
         status: 'candidate',
         confidence: validAevumConfidence(m.confidence),
+        domain: validAevumDomains(m.domain),
+        emotion: validAevumEmotion(m.emotion),
+        importance: validAevumImportance(m.importance),
         evidence: Array.isArray(m.evidence) ? m.evidence : [],
-        tags: Array.isArray(m.tags) ? m.tags.map(String) : [],
+        tags: Array.isArray(m.tags) ? m.tags.map(String).filter(t => !['快乐', '美好', '重要', '温暖', '陪伴', '成长'].includes(t)).slice(0, 8) : [],
         source: 'auto-extract'
       }).select();
       if (insData?.[0]?.id) {
@@ -3102,6 +3145,7 @@ app.get('/api/aevum', async (req, res) => {
     if (AEVUM_TYPES.includes(req.query.type)) q = q.eq('type', req.query.type);
     if (req.query.status) q = q.eq('status', req.query.status);
     if (AEVUM_OWNERS.includes(req.query.owner)) q = q.eq('owner', req.query.owner);
+    if (AEVUM_DOMAINS.includes(req.query.domain)) q = q.contains('domain', [req.query.domain]);
     if (req.query.q) q = q.ilike('content', `%${req.query.q}%`);
     const { data, error } = await q;
     if (error) return res.json({ memories: [] });
@@ -3141,7 +3185,7 @@ app.get('/api/aevum/:id', async (req, res) => {
 
 // 新增（默认进入候选队列）
 app.post('/api/aevum', async (req, res) => {
-  const { type, owner, content, confidence, evidence, tags, source, source_message_id, review_note } = req.body || {};
+  const { type, owner, content, confidence, evidence, tags, source, source_message_id, review_note, domain, emotion, importance } = req.body || {};
   const text = String(content || '').trim();
   if (!AEVUM_TYPES.includes(type)) return res.status(400).json({ error: '层级无效' });
   if (!text) return res.status(400).json({ error: '内容不能为空' });
@@ -3154,6 +3198,9 @@ app.post('/api/aevum', async (req, res) => {
         content: text,
         status: 'candidate',
         confidence: validAevumConfidence(confidence),
+        domain: validAevumDomains(domain),
+        emotion: validAevumEmotion(emotion),
+        importance: validAevumImportance(importance),
         evidence: Array.isArray(evidence) ? evidence : [],
         tags: Array.isArray(tags) ? tags.map(String) : [],
         source: source ? String(source) : null,
@@ -3172,7 +3219,7 @@ app.post('/api/aevum', async (req, res) => {
 
 // 修改
 app.put('/api/aevum/:id', async (req, res) => {
-  const { type, owner, content, confidence, evidence, tags, source, review_note } = req.body || {};
+  const { type, owner, content, confidence, evidence, tags, source, review_note, domain, emotion, importance } = req.body || {};
   const patch = {};
   if (AEVUM_TYPES.includes(type)) patch.type = type;
   if (AEVUM_OWNERS.includes(owner)) patch.owner = owner;
@@ -3182,6 +3229,9 @@ app.put('/api/aevum/:id', async (req, res) => {
     patch.content = text;
   }
   if (confidence !== undefined) patch.confidence = validAevumConfidence(confidence);
+  if (domain !== undefined) patch.domain = validAevumDomains(domain);
+  if (emotion !== undefined) patch.emotion = validAevumEmotion(emotion);
+  if (importance !== undefined) patch.importance = validAevumImportance(importance);
   if (evidence !== undefined) patch.evidence = Array.isArray(evidence) ? evidence : [];
   if (tags !== undefined) patch.tags = Array.isArray(tags) ? tags.map(String) : [];
   if (source !== undefined) patch.source = source ? String(source) : null;

@@ -2033,6 +2033,7 @@
         event: '#8ec5ff', fact: '#9b8cff', meaning: '#ffb36b', relationship: '#ff8fab',
         personality: '#7fb8ff', self_candidate: '#c084fc', self_model: '#e1789a'
       };
+      const AEVUM_DOMAINS_FRONT = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
       let aevumState = { filters: { type: '', status: '', owner: '', q: '' }, editingId: null, editingData: null, showForm: false };
 
       async function renderAevum() {
@@ -2064,6 +2065,7 @@
                 ${filterSel('aevumType', Object.entries(AEVUM_TYPE_LABELS), aevumState.filters.type, '全部层级')}
                 ${filterSel('aevumStatus', Object.entries(AEVUM_STATUS_LABELS), aevumState.filters.status, '全部状态')}
                 ${filterSel('aevumOwner', Object.entries(AEVUM_OWNER_LABELS), aevumState.filters.owner, '全部归属')}
+                ${filterSel('aevumDomain', AEVUM_DOMAINS_FRONT.map(d => [d, d]), aevumState.filters.domain, '全部领域')}
                 <input id="aevumQ" placeholder="搜索内容…" value="${escapeHtml2(aevumState.filters.q)}" oninput="aevumFilter()"
                   style="flex:1;min-width:90px;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 10px;font-size:13px;background:rgba(255,255,255,0.7);outline:none;">
                 <button onclick="aevumManualExtract()" title="从最近 12 条对话提取候选记忆"
@@ -2116,6 +2118,28 @@
                 <input id="aevumFormRange_${k}" type="range" min="0" max="1" step="0.05" value="${c[k] || 0.5}" oninput="document.getElementById('aevumConf_${k}').textContent = (+this.value).toFixed(2)" style="flex:1;">
                 <span id="aevumConf_${k}" style="width:36px;text-align:right;">${(c[k] || 0.5).toFixed(2)}</span>
               </div>`).join('')}
+            <div style="font-size:12px;color:#888;">领域</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;" id="aevumFormDomains">
+              ${AEVUM_DOMAINS_FRONT.map(d => `
+                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#555;cursor:pointer;">
+                  <input type="checkbox" value="${d}" ${(base.domain || []).includes(d) ? 'checked' : ''}> ${d}
+                </label>`).join('')}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#666;">
+              <span style="width:64px;flex-shrink:0;">效价</span>
+              <input id="aevumFormValence" type="range" min="-1" max="1" step="0.05" value="${(base.emotion && base.emotion.valence) || 0}" oninput="document.getElementById('aevumFormValenceVal').textContent = (+this.value).toFixed(2)" style="flex:1;">
+              <span id="aevumFormValenceVal" style="width:36px;text-align:right;">${((base.emotion && base.emotion.valence) || 0).toFixed(2)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#666;">
+              <span style="width:64px;flex-shrink:0;">唤醒度</span>
+              <input id="aevumFormArousal" type="range" min="0" max="1" step="0.05" value="${(base.emotion && base.emotion.arousal) || 0}" oninput="document.getElementById('aevumFormArousalVal').textContent = (+this.value).toFixed(2)" style="flex:1;">
+              <span id="aevumFormArousalVal" style="width:36px;text-align:right;">${((base.emotion && base.emotion.arousal) || 0).toFixed(2)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#666;">
+              <span style="width:64px;flex-shrink:0;">重要度</span>
+              <input id="aevumFormImportance" type="range" min="0" max="10" step="1" value="${base.importance ?? 5}" oninput="document.getElementById('aevumFormImportanceVal').textContent = this.value" style="flex:1;">
+              <span id="aevumFormImportanceVal" style="width:24px;text-align:right;">${base.importance ?? 5}</span>
+            </div>
             <input id="aevumFormTags" placeholder="标签（逗号分隔）" value="${escapeHtml2((base.tags || []).join('，'))}" style="border:1px solid #eee;border-radius:10px;padding:6px 10px;font-size:13px;">
             <input id="aevumFormSource" placeholder="来源（可选）" value="${escapeHtml2(base.source || '')}" style="border:1px solid #eee;border-radius:10px;padding:6px 10px;font-size:13px;">
             <div style="display:flex;gap:10px;justify-content:flex-end;">
@@ -2139,7 +2163,8 @@
             </div>
             <div style="font-size:14px;color:#444;line-height:1.6;white-space:pre-wrap;">${escapeHtml2(m.content)}</div>
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
-            <div style="font-size:11px;color:#aaa;">来源 ${(conf.evidence || 0).toFixed(2)} · 稳定 ${(conf.stability || 0).toFixed(2)} · 影响 ${(conf.importance || 0).toFixed(2)}</div>
+            ${m.domain && m.domain.length ? `<div style="font-size:11px;color:#7f9fd9;">${m.domain.map(escapeHtml2).join(' · ')}</div>` : ''}
+            <div style="font-size:11px;color:#aaa;">重要度 ${m.importance ?? 5} · 来源 ${(conf.evidence || 0).toFixed(2)} · 稳定 ${(conf.stability || 0).toFixed(2)} · 效价 ${((m.emotion && m.emotion.valence) || 0).toFixed(1)} · 唤醒 ${((m.emotion && m.emotion.arousal) || 0).toFixed(1)}</div>
             <div style="display:flex;gap:10px;justify-content:flex-end;font-size:13px;flex-wrap:wrap;">
               ${canReview ? `<span style="cursor:pointer;color:#2ecc71;" onclick="aevumReview(${m.id},'approve')">✓ 确认</span>
               <span style="cursor:pointer;color:#e74c3c;" onclick="aevumReview(${m.id},'reject')">✕ 拒绝</span>` : ''}
@@ -2155,6 +2180,7 @@
         aevumState.filters.type = document.getElementById('aevumType').value;
         aevumState.filters.status = document.getElementById('aevumStatus').value;
         aevumState.filters.owner = document.getElementById('aevumOwner').value;
+        aevumState.filters.domain = document.getElementById('aevumDomain').value;
         aevumState.filters.q = document.getElementById('aevumQ').value.trim();
         renderAevum();
       }
@@ -2182,6 +2208,12 @@
         const content = document.getElementById('aevumFormContent').value.trim();
         const tags = document.getElementById('aevumFormTags').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
         const source = document.getElementById('aevumFormSource').value.trim();
+        const domains = [...document.querySelectorAll('#aevumFormDomains input:checked')].map(i => i.value);
+        const emotion = {
+          valence: parseFloat(document.getElementById('aevumFormValence').value),
+          arousal: parseFloat(document.getElementById('aevumFormArousal').value)
+        };
+        const importance = parseInt(document.getElementById('aevumFormImportance').value, 10);
         const confidence = {};
         ['evidence', 'stability', 'importance'].forEach(k => {
           const r = document.getElementById('aevumFormRange_' + k);
@@ -2192,7 +2224,7 @@
         const res = await fetch(url, {
           method: aevumState.editingId ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, owner, content, tags, source, confidence })
+          body: JSON.stringify({ type, owner, content, tags, source, confidence, domain: domains, emotion, importance })
         });
         if (!res.ok) { alert('保存失败，请确认已执行 setup_aevum.sql'); return; }
         aevumState.showForm = false;
