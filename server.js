@@ -3426,12 +3426,12 @@ app.put('/api/aevum/:id', async (req, res) => {
   }
 });
 
-// 审核：approve → active；reject → archived
+// 审核：approve → active；reject → rejected（v14 SQL 未执行时降级为 archived+已拒绝标记）
 app.post('/api/aevum/:id/review', async (req, res) => {
   const action = req.body?.action;
   let status = null;
   if (action === 'approve') status = 'active';
-  else if (action === 'reject') status = 'archived';
+  else if (action === 'reject') status = 'rejected';
   else return res.status(400).json({ error: '操作无效' });
   try {
     const { data, error } = await supabase
@@ -3440,6 +3440,17 @@ app.post('/api/aevum/:id/review', async (req, res) => {
       .eq('id', req.params.id)
       .select()
       .single();
+    if (error && action === 'reject') {
+      // setup_aevum_v14.sql 未执行：status 枚举还不支持 rejected，降级为归档+拒绝标记
+      const { data: fallback, error: fbErr } = await supabase
+        .from('aevum_memories')
+        .update({ status: 'archived', review_note: '【已拒绝】', updated_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+      if (fbErr) return res.status(500).json({ error: fbErr.message });
+      return res.json({ ok: true, memory: fallback, degraded: true });
+    }
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true, memory: data });
   } catch (e) {
