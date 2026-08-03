@@ -498,7 +498,7 @@ function extractSearchRequest(reply, toolCalls) {
 
 // 执行搜索阶段：调用博查，通知前端搜索结果数量，然后用搜索结果追加一次 DeepSeek 调用。
 // 返回 { reply, thinking }（第二轮正式回答）或 { error }。
-async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE }) {
+async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, leadText = '' }) {
   const search = await performWebSearch(query);
   const searchText = search.text || null;
   const pageCount = search.count || 0;
@@ -508,7 +508,7 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE }) {
     ? `【实时搜索结果】\n以下是默刚刚搜索到的实时信息：\n\n${searchText}\n\n请基于这些搜索结果回答雪的问题，用自己的语气自然组织；如果搜索结果与问题无关或信息不足，请如实说明。`
     : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
-  // 搜索结果作为独立系统消息放在用户问题紧前面，避免被长 system prompt 淹没，确保默一定读到
+  // 让下0.5轮"接住"上0.5轮：用户问题 → 默自己的过渡语 → 搜索结果 → 继续把话说完成
   const rest = chatMessages.slice(1);
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
@@ -516,8 +516,10 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE }) {
     [
       { role: 'system', content: systemPrompt },
       ...history,
+      lastUser,
+      ...(leadText ? [{ role: 'assistant', content: leadText }] : []),
       { role: 'system', content: searchNote },
-      lastUser
+      { role: 'user', content: '（请基于上面的搜索结果，自然地接着把这句话说完，语气与刚才保持一致）' }
     ],
     sendSSE
   );
@@ -1091,7 +1093,8 @@ app.post('/api/chat', async (req, res) => {
         query: searchReq.query,
         chatMessages,
         systemPrompt,
-        sendSSE
+        sendSSE,
+        leadText: searchReq.leadText
       });
 
       if (phase.error) {
@@ -1451,7 +1454,8 @@ app.post('/api/regenerate', async (req, res) => {
         query: searchReq.query,
         chatMessages,
         systemPrompt,
-        sendSSE
+        sendSSE,
+        leadText: searchReq.leadText
       });
 
       if (phase.error) {
@@ -3783,7 +3787,8 @@ app.post('/api/edit-message', async (req, res) => {
         query: searchReq.query,
         chatMessages,
         systemPrompt,
-        sendSSE
+        sendSSE,
+        leadText: searchReq.leadText
       });
 
       if (phase.error) {
