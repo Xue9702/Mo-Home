@@ -406,16 +406,24 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
         const delta = json.choices?.[0]?.delta;
 
         if (delta?.reasoning_content) {
-          fullThinking += delta.reasoning_content;
-          sendSSE({ thinking: delta.reasoning_content });
+          const t = delta.reasoning_content;
+          // 尾缀去重：模型偶尔会重发思考分片，避免思考内容重复
+          if (!fullThinking.endsWith(t)) {
+            fullThinking += t;
+            sendSSE({ thinking: t });
+          }
         }
 
         if (delta?.content) {
-          fullReply += delta.content;
-          if (bufferContent) {
-            contentBuffer += delta.content;
-          } else {
-            sendSSE({ content: delta.content });
+          const c = delta.content;
+          const isNew = !fullReply.endsWith(c);
+          if (isNew) {
+            fullReply += c;
+            if (bufferContent) {
+              contentBuffer += c;
+            } else {
+              sendSSE({ content: c });
+            }
           }
         }
 
@@ -499,10 +507,16 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE }) {
     ? `【实时搜索结果】\n以下是默刚刚搜索到的实时信息：\n\n${searchText}\n\n请基于这些搜索结果回答雪的问题，用自己的语气自然组织；如果搜索结果与问题无关或信息不足，请如实说明。`
     : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
+  // 搜索结果作为独立系统消息放在用户问题紧前面，避免被长 system prompt 淹没，确保默一定读到
+  const rest = chatMessages.slice(1);
+  const history = rest.slice(0, -1);
+  const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
   const second = await callDeepSeekStream(
     [
-      { role: 'system', content: `${systemPrompt}\n\n${searchNote}` },
-      ...chatMessages.slice(1)
+      { role: 'system', content: systemPrompt },
+      ...history,
+      { role: 'system', content: searchNote },
+      lastUser
     ],
     sendSSE
   );
@@ -1351,7 +1365,8 @@ app.post('/api/regenerate', async (req, res) => {
     if (readDiaryContext) memoryContext += readDiaryContext;
     const recentActionContext = await getRecentActionContext();
     if (recentActionContext) memoryContext += recentActionContext;
-    const aevumContext = await recallAevumMemories(userContent);
+    // 重新生成：Aevum 召回时排除旧版回复内容，避免默读到刷新前的自己
+    const aevumContext = await recallAevumMemories(userContent, 5, targetMsg.content);
     if (aevumContext) memoryContext += aevumContext;
     const momentsContext = await getMomentsContext();
 
@@ -2936,9 +2951,10 @@ async function ensureAevumEmbedding(id, content) {
 }
 
 // 召回：向量相似度取活跃记忆；向量不可用时退回关键词匹配
-async function recallAevumMemories(text, limit = 5) {
+async function recallAevumMemories(text, limit = 5, excludeText = '') {
   const q = String(text || '').trim();
   if (!q) return '';
+  const excludeNorm = String(excludeText || '').replace(/\s+/g, '');
   try {
     const embedding = await getEmbedding(q.slice(0, 500));
     let items = null;
@@ -2962,6 +2978,14 @@ async function recallAevumMemories(text, limit = 5) {
       }
     }
     if (!items || !items.length) return '';
+    // 重新生成场景：排除与旧版回复重合的记忆，避免默看到自己上一版的话
+    if (excludeNorm) {
+      items = items.filter(m => {
+        const mn = String(m.content || '').replace(/\s+/g, '');
+        return !(mn.includes(excludeNorm) || excludeNorm.includes(mn));
+      });
+    }
+    if (!items.length) return '';
     const lines = items.map(m => `- [${AEVUM_TYPE_CN[m.type] || m.type}] ${m.content}`).join('\n');
     return `\n\n【Aevum记忆】\n${lines}`;
   } catch (e) {
