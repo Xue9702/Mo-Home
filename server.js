@@ -272,7 +272,7 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
     .trim();
   // 实时搜索指令：仅在后端配置了博查密钥时注入，避免默在未启用时也输出搜索标签
   const searchInstruction = process.env.BOCHA_API_KEY
-    ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，先调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
+    ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。注意：不要用文字描述"我要去搜索"或先写过渡语——需要搜索就直接调用工具，工具调用后系统会返回搜索结果给你。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
     + (weatherContext ? `\n\n${weatherContext}` : '')
@@ -434,8 +434,9 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
             const cur = toolCallsMap.get(idx) || { id: '', type: 'function', function: { name: '', arguments: '' } };
             if (tc.id) cur.id = tc.id;
             if (tc.type) cur.type = tc.type;
-            if (tc.function?.name) cur.function.name += tc.function.name;
-            if (tc.function?.arguments) cur.function.arguments += tc.function.arguments;
+            // 尾缀去重：与思考分片一样，工具调用分片也可能被重发，避免参数/名称被重复拼接
+            if (tc.function?.name && !cur.function.name.endsWith(tc.function.name)) cur.function.name += tc.function.name;
+            if (tc.function?.arguments && !cur.function.arguments.endsWith(tc.function.arguments)) cur.function.arguments += tc.function.arguments;
             toolCallsMap.set(idx, cur);
           }
         }
@@ -522,7 +523,7 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE }) {
   );
 
   if (second.error) return { error: second.error };
-  return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking };
+  return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking, pageCount };
 }
 
 // ================== 天气感知（Open-Meteo，免注册） ==================
@@ -1099,7 +1100,7 @@ app.post('/api/chat', async (req, res) => {
         return;
       }
 
-      fullReply = phase.reply;
+      fullReply = phase.reply + (phase.pageCount ? `\n\n🔍 已搜索到 ${phase.pageCount} 个网页` : '');
       fullThinking = phase.thinking;
       console.log('🔍 联网搜索完成，最终回复长度:', fullReply.length);
     } else {
@@ -1244,7 +1245,7 @@ app.post('/api/regenerate', async (req, res) => {
     // 1. 查找原消息
     const { data: targetMsg, error: findError } = await supabase
       .from('messages')
-      .select('session_id, content, role, group_id, version_number')
+      .select('session_id, content, role, group_id, version_number, reasoning_content')
       .eq('id', messageId)
       .single();
 
@@ -1386,8 +1387,11 @@ app.post('/api/regenerate', async (req, res) => {
     );
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
-    // 重新生成与正常回复完全一致：不喂旧版、不加任何提示，让默像第一次收到消息一样作答
-    const regenUserContent = userContent;
+    // 把上一轮的思考过程也带给这一轮的默（供参考，帮助写出不同版本）
+    const prevThinking = String(targetMsg.reasoning_content || '').trim();
+    const regenUserContent = prevThinking
+      ? `${userContent}\n\n（默上一轮的思考，供参考，不一定要沿用）：\n${prevThinking}`
+      : userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
       ...filteredHistory.map(msg => ({ role: msg.role, content: msg.content })),
@@ -1456,7 +1460,7 @@ app.post('/api/regenerate', async (req, res) => {
         return;
       }
 
-      fullReply = phase.reply;
+      fullReply = phase.reply + (phase.pageCount ? `\n\n🔍 已搜索到 ${phase.pageCount} 个网页` : '');
       fullThinking = phase.thinking;
       console.log('🔍 重新生成-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
@@ -3788,7 +3792,7 @@ app.post('/api/edit-message', async (req, res) => {
         return;
       }
 
-      fullReply = phase.reply;
+      fullReply = phase.reply + (phase.pageCount ? `\n\n🔍 已搜索到 ${phase.pageCount} 个网页` : '');
       fullThinking = phase.thinking;
       console.log('🔍 编辑-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
