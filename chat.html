@@ -2034,7 +2034,7 @@
         personality: '#7fb8ff', self_candidate: '#c084fc', self_model: '#e1789a'
       };
       const AEVUM_DOMAINS_FRONT = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
-      let aevumState = { filters: { type: '', status: '', owner: '', q: '' }, editingId: null, editingData: null, showForm: false };
+      let aevumState = { filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false };
 
       async function renderAevum() {
         const box = document.getElementById('aevumContent');
@@ -2152,6 +2152,8 @@
       function renderAevumCard(m) {
         const conf = m.confidence || {};
         const canReview = m.status !== 'active' && m.status !== 'archived';
+        const promotable = m.type !== 'self_candidate' && m.type !== 'self_model';
+        const canPromoteHint = promotable && (m.importance ?? 0) >= 7 && (conf.stability || 0) >= 0.7;
         return `
           <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -2165,12 +2167,14 @@
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
             ${m.domain && m.domain.length ? `<div style="font-size:11px;color:#7f9fd9;">${m.domain.map(escapeHtml2).join(' · ')}</div>` : ''}
             <div style="font-size:11px;color:#aaa;">重要度 ${m.importance ?? 5} · 来源 ${(conf.evidence || 0).toFixed(2)} · 稳定 ${(conf.stability || 0).toFixed(2)} · 效价 ${((m.emotion && m.emotion.valence) || 0).toFixed(1)} · 唤醒 ${((m.emotion && m.emotion.arousal) || 0).toFixed(1)}</div>
+            ${canPromoteHint ? '<div style="font-size:11px;color:#c084fc;">💡 可晋升：重要度与稳定性达标，可尝试提升层级</div>' : ''}
             <div style="display:flex;gap:10px;justify-content:flex-end;font-size:13px;flex-wrap:wrap;">
               ${canReview ? `<span style="cursor:pointer;color:#2ecc71;" onclick="aevumReview(${m.id},'approve')">✓ 确认</span>
               <span style="cursor:pointer;color:#e74c3c;" onclick="aevumReview(${m.id},'reject')">✕ 拒绝</span>` : ''}
               ${m.status === 'archived'
                 ? `<span style="cursor:pointer;color:#1e90ff;" onclick="aevumReview(${m.id},'approve')">↺ 恢复</span>`
                 : `<span style="cursor:pointer;color:#888;" onclick="aevumArchive(${m.id})">归档</span>`}
+              ${promotable ? `<span style="cursor:pointer;color:#c084fc;" onclick="aevumPromote(${m.id})">↑ 晋升</span>` : ''}
               <span style="cursor:pointer;color:#888;" onclick="aevumEdit(${m.id})">✎ 修改</span>
             </div>
           </div>`;
@@ -2281,6 +2285,16 @@
         renderAevum();
       }
       window.aevumArchive = aevumArchive;
+
+      async function aevumPromote(id) {
+        if (!confirm('确定把这条记忆晋升到上一层吗？（事件→事实→意义→关系→人格→Self候选）')) return;
+        const res = await fetch('/api/aevum/' + id + '/promote', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(data.error || '晋升失败，请确认后端已部署'); return; }
+        alert('✅ 已晋升为「' + (AEVUM_TYPE_LABELS[data.memory.type] || data.memory.type) + '」');
+        renderAevum();
+      }
+      window.aevumPromote = aevumPromote;
 
       async function aevumEdit(id) {
         try {

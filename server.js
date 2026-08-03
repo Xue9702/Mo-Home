@@ -1113,8 +1113,11 @@ app.post('/api/chat', async (req, res) => {
       console.log('📊 流式读取完成，fullReply 长度:', fullReply.length, 'fullThinking 长度:', fullThinking.length);
     }
 
+    // Aevum：本轮对话归属当前语义事件块（30 分钟窗口，不阻塞回复）
+    const aevumEpisode = await getOrOpenEpisode();
+    const aevumEpisodeId = aevumEpisode?.id || null;
     // 本次对话原文存入 Aevum 原文档（不阻塞回复）
-    saveAevumRaw(finalUserContent, fullReply).catch(e => console.error('Aevum 原文存档失败:', e.message));
+    saveAevumRaw(finalUserContent, fullReply, aevumEpisodeId).catch(e => console.error('Aevum 原文存档失败:', e.message));
 
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
     console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
@@ -1162,11 +1165,14 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存助手消息失败:', assistantError);
     }
 
-    // Aevum 自动提取（不阻塞回复，后台提炼候选记忆）
-    extractAevumMemories([
+    // Aevum 自动提取：以当前事件块最近 6 轮为输入（不阻塞回复，后台提炼候选记忆）
+    const episodeTexts = await getEpisodeRecentExchanges(aevumEpisodeId, 5);
+    const extractInput = [
+      ...episodeTexts,
       { role: 'user', content: finalUserContent },
       { role: 'assistant', content: fullReply }
-    ]).catch(e => console.error('Aevum 自动提取失败:', e.message));
+    ];
+    extractAevumMemories(extractInput, aevumEpisodeId).catch(e => console.error('Aevum 自动提取失败:', e.message));
 
     // 发送完成信号，包含消息ID
     sendSSE({
@@ -2840,6 +2846,8 @@ app.delete('/api/day-tags/:id', async (req, res) => {
 const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate', 'self_model'];
 const AEVUM_OWNERS = ['USER', 'RELATIONSHIP', 'AGENT', 'SYSTEM'];
 const AEVUM_DOMAINS = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
+const EPISODE_IDLE_MINUTES = 30;
+const AEVUM_PROMOTE_CHAIN = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate'];
 
 function validAevumDomains(d) {
   if (!Array.isArray(d)) return [];
@@ -2869,8 +2877,106 @@ function validAevumConfidence(c) {
   return { evidence: num(conf.evidence), stability: num(conf.stability), importance: num(conf.importance) };
 }
 
+// 获取或打开当前语义事件块：30 分钟静默窗口内复用 open 块，否则关旧开新
+async function getOrOpenEpisode() {
+  try {
+    const { data, error } = await supabase
+      .from('aevum_episodes')
+      .select('*')
+      .eq('status', 'open')
+      .order('last_activity_at', { ascending: false })
+      .limit(1);
+    if (error) return null; // 表未建时降级：不阻塞对话
+    const now = Date.now();
+    const ep = data && data[0];
+    if (ep) {
+      const last = new Date(ep.last_activity_at).getTime();
+      if (Number.isFinite(last) && now - last < EPISODE_IDLE_MINUTES * 60 * 1000) return ep;
+      // 静默超窗：关闭旧块
+      await supabase
+        .from('aevum_episodes')
+        .update({ status: 'closed', updated_at: new Date().toISOString() })
+        .eq('id', ep.id);
+    }
+    const { data: created, error: createErr } = await supabase
+      .from('aevum_episodes')
+      .insert({
+        participants: ['雪', '默'],
+        status: 'open',
+        message_count: 0,
+        started_at: new Date().toISOString(),
+        last_activity_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+    if (createErr) return null;
+    return created;
+  } catch (e) {
+    console.error('Aevum 事件块获取失败:', e.message);
+    return null;
+  }
+}
+
+// 更新事件块活动时间与消息数
+async function appendToEpisode(id) {
+  if (!id) return;
+  try {
+    const { data } = await supabase
+      .from('aevum_episodes')
+      .select('message_count')
+      .eq('id', id)
+      .single();
+    await supabase.from('aevum_episodes').update({
+      message_count: (data?.message_count || 0) + 1,
+      last_activity_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq('id', id);
+  } catch (e) {
+    console.error('Aevum 事件块更新失败:', e.message);
+  }
+}
+
+// 回写提取出的事件块元信息（topic/intention/emotional_context）
+async function updateEpisodeMeta(id, meta) {
+  if (!id || !meta || typeof meta !== 'object') return;
+  const patch = { updated_at: new Date().toISOString() };
+  if (meta.topic) patch.topic = String(meta.topic).slice(0, 120);
+  if (meta.intention) patch.intention = String(meta.intention).slice(0, 200);
+  if (meta.emotional_context) patch.emotional_context = String(meta.emotional_context).slice(0, 200);
+  try {
+    await supabase.from('aevum_episodes').update(patch).eq('id', id);
+  } catch (e) {
+    console.error('Aevum 事件块元信息回写失败:', e.message);
+  }
+}
+
+// 读取当前事件块最近 N 个轮次的原文（供提取输入）
+async function getEpisodeRecentExchanges(episodeId, limit = 6) {
+  if (!episodeId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('aevum_raw')
+      .select('content')
+      .eq('episode_id', episodeId)
+      .order('id', { ascending: false })
+      .limit(limit);
+    if (error || !Array.isArray(data) || !data.length) return [];
+    const texts = [];
+    for (const row of data.slice().reverse()) {
+      const raw = String(row.content || '');
+      const sep = raw.indexOf('\n助手说：');
+      if (sep === -1) continue;
+      texts.push({ role: 'user', content: raw.slice(0, sep).replace(/^雪说：/, '').trim() });
+      texts.push({ role: 'assistant', content: raw.slice(sep + '\n助手说：'.length).trim() });
+    }
+    return texts;
+  } catch (e) {
+    return [];
+  }
+}
+
 // 把每一轮对话原文存入 Aevum 原文档（Layer 0），排版仿 Ombre：雪说/助手说
-async function saveAevumRaw(userText, assistantReply) {
+async function saveAevumRaw(userText, assistantReply, episodeId = null) {
   const content = `雪说：${String(userText || '').trim()}\n助手说：${String(assistantReply || '').trim()}`;
   if (!content.trim()) return;
   try {
@@ -2880,8 +2986,10 @@ async function saveAevumRaw(userText, assistantReply) {
       content,
       tags: ['对话'],
       importance: 5,
+      episode_id: episodeId || null,
       created_at: new Date().toISOString()
     });
+    if (episodeId) appendToEpisode(episodeId).catch(e => console.error('Aevum 事件块计数失败:', e.message));
   } catch (e) {
     console.error('Aevum 原文存档失败:', e.message);
   }
@@ -3005,7 +3113,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
 }
 
 // 从一段对话中提取候选记忆（Phase 2 提取管线）
-async function extractAevumMemories(texts) {
+async function extractAevumMemories(texts, episodeId = null) {
   if (!Array.isArray(texts) || texts.length === 0) return 0;
   const dialogue = texts
     .map(t => `${t.role === 'user' ? '雪' : '默'}：${String(t.content || '').slice(0, 800)}`)
@@ -3024,7 +3132,8 @@ async function extractAevumMemories(texts) {
 - 不要提取：日常寒暄、一次性话题、情绪化即兴表达、AI 的客套话
 - 每次最多 3 条，宁缺毋滥
 - tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
-- 输出格式：只输出 [AEVUM_MEMORIES]{"memories":[{"type":"event|fact|meaning|relationship|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+- 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
+- 输出格式：只输出 [AEVUM_MEMORIES]{"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"memories":[{"type":"event|fact|meaning|relationship|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3058,6 +3167,10 @@ async function extractAevumMemories(texts) {
       console.error('Aevum 提取结果解析失败:', e.message);
       return 0;
     }
+    // 回写事件块元信息（topic/intention/emotional_context）
+    if (episodeId && parsed && typeof parsed.episode_meta === 'object') {
+      updateEpisodeMeta(episodeId, parsed.episode_meta).catch(e => console.error('Aevum episode_meta 回写失败:', e.message));
+    }
     const memories = Array.isArray(parsed?.memories) ? parsed.memories : [];
     let inserted = 0;
     for (const m of memories.slice(0, 3)) {
@@ -3083,7 +3196,8 @@ async function extractAevumMemories(texts) {
         importance: validAevumImportance(m.importance),
         evidence: Array.isArray(m.evidence) ? m.evidence : [],
         tags: Array.isArray(m.tags) ? m.tags.map(String).filter(t => !['快乐', '美好', '重要', '温暖', '陪伴', '成长'].includes(t)).slice(0, 8) : [],
-        source: 'auto-extract'
+        source: 'auto-extract',
+        episode_id: episodeId || null
       }).select();
       if (insData?.[0]?.id) {
         ensureAevumEmbedding(insData[0].id, content).catch(e => console.error('Aevum embedding 失败:', e.message));
@@ -3265,6 +3379,31 @@ app.post('/api/aevum/:id/review', async (req, res) => {
     res.json({ ok: true, memory: data });
   } catch (e) {
     res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// 晋升：event→fact→meaning→relationship→personality→self_candidate（封顶，Self 相关仍走人工审核）
+app.post('/api/aevum/:id/promote', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('aevum_memories')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !data) return res.status(404).json({ error: '未找到' });
+    const idx = AEVUM_PROMOTE_CHAIN.indexOf(data.type);
+    const nextType = idx >= 0 ? AEVUM_PROMOTE_CHAIN[idx + 1] : null;
+    if (!nextType) return res.status(400).json({ error: '该层级已到顶，无法再晋升' });
+    const { data: updated, error: updErr } = await supabase
+      .from('aevum_memories')
+      .update({ type: nextType, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (updErr) return res.status(500).json({ error: updErr.message });
+    res.json({ ok: true, memory: updated });
+  } catch (e) {
+    res.status(500).json({ error: '晋升失败' });
   }
 });
 
