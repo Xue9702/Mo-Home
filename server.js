@@ -3183,9 +3183,10 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
     items = picked
       .sort((a, b) => b.score - a.score)
       .map(x => x.m);
-    const lines = items.map(m =>
-      `- [${AEVUM_TYPE_CN[m.type] || m.type}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}] ${m.content}`
-    ).join('\n');
+    const lines = items.map(m => {
+      const when = formatMemoryTime(m.created_at);
+      return `- [${AEVUM_TYPE_CN[m.type] || m.type}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] ${m.content}`;
+    }).join('\n');
     let out = `\n\n【Aevum记忆】\n${lines}`;
     // 事件块场景：被召回的活跃记忆最多带 2 个事件块的原文场景
     const episodeIds = [...new Set(items.map(m => m.episode_id).filter(Boolean))].slice(0, 2);
@@ -3201,6 +3202,26 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
 }
 
 // 从一段对话中提取候选记忆（Phase 2 提取管线）
+// 记忆时间格式化（北京时间，精确到分钟）
+function formatMemoryTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  try {
+    return d.toLocaleString('zh-CN', {
+      timeZone: USER_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+  } catch (e) {
+    return '';
+  }
+}
+
 async function extractAevumMemories(texts, episodeId = null) {
   if (!Array.isArray(texts) || texts.length === 0) return 0;
   const dialogue = texts

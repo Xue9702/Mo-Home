@@ -2308,7 +2308,7 @@
               ${m.source === 'auto-extract' ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#eef3ff;color:#7f9fd9;">自动</span>' : ''}
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
-              <span style="margin-left:auto;font-size:11px;color:#b0a6c4;">${new Date(m.updated_at || m.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+              <span style="margin-left:auto;font-size:11px;color:#b0a6c4;">${new Date(m.updated_at || m.created_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
             </div>
             <div style="font-size:14px;color:#444;line-height:1.6;white-space:pre-wrap;">${escapeHtml2(m.content)}</div>
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
