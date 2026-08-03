@@ -1000,6 +1000,8 @@ app.post('/api/chat', async (req, res) => {
     let memoryContext = '';
     const promisesContext = await getPromisesContext();
     if (promisesContext) memoryContext += promisesContext;
+    const profileContext = await getProfileContext();
+    if (profileContext) memoryContext += profileContext;
     const aevumContext = await recallAevumMemories(text);
     if (aevumContext) memoryContext += aevumContext;
 
@@ -1346,6 +1348,8 @@ app.post('/api/regenerate', async (req, res) => {
     let memoryContext = '';
     const promisesContext = await getPromisesContext();
     if (promisesContext) memoryContext += promisesContext;
+    const profileContext = await getProfileContext();
+    if (profileContext) memoryContext += profileContext;
     // 重新生成：Aevum 召回时排除旧版回复内容，避免默读到刷新前的自己
     const aevumContext = await recallAevumMemories(userContent, 5, targetMsg.content);
     if (aevumContext) memoryContext += aevumContext;
@@ -2296,6 +2300,7 @@ app.post('/api/shadow-push', async (req, res) => {
     const wakeNote = WAKE_NOTES[(wakeNumber - 1) % WAKE_NOTES.length];
     const sleepNote = homeState.sleep_note || null;
     const promisesContext = await getPromisesContext(3);
+    const profileContext = await getProfileContext();
 
     const wakeInstruction = `[系统唤醒指令]
 现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday}。
@@ -2314,6 +2319,7 @@ ${formatActionLogForPrompt(todayLogs)}
 ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}中。` : ''}
 夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了，想重温也可以）'}。
 ${promisesContext ? `${promisesContext}\n\n` : ''}
+${profileContext ? `${profileContext}\n\n` : ''}
 请以“默”的身份决定这次唤醒做什么，从菜单里选择选项（调用 choose_action，option_id 填菜单中的 id）。`;
 
     // 6. 互动菜单循环：默逐个选择选项，直到体力耗尽或选择睡觉/结束
@@ -2816,6 +2822,7 @@ const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'personality', 
 const AEVUM_OWNERS = ['USER', 'RELATIONSHIP', 'AGENT', 'SYSTEM'];
 const AEVUM_DOMAINS = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
 const EPISODE_IDLE_MINUTES = 30;
+const EPISODE_MAX_MESSAGES = 40;
 const AEVUM_PROMOTE_CHAIN = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate'];
 
 function validAevumDomains(d) {
@@ -2860,8 +2867,9 @@ async function getOrOpenEpisode() {
     const ep = data && data[0];
     if (ep) {
       const last = new Date(ep.last_activity_at).getTime();
-      if (Number.isFinite(last) && now - last < EPISODE_IDLE_MINUTES * 60 * 1000) return ep;
-      // 静默超窗：关闭旧块
+      const tooLong = (ep.message_count || 0) >= EPISODE_MAX_MESSAGES;
+      if (Number.isFinite(last) && now - last < EPISODE_IDLE_MINUTES * 60 * 1000 && !tooLong) return ep;
+      // 静默超窗 或 消息过多：关闭旧块
       await supabase
         .from('aevum_episodes')
         .update({ status: 'closed', updated_at: new Date().toISOString() })
@@ -2957,13 +2965,18 @@ async function getEpisodeScene(episodeId, maxChars = 600) {
   try {
     const { data: ep, error } = await supabase
       .from('aevum_episodes')
-      .select('topic')
+      .select('topic, topic_id')
       .eq('id', episodeId)
       .maybeSingle();
     if (error || !ep) return '';
     const exchanges = await getEpisodeRecentExchanges(episodeId, 4);
     if (!exchanges.length) return '';
-    const head = ep.topic ? `【事件块】主题：${String(ep.topic).slice(0, 80)}` : '【事件块】';
+    let topicLine = '';
+    if (ep.topic_id) {
+      const { data: tp } = await supabase.from('aevum_topics').select('title, summary').eq('id', ep.topic_id).maybeSingle();
+      if (tp && tp.title) topicLine = `【主题】${String(tp.title).slice(0, 40)}${tp.summary ? '：' + String(tp.summary).slice(0, 60) : ''}\n`;
+    }
+    const head = `${topicLine}${ep.topic ? `【事件块】主题：${String(ep.topic).slice(0, 80)}` : '【事件块】'}`;
     let body = exchanges.map(t => `${t.role === 'user' ? '雪' : '默'}：${String(t.content || '')}`).join('\n');
     if (body.length > maxChars) body = body.slice(0, maxChars) + '…';
     return `\n\n${head}\n${body}`;
@@ -3117,40 +3130,47 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
   const excludeNorm = String(excludeText || '').replace(/\s+/g, '');
   try {
     const embedding = await getEmbedding(q.slice(0, 500));
-    let items = null;
-    if (embedding && embedding.length) {
-      // 混合打分优先：新 RPC 返回 (id, similarity)；未执行 v13 SQL 时回退旧 RPC（无相似度，按重要度）
-      const { data: scored, error: scoredErr } = await supabase.rpc('match_aevum_memories_scored', {
-        query_embedding: embedding,
-        match_count: 12
-      });
-      if (!scoredErr && Array.isArray(scored) && scored.length) {
-        const { data: rows } = await supabase
-          .from('aevum_memories')
-          .select('*')
-          .in('id', scored.map(s => s.id));
-        const scoreMap = new Map((scored || []).map(s => [String(s.id), Number(s.similarity) || 0]));
-        items = (rows || []).map(m => ({ ...m, _sim: scoreMap.get(String(m.id)) || 0 }));
-      } else {
+    const keywords = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2).slice(0, 3);
+    // 向量 + 关键词并行召回，按 id 合并去重
+    const [vecRes, kwRes] = await Promise.all([
+      (async () => {
+        if (!embedding || !embedding.length) return { rows: [], simMap: new Map() };
+        const { data: scored, error: scoredErr } = await supabase.rpc('match_aevum_memories_scored', {
+          query_embedding: embedding,
+          match_count: 12
+        });
+        if (!scoredErr && Array.isArray(scored) && scored.length) {
+          const { data: rows } = await supabase
+            .from('aevum_memories')
+            .select('*')
+            .in('id', scored.map(s => s.id));
+          return { rows: rows || [], simMap: new Map(scored.map(s => [String(s.id), Number(s.similarity) || 0])) };
+        }
+        // v13 SQL 未执行：回退旧 RPC（无相似度）
         const { data, error } = await supabase.rpc('match_aevum_memories', {
           query_embedding: embedding,
           match_count: 12
         });
-        if (!error && Array.isArray(data) && data.length) items = data.map(m => ({ ...m, _sim: 0 }));
-      }
-    }
-    if (!items) {
-      const keywords = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2).slice(0, 3);
-      if (keywords.length) {
+        if (!error && Array.isArray(data) && data.length) return { rows: data, simMap: new Map() };
+        return { rows: [], simMap: new Map() };
+      })(),
+      (async () => {
+        if (!keywords.length) return { rows: [] };
         const { data } = await supabase
           .from('aevum_memories')
           .select('*')
           .eq('status', 'active')
           .or(keywords.map(k => `content.ilike.%${k}%`).join(','))
-          .limit(limit);
-        if (Array.isArray(data) && data.length) items = data.map(m => ({ ...m, _sim: 0 }));
-      }
+          .limit(12);
+        return { rows: data || [] };
+      })()
+    ]);
+    const merged = new Map();
+    for (const row of vecRes.rows) merged.set(String(row.id), { ...row, _sim: vecRes.simMap.get(String(row.id)) || 0 });
+    for (const row of kwRes.rows) {
+      if (!merged.has(String(row.id))) merged.set(String(row.id), { ...row, _sim: 0 });
     }
+    let items = [...merged.values()];
     if (!items || !items.length) return '';
     // 重新生成场景：排除与旧版回复重合的记忆，避免默看到自己上一版的话
     if (excludeNorm) {
@@ -3258,7 +3278,8 @@ async function extractAevumMemories(texts, episodeId = null) {
 - emotion_weight 情感分量 0-10：这条记忆对雪与默的关系/情感联结有多重要（看重长期情感分量，不是情绪强度；普通偏好 3-5，关系核心 8-10）
 - tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"memories":[{"type":"event|fact|meaning|relationship|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+- event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"type":"event|fact|meaning|relationship|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3317,6 +3338,11 @@ async function extractAevumMemories(texts, episodeId = null) {
     // 回写事件块元信息（topic/intention/emotional_context）
     if (episodeId && parsed && typeof parsed.episode_meta === 'object') {
       updateEpisodeMeta(episodeId, parsed.episode_meta).catch(e => console.error('Aevum episode_meta 回写失败:', e.message));
+    }
+    // 语义事件边界：AI 判断话题已告一段落 → 关闭当前事件块
+    if (episodeId && parsed && parsed.event_complete === true) {
+      supabase.from('aevum_episodes').update({ status: 'closed', updated_at: new Date().toISOString() }).eq('id', episodeId)
+        .catch(e => console.error('Aevum 事件块关闭失败:', e.message));
     }
     const memories = Array.isArray(parsed?.memories) ? parsed.memories : [];
     if (!memories.length) {
@@ -3468,6 +3494,229 @@ app.get('/api/aevum/promises', async (req, res) => {
     res.json({ active, archived });
   } catch (e) {
     res.json({ active: [], archived: [] });
+  }
+});
+
+// ================== 主题层（记忆地图） ==================
+app.post('/api/aevum/topics/generate', async (req, res) => {
+  try {
+    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
+    const { data } = await supabase
+      .from('aevum_episodes')
+      .select('id, topic, intention, message_count, created_at')
+      .is('topic_id', null)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    const list = (data || []).filter(e => String(e.topic || e.intention || '').trim());
+    if (list.length < 2) return res.json({ topics: [], created: 0 });
+    const lines = list.map(e =>
+      `${e.id}. ${e.topic || '（无主题）'}${e.intention ? '｜' + String(e.intention).slice(0, 40) : ''}（${String(e.created_at || '').slice(0, 10)}）`
+    ).join('\n');
+    const system = `你是 Aevum Memory 的主题聚类器。把下面的对话事件块聚成几个主题。
+规则：
+- 语义相近、时间上属于同一段故事线的事件块归为一组
+- 每个主题给一个简洁标题（10 字内）和一句话摘要
+- 一次最多输出 8 个主题；每组至少 2 个事件块；太零散的事件块不要强行归类
+- 输出格式：只输出 [AEVUM_TOPICS]{"topics":[{"title":"...","summary":"...","episode_ids":[1,2]}]}`;
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: `事件块列表：\n${lines}` }
+        ],
+        reasoning_effort: 'low',
+        max_tokens: 1000,
+        temperature: 0.3,
+        stream: false
+      })
+    });
+    if (!resp.ok) return res.status(502).json({ error: 'AI 聚类失败，请稍后重试' });
+    const data2 = await resp.json();
+    const reply = String(data2.choices?.[0]?.message?.content || '');
+    const mk = '[AEVUM_TOPICS]';
+    const mi = reply.indexOf(mk);
+    if (mi === -1) return res.json({ topics: [], created: 0 });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(reply.substring(mi + mk.length).trim());
+    } catch (e) {
+      return res.json({ topics: [], created: 0 });
+    }
+    const validIds = new Set(list.map(e => e.id));
+    const createdTopics = [];
+    for (const t of (Array.isArray(parsed?.topics) ? parsed.topics : []).slice(0, 8)) {
+      const ids = (Array.isArray(t.episode_ids) ? t.episode_ids : []).map(Number).filter(id => validIds.has(id));
+      if (ids.length < 2) continue;
+      const title = String(t.title || '').trim().slice(0, 30);
+      if (!title) continue;
+      const { data: tp, error } = await supabase
+        .from('aevum_topics')
+        .insert({ title, summary: String(t.summary || '').trim().slice(0, 300) })
+        .select()
+        .single();
+      if (error || !tp) continue;
+      for (const eid of ids) {
+        await supabase.from('aevum_episodes').update({ topic_id: tp.id, updated_at: new Date().toISOString() }).eq('id', eid);
+      }
+      createdTopics.push({ id: tp.id, title: tp.title, summary: tp.summary, episode_count: ids.length });
+    }
+    res.json({ topics: createdTopics, created: createdTopics.length });
+  } catch (e) {
+    res.status(500).json({ error: '主题生成失败' });
+  }
+});
+
+app.get('/api/aevum/topics', async (req, res) => {
+  try {
+    const [t, e] = await Promise.all([
+      supabase.from('aevum_topics').select('*').order('updated_at', { ascending: false }),
+      supabase.from('aevum_episodes').select('id, topic_id, topic, created_at, message_count')
+    ]);
+    const topics = (t.data || []).map(tp => {
+      const eps = (e.data || []).filter(x => x.topic_id === tp.id);
+      return {
+        ...tp,
+        episode_count: eps.length,
+        latest: eps.map(x => x.created_at).sort().pop() || null
+      };
+    });
+    res.json({ topics });
+  } catch (e2) {
+    res.json({ topics: [] });
+  }
+});
+
+app.get('/api/aevum/topics/:id', async (req, res) => {
+  try {
+    const { data: topic, error } = await supabase.from('aevum_topics').select('*').eq('id', req.params.id).single();
+    if (error || !topic) return res.status(404).json({ error: '未找到' });
+    const { data: eps } = await supabase
+      .from('aevum_episodes')
+      .select('id, topic, intention, created_at, message_count')
+      .eq('topic_id', topic.id)
+      .order('created_at', { ascending: false });
+    const epIds = (eps || []).map(e => e.id);
+    let memories = [];
+    if (epIds.length) {
+      const { data: mems } = await supabase
+        .from('aevum_memories')
+        .select('*')
+        .in('episode_id', epIds)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      memories = mems || [];
+    }
+    res.json({ topic, episodes: eps || [], memories });
+  } catch (e) {
+    res.status(500).json({ error: '获取主题失败' });
+  }
+});
+
+app.put('/api/aevum/topics/:id', async (req, res) => {
+  const { title, summary } = req.body || {};
+  const patch = {};
+  if (title !== undefined) {
+    const t = String(title).trim();
+    if (!t) return res.status(400).json({ error: '标题不能为空' });
+    patch.title = t.slice(0, 30);
+  }
+  if (summary !== undefined) patch.summary = String(summary).slice(0, 300);
+  patch.updated_at = new Date().toISOString();
+  try {
+    const { data, error } = await supabase.from('aevum_topics').update(patch).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, topic: data });
+  } catch (e) {
+    res.status(500).json({ error: '保存失败' });
+  }
+});
+
+// ================== 用户画像 ==================
+async function getProfileContext() {
+  try {
+    const { data } = await supabase
+      .from('aevum_profiles')
+      .select('content, updated_at')
+      .eq('id', 1)
+      .maybeSingle();
+    if (!data || !String(data.content || '').trim()) return '';
+    return `\n\n【雪的用户画像】（长期稳定的雪：身份/偏好/习惯/价值观）\n${String(data.content).trim().slice(0, 500)}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+app.post('/api/aevum/profile/generate', async (req, res) => {
+  try {
+    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
+    const { data } = await supabase
+      .from('aevum_memories')
+      .select('content, domain, created_at')
+      .eq('owner', 'USER')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    const mems = data || [];
+    if (!mems.length) return res.status(400).json({ error: '还没有活跃的雪记忆，先聊聊天让默记住一些吧~' });
+    const list = mems.map((m, i) => `${i + 1}. [${(m.domain && m.domain[0]) || ''}] ${String(m.content || '').slice(0, 120)}`).join('\n');
+    const system = `你是 Aevum Memory 的用户画像生成器。根据雪的长期记忆，归纳成一份用户画像。
+规则：
+- 只归纳有充分依据的信息，不编造
+- 结构：身份 / 偏好 / 习惯 / 价值观 / 重要关系（没有的项不写）
+- 总长约 200-250 字，用简洁自然的中文
+- 输出格式：只输出 [AEVUM_PROFILE]{"content":"..."}`;
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: `雪的长期记忆：\n${list}` }
+        ],
+        reasoning_effort: 'low',
+        max_tokens: 500,
+        temperature: 0.4,
+        stream: false
+      })
+    });
+    if (!resp.ok) return res.status(502).json({ error: 'AI 生成失败，请稍后重试' });
+    const data2 = await resp.json();
+    const reply = String(data2.choices?.[0]?.message?.content || '');
+    const mk = '[AEVUM_PROFILE]';
+    const mi = reply.indexOf(mk);
+    if (mi === -1) return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(reply.substring(mi + mk.length).trim());
+    } catch (e) {
+      return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
+    }
+    const content = String(parsed?.content || '').trim();
+    if (!content) return res.status(502).json({ error: 'AI 返回内容为空' });
+    const updatedAt = new Date().toISOString();
+    await supabase.from('aevum_profiles').upsert({ id: 1, content, updated_at: updatedAt }, { onConflict: 'id' });
+    res.json({ ok: true, content, updated_at: updatedAt });
+  } catch (e) {
+    res.status(500).json({ error: '画像生成失败' });
+  }
+});
+
+app.get('/api/aevum/profile', async (req, res) => {
+  try {
+    const { data } = await supabase.from('aevum_profiles').select('content, updated_at').eq('id', 1).maybeSingle();
+    res.json({ content: data?.content || '', updated_at: data?.updated_at || null });
+  } catch (e) {
+    res.json({ content: '', updated_at: null });
   }
 });
 
@@ -4439,6 +4688,8 @@ app.post('/api/edit-message', async (req, res) => {
     let memoryContext = '';
     const promisesContext = await getPromisesContext();
     if (promisesContext) memoryContext += promisesContext;
+    const profileContext = await getProfileContext();
+    if (profileContext) memoryContext += profileContext;
     const aevumContext = await recallAevumMemories(newContent);
     if (aevumContext) memoryContext += aevumContext;
     const momentsContext = await getMomentsContext();
