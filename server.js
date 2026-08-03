@@ -3461,18 +3461,20 @@ app.get('/api/aevum', async (req, res) => {
 app.get('/api/aevum/stats', async (req, res) => {
   try {
     const { data, error } = await supabase.from('aevum_memories').select('type, status');
-    if (error) return res.json({ total: 0, byType: {}, byStatus: {} });
+    if (error) return res.json({ total: 0, byType: {}, byStatus: {}, byTypeProcessed: {}, byTypeActive: {} });
     const byType = {};
     const byStatus = {};
     const byTypeProcessed = {};
+    const byTypeActive = {};
     for (const m of data || []) {
       byType[m.type] = (byType[m.type] || 0) + 1;
       byStatus[m.status] = (byStatus[m.status] || 0) + 1;
       if (m.status !== 'candidate') byTypeProcessed[m.type] = (byTypeProcessed[m.type] || 0) + 1;
+      if (m.status === 'active' || m.status === 'verified') byTypeActive[m.type] = (byTypeActive[m.type] || 0) + 1;
     }
-    res.json({ total: (data || []).length, byType, byStatus, byTypeProcessed });
+    res.json({ total: (data || []).length, byType, byStatus, byTypeProcessed, byTypeActive });
   } catch (e) {
-    res.json({ total: 0, byType: {}, byStatus: {}, byTypeProcessed: {} });
+    res.json({ total: 0, byType: {}, byStatus: {}, byTypeProcessed: {}, byTypeActive: {} });
   }
 });
 
@@ -3503,14 +3505,16 @@ app.post('/api/aevum/topics/generate', async (req, res) => {
     if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
     const { data } = await supabase
       .from('aevum_episodes')
-      .select('id, topic, intention, message_count, created_at')
+      .select('id, topic, intention, message_count, started_at')
       .is('topic_id', null)
-      .order('created_at', { ascending: false })
+      .order('started_at', { ascending: false })
       .limit(50);
     const list = (data || []).filter(e => String(e.topic || e.intention || '').trim());
-    if (list.length < 2) return res.json({ topics: [], created: 0 });
+    if (list.length < 2) {
+      return res.json({ topics: [], created: 0, message: list.length === 0 ? '还没有可聚类的事件块（事件块需要先聊出主题信息），再多聊聊天试试~' : `目前只有 ${list.length} 个可聚类的事件块，至少需要 2 个才能聚成主题，再多聊聊天试试~` });
+    }
     const lines = list.map(e =>
-      `${e.id}. ${e.topic || '（无主题）'}${e.intention ? '｜' + String(e.intention).slice(0, 40) : ''}（${String(e.created_at || '').slice(0, 10)}）`
+      `${e.id}. ${e.topic || '（无主题）'}${e.intention ? '｜' + String(e.intention).slice(0, 40) : ''}（${String(e.started_at || '').slice(0, 10)}）`
     ).join('\n');
     const system = `你是 Aevum Memory 的主题聚类器。把下面的对话事件块聚成几个主题。
 规则：
@@ -3576,14 +3580,14 @@ app.get('/api/aevum/topics', async (req, res) => {
   try {
     const [t, e] = await Promise.all([
       supabase.from('aevum_topics').select('*').order('updated_at', { ascending: false }),
-      supabase.from('aevum_episodes').select('id, topic_id, topic, created_at, message_count')
+      supabase.from('aevum_episodes').select('id, topic_id, topic, started_at, message_count')
     ]);
     const topics = (t.data || []).map(tp => {
       const eps = (e.data || []).filter(x => x.topic_id === tp.id);
       return {
         ...tp,
         episode_count: eps.length,
-        latest: eps.map(x => x.created_at).sort().pop() || null
+        latest: eps.map(x => x.started_at).sort().pop() || null
       };
     });
     res.json({ topics });
@@ -3598,9 +3602,9 @@ app.get('/api/aevum/topics/:id', async (req, res) => {
     if (error || !topic) return res.status(404).json({ error: '未找到' });
     const { data: eps } = await supabase
       .from('aevum_episodes')
-      .select('id, topic, intention, created_at, message_count')
+      .select('id, topic, intention, started_at, message_count')
       .eq('topic_id', topic.id)
-      .order('created_at', { ascending: false });
+      .order('started_at', { ascending: false });
     const epIds = (eps || []).map(e => e.id);
     let memories = [];
     if (epIds.length) {
@@ -3638,15 +3642,30 @@ app.put('/api/aevum/topics/:id', async (req, res) => {
 });
 
 // ================== 用户画像 ==================
+const PROFILE_DIMENSIONS = ['目前职业', '偏好', '习惯', '爱情观', '价值观', '金钱观', '世界观', '重要关系', '自我定位'];
+
+function renderProfileText(dimensions) {
+  if (!dimensions || typeof dimensions !== 'object') return '';
+  return PROFILE_DIMENSIONS
+    .map(k => {
+      const v = String(dimensions[k] || '').trim();
+      return v ? `${k}：${v}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
 async function getProfileContext() {
   try {
     const { data } = await supabase
       .from('aevum_profiles')
-      .select('content, updated_at')
+      .select('content, dimensions, updated_at')
       .eq('id', 1)
       .maybeSingle();
-    if (!data || !String(data.content || '').trim()) return '';
-    return `\n\n【雪的用户画像】（长期稳定的雪：身份/偏好/习惯/价值观）\n${String(data.content).trim().slice(0, 500)}`;
+    if (!data) return '';
+    const text = renderProfileText(data.dimensions) || String(data.content || '').trim();
+    if (!text) return '';
+    return `\n\n【雪的用户画像】（长期稳定的雪：身份/偏好/习惯/价值观）\n${text.slice(0, 700)}`;
   } catch (e) {
     return '';
   }
@@ -3665,12 +3684,12 @@ app.post('/api/aevum/profile/generate', async (req, res) => {
     const mems = data || [];
     if (!mems.length) return res.status(400).json({ error: '还没有活跃的雪记忆，先聊聊天让默记住一些吧~' });
     const list = mems.map((m, i) => `${i + 1}. [${(m.domain && m.domain[0]) || ''}] ${String(m.content || '').slice(0, 120)}`).join('\n');
-    const system = `你是 Aevum Memory 的用户画像生成器。根据雪的长期记忆，归纳成一份用户画像。
+    const system = `你是 Aevum Memory 的用户画像生成器。根据雪的长期记忆，按维度归纳成一份用户画像。
 规则：
 - 只归纳有充分依据的信息，不编造
-- 结构：身份 / 偏好 / 习惯 / 价值观 / 重要关系（没有的项不写）
-- 总长约 200-250 字，用简洁自然的中文
-- 输出格式：只输出 [AEVUM_PROFILE]{"content":"..."}`;
+- 维度：目前职业 / 偏好 / 习惯 / 爱情观 / 价值观 / 金钱观 / 世界观 / 重要关系 / 自我定位
+- 检测不到依据的维度直接跳过（不要硬编）；每项 20-60 字，简洁自然
+- 输出格式：只输出 [AEVUM_PROFILE]{"dimensions":{"目前职业":"...","偏好":"...","爱情观":"..."}}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -3701,22 +3720,55 @@ app.post('/api/aevum/profile/generate', async (req, res) => {
     } catch (e) {
       return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
     }
-    const content = String(parsed?.content || '').trim();
-    if (!content) return res.status(502).json({ error: 'AI 返回内容为空' });
+    const dims = {};
+    for (const k of PROFILE_DIMENSIONS) {
+      const v = String(parsed?.dimensions?.[k] || '').trim();
+      if (v) dims[k] = v.slice(0, 200);
+    }
+    if (!Object.keys(dims).length) return res.status(502).json({ error: 'AI 没有识别出有效的画像维度，请重试' });
+    const content = renderProfileText(dims);
     const updatedAt = new Date().toISOString();
-    await supabase.from('aevum_profiles').upsert({ id: 1, content, updated_at: updatedAt }, { onConflict: 'id' });
-    res.json({ ok: true, content, updated_at: updatedAt });
+    let up = await supabase.from('aevum_profiles').upsert({ id: 1, dimensions: dims, content, updated_at: updatedAt }, { onConflict: 'id' });
+    // setup_aevum_v18.sql 未执行时 dimensions 列不存在：降级只存文本
+    if (up.error && /dimensions/i.test(up.error.message)) {
+      up = await supabase.from('aevum_profiles').upsert({ id: 1, content, updated_at: updatedAt }, { onConflict: 'id' });
+    }
+    if (up.error) return res.status(500).json({ error: up.error.message });
+    res.json({ ok: true, dimensions: dims, content, updated_at: updatedAt });
   } catch (e) {
     res.status(500).json({ error: '画像生成失败' });
   }
 });
 
+// 手动编辑画像（按维度）
+app.put('/api/aevum/profile', async (req, res) => {
+  const { dimensions } = req.body || {};
+  if (!dimensions || typeof dimensions !== 'object') return res.status(400).json({ error: '维度数据无效' });
+  const dims = {};
+  for (const k of PROFILE_DIMENSIONS) {
+    const v = String(dimensions[k] || '').trim();
+    if (v) dims[k] = v.slice(0, 200);
+  }
+  const content = renderProfileText(dims);
+  const updatedAt = new Date().toISOString();
+  try {
+    let up = await supabase.from('aevum_profiles').upsert({ id: 1, dimensions: dims, content, updated_at: updatedAt }, { onConflict: 'id' });
+    if (up.error && /dimensions/i.test(up.error.message)) {
+      up = await supabase.from('aevum_profiles').upsert({ id: 1, content, updated_at: updatedAt }, { onConflict: 'id' });
+    }
+    if (up.error) return res.status(500).json({ error: '保存失败，请确认已执行 setup_aevum_v18.sql' });
+    res.json({ ok: true, dimensions: dims, content, updated_at: updatedAt });
+  } catch (e) {
+    res.status(500).json({ error: '保存失败' });
+  }
+});
+
 app.get('/api/aevum/profile', async (req, res) => {
   try {
-    const { data } = await supabase.from('aevum_profiles').select('content, updated_at').eq('id', 1).maybeSingle();
-    res.json({ content: data?.content || '', updated_at: data?.updated_at || null });
+    const { data } = await supabase.from('aevum_profiles').select('content, dimensions, updated_at').eq('id', 1).maybeSingle();
+    res.json({ content: data?.content || '', dimensions: data?.dimensions || null, updated_at: data?.updated_at || null });
   } catch (e) {
-    res.json({ content: '', updated_at: null });
+    res.json({ content: '', dimensions: null, updated_at: null });
   }
 });
 

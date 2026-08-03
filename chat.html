@@ -2054,13 +2054,15 @@
         personality: '#7fb8ff', self_candidate: '#c084fc', self_model: '#e1789a'
       };
       const AEVUM_DOMAINS_FRONT = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
+      const AEVUM_PROFILE_DIMENSIONS = ['目前职业', '偏好', '习惯', '爱情观', '价值观', '金钱观', '世界观', '重要关系', '自我定位'];
       const AEVUM_PROMOTE_CHAIN = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate'];
       const AEVUM_VIEWS = [
         ['sea', '记忆海'], ['promise', '承诺'], ['topic', '主题'], ['profile', '画像'],
         ['event', '事件'], ['fact', '事实'], ['meaning', '意义'],
-        ['relationship', '关系'], ['personality', '人格'], ['self_candidate', 'Self候选'], ['self_model', 'Self模型']
+        ['relationship', '关系'], ['personality', '人格'], ['self_candidate', 'Self候选'], ['self_model', 'Self模型'],
+        ['archived', '已归档']
       ];
-      let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {} };
+      let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false };
 
       async function renderAevum() {
         const box = document.getElementById('aevumContent');
@@ -2068,9 +2070,9 @@
         box.innerHTML = '<div class="weather-loading">加载中…</div>';
         try {
           const params = new URLSearchParams();
-          if (aevumState.view !== 'sea' && aevumState.view !== 'promise') params.set('type', aevumState.view);
+          if (AEVUM_TYPE_LABELS[aevumState.view]) params.set('type', aevumState.view);
           if (aevumState.view === 'sea') params.set('status', 'candidate');
-          else if (aevumState.filters.status) params.set('status', aevumState.filters.status);
+          else if (aevumState.view !== 'archived' && aevumState.filters.status) params.set('status', aevumState.filters.status);
           if (aevumState.filters.owner) params.set('owner', aevumState.filters.owner);
           if (aevumState.filters.domain) params.set('domain', aevumState.filters.domain);
           if (aevumState.filters.q) params.set('q', aevumState.filters.q);
@@ -2085,10 +2087,12 @@
           const stats = await statsRes.json();
           const promData = promRes && promRes.ok ? await promRes.json() : { active: [], archived: [] };
           const topicData = topicRes && topicRes.ok ? await topicRes.json() : { topics: [] };
-          const profData = profRes && profRes.ok ? await profRes.json() : { content: '', updated_at: null };
-          // 层级页默认只显示"已处理"的记忆（候选留在记忆海）
-          if (aevumState.view !== 'sea' && !aevumState.filters.status) {
-            list = list.filter(m => m.status !== 'candidate');
+          const profData = profRes && profRes.ok ? await profRes.json() : { content: '', dimensions: null, updated_at: null };
+          // 层级页默认只显示活跃/已确认的记忆；已归档页只显示归档/已拒绝
+          if (aevumState.view === 'archived') {
+            list = list.filter(m => m.status === 'archived' || m.status === 'rejected');
+          } else if (AEVUM_TYPE_LABELS[aevumState.view] && !aevumState.filters.status) {
+            list = list.filter(m => m.status === 'active' || m.status === 'verified');
           }
 
           const filterSel = (id, options, value, placeholder) => `
@@ -2103,6 +2107,7 @@
             : aevumState.view === 'promise' ? '承诺区'
             : aevumState.view === 'topic' ? '主题 · 记忆地图'
             : aevumState.view === 'profile' ? '用户画像'
+            : aevumState.view === 'archived' ? '已归档 · 回收站'
             : `${AEVUM_TYPE_LABELS[aevumState.view] || aevumState.view}记忆`;
           const chips = AEVUM_VIEWS.map(([v, l]) => {
             const active = aevumState.view === v;
@@ -2110,7 +2115,8 @@
             if (v === 'sea') count = (stats.byStatus && stats.byStatus.candidate) || 0;
             else if (v === 'promise') count = (promData.active || []).length;
             else if (v === 'topic') count = (topicData.topics || []).length;
-            else count = (stats.byTypeProcessed && stats.byTypeProcessed[v]) || 0;
+            else if (v === 'archived') count = ((stats.byStatus && (stats.byStatus.archived || 0)) + (stats.byStatus && (stats.byStatus.rejected || 0))) || 0;
+            else count = (stats.byTypeActive && stats.byTypeActive[v]) || 0;
             return `<span onclick="aevumSetView('${v}')" style="cursor:pointer;padding:6px 14px;border-radius:16px;font-size:13px;${active
               ? 'background:#ffd3de;color:#fff;'
               : 'background:#fff;color:#8a83a8;border:1px solid #f0e9f5;'}">${l}${count ? ` <span style="opacity:0.85;">(${count})</span>` : ''}</span>`;
@@ -2246,19 +2252,34 @@
       }
 
       function renderProfilePanel(profData) {
+        const dims = (profData.dimensions && typeof profData.dimensions === 'object') ? profData.dimensions : null;
+        const editing = aevumState.profileEditing;
+        const hasContent = !!(profData.content || (dims && Object.keys(dims).length));
+        const dimRows = AEVUM_PROFILE_DIMENSIONS.map(k => {
+          const v = (dims && dims[k]) ? dims[k] : '';
+          return `
+            <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px;">
+              <span style="font-size:12px;color:#8a83a8;font-weight:600;">${k}</span>
+              ${editing
+                ? `<textarea id="profileDim_${k}" placeholder="（未检测到，可留空）" style="width:100%;min-height:44px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;">${escapeHtml2(v)}</textarea>`
+                : (v ? `<span style="font-size:13px;color:#444;line-height:1.6;">${escapeHtml2(v)}</span>` : '<span style="font-size:12px;color:#ccc;">（未检测到）</span>')}
+            </div>`;
+        }).join('');
         return `
           <div class="feature-card" style="align-items:stretch;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:14px;font-weight:600;color:#333;">雪的用户画像</span>
-              <span style="margin-left:auto;">
-                <button data-genprofile onclick="aevumGenerateProfile()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成/更新画像</button>
+              <span style="margin-left:auto;display:flex;gap:8px;">
+                ${editing
+                  ? `<button onclick="aevumSaveProfile()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">保存</button>
+                     <button onclick="aevumCancelProfileEdit()" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#888;padding:8px 14px;font-size:13px;cursor:pointer;">取消</button>`
+                  : `<button data-genprofile onclick="aevumGenerateProfile()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;">✨ AI 生成</button>
+                     ${hasContent ? `<button onclick="aevumEditProfile()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 编辑</button>` : ''}`}
               </span>
             </div>
-            <div style="font-size:11px;color:#b0a6c4;">根据活跃的雪记忆自动归纳，默每次聊天和唤醒都会看到。</div>
-            ${profData.content ? `
-              <div style="font-size:13px;color:#444;line-height:1.7;white-space:pre-wrap;background:#faf7fc;border:1px solid #f0e9f5;border-radius:10px;padding:10px;">${escapeHtml2(profData.content)}</div>
-              <div style="font-size:11px;color:#b0a6c4;">上次更新：${profData.updated_at ? new Date(profData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '从未生成'}</div>`
-              : '<div style="font-size:13px;color:#b0a6c4;">还没有画像，点「✨ 生成/更新画像」让 AI 根据活跃记忆归纳~</div>'}
+            <div style="font-size:11px;color:#b0a6c4;">按维度记录"我了解的雪"，默每次聊天和唤醒都会看到；AI 检测不到的维度可留空或手动补充。</div>
+            ${hasContent || editing ? dimRows : '<div style="font-size:13px;color:#b0a6c4;">还没有画像，点「✨ AI 生成」让默根据活跃记忆归纳~</div>'}
+            ${profData.updated_at ? `<div style="font-size:11px;color:#b0a6c4;">上次更新：${new Date(profData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
           </div>`;
       }
 
@@ -2564,7 +2585,8 @@
           const data = await res.json().catch(() => ({}));
           if (!res.ok) { alert(data.error || '生成失败，请确认已执行 setup_aevum_v17.sql'); return; }
           aevumState.topicCache = {};
-          alert('✅ 已生成 ' + (data.created || 0) + ' 个主题');
+          if (data.message) { alert(data.message); }
+          else { alert('✅ 已生成 ' + (data.created || 0) + ' 个主题'); }
           renderAevum();
         } catch (e) {
           alert('生成失败，请稍后重试');
@@ -2596,7 +2618,7 @@
         body.innerHTML = episodes.length
           ? episodes.map(ep => `
               <div style="border-top:1px solid #f6f2f8;padding:6px 0;font-size:13px;color:#555;">
-                <span style="cursor:pointer;" onclick="aevumToggleEpisode(${ep.id})">📎 ${escapeHtml2(ep.topic || '（无标题）')} · ${String(ep.created_at || '').slice(0, 10)}（${ep.message_count || 0} 条）</span>
+                <span style="cursor:pointer;" onclick="aevumToggleEpisode(${ep.id})">📎 ${escapeHtml2(ep.topic || '（无标题）')} · ${String(ep.started_at || '').slice(0, 10)}（${ep.message_count || 0} 条）</span>
                 <div id="aevumEpBody_${ep.id}" style="display:none;margin-top:6px;padding-left:10px;border-left:2px solid #f0e9f5;">
                   ${memories.filter(m => m.episode_id === ep.id).map(m => `
                     <div style="font-size:12px;color:#666;margin:4px 0;">
@@ -2633,7 +2655,7 @@
 
       // 用户画像
       async function aevumGenerateProfile() {
-        if (!confirm('生成/更新会覆盖现有画像，确定吗？')) return;
+        if (!confirm('AI 重新生成会覆盖现有画像，确定吗？')) return;
         const btn = document.querySelector('[data-genprofile]');
         const old = btn ? btn.textContent : '';
         if (btn) btn.textContent = '⏳ 生成中…';
@@ -2650,6 +2672,42 @@
         }
       }
       window.aevumGenerateProfile = aevumGenerateProfile;
+
+      function aevumEditProfile() {
+        aevumState.profileEditing = true;
+        renderAevum();
+      }
+      window.aevumEditProfile = aevumEditProfile;
+
+      function aevumCancelProfileEdit() {
+        aevumState.profileEditing = false;
+        renderAevum();
+      }
+      window.aevumCancelProfileEdit = aevumCancelProfileEdit;
+
+      async function aevumSaveProfile() {
+        const dimensions = {};
+        AEVUM_PROFILE_DIMENSIONS.forEach(k => {
+          const el = document.getElementById('profileDim_' + k);
+          const v = el ? el.value.trim() : '';
+          if (v) dimensions[k] = v;
+        });
+        try {
+          const res = await fetch('/api/aevum/profile', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dimensions })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '保存失败，请确认已执行 setup_aevum_v18.sql'); return; }
+          alert('✅ 画像已保存');
+          aevumState.profileEditing = false;
+          renderAevum();
+        } catch (e) {
+          alert('保存失败，请稍后重试');
+        }
+      }
+      window.aevumSaveProfile = aevumSaveProfile;
 
       async function aevumManualExtract() {
         try {
