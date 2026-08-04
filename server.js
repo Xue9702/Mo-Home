@@ -2837,6 +2837,8 @@ const AEVUM_DERIVE_GRAPH = {
 };
 // 合并时取组内"最抽象"类型用的优先级（低→高）
 const AEVUM_TYPE_ORDER = ['event', 'fact', 'meaning', 'relationship', 'user_tendency', 'personality', 'self_model'];
+// 可参与"多维归属"的类型（self_model 是严格审核的核心，不作为普通维度标签）
+const AEVUM_LAYER_TYPES = ['event', 'fact', 'meaning', 'relationship', 'user_tendency', 'personality'];
 
 const AEVUM_TYPE_DESC = {
   event: '事件记忆：客观发生的事',
@@ -2874,6 +2876,22 @@ function validAevumConfidence(c) {
     return isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5;
   };
   return { evidence: num(conf.evidence), stability: num(conf.stability), importance: num(conf.importance) };
+}
+
+// 多维归属：一条记忆可同时属于多个层级（主类型必须在首位）；人格只归默，用户倾向只归雪
+function validAevumLayers(arr, primaryType, owner) {
+  if (primaryType === 'self_model') return [];
+  let out = [];
+  if (Array.isArray(arr)) {
+    for (const x of arr) {
+      const t = String(x);
+      if (AEVUM_LAYER_TYPES.includes(t) && !out.includes(t)) out.push(t);
+    }
+  }
+  if (owner !== 'AGENT') out = out.filter(t => t !== 'personality');
+  if (owner !== 'USER') out = out.filter(t => t !== 'user_tendency');
+  if (primaryType && !out.includes(primaryType)) out.unshift(primaryType);
+  return out.slice(0, 4);
 }
 
 // 获取或打开当前语义事件块：30 分钟静默窗口内复用 open 块，否则关旧开新
@@ -3292,18 +3310,20 @@ async function extractAevumMemories(texts, episodeId = null) {
 - personality=只描述默的稳定行为倾向（AGENT），例如"默倾向优先保持诚实"；雪的性格/喜好/三观绝不能标成 personality（应归 user_tendency）；只有长期重复模式才允许生成，禁止单次事件生成人格
 
 【不要强行提取】
-- 技术讨论、系统调试、临时决定、普通聊天、一次性话题、AI 客套话 → 不提取
-- 没有记忆，比错误记忆更好；每次最多 3 条，宁缺毋滥
+- 没有长期价值的纯技术闲聊、临时决定、普通聊天、一次性话题、AI 客套话 → 不提取
+- 但真实发生的小屋/系统进展要保留：上线新功能、修复 bug、完成数据迁移、采用新架构、一起调试某个项目等，作为 event/fact 记录，perspective=SYSTEM（例如"Aevum 上线主题层，支持记忆地图"）——这是有价值的技术事件，不是噪音
+- 没有记忆，比错误记忆更好；每次最多 5 条，宁缺毋滥，不凑数
 
 【其他字段】
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、其他
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(激动)，只作辅助参数
 - importance 重要度 0-10：按 明确程度+重复频率+长期影响+关系影响+情绪权重 估分；一次性的小事给低分
 - emotion_weight 情感分量 0-10：这条记忆对雪与默的关系/情感联结有多重要（看重长期情感分量，不是情绪强度；普通偏好 3-5，关系核心 8-10）
+- layers 多维归属：一条内容若同时符合多个维度（例如"雪买了司沃康玩具并和默一起调试"既是事件也涉及关系），把主类型 type 放第一位，最多再标 1-2 个确实成立的维度（event/fact/meaning/relationship/user_tendency/personality 中选）；只标真实同时成立的，不凑数
 - tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"type":"event|fact|meaning|relationship|user_tendency|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"type":"event|fact|meaning|relationship|user_tendency|personality","layers":["event","meaning"],"perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3392,6 +3412,7 @@ async function extractAevumMemories(texts, episodeId = null) {
       if (insType === 'user_tendency' && insOwner !== 'USER') { insType = 'personality'; insOwner = 'AGENT'; }
       // 事件/事实是客观层，自动激活直接进对应区域，不用逐个确认
       const autoActive = insType === 'event' || insType === 'fact';
+      const insLayers = validAevumLayers(m.layers, insType, insOwner);
       const insPayload = {
         type: insType,
         owner: insOwner,
@@ -3402,16 +3423,24 @@ async function extractAevumMemories(texts, episodeId = null) {
         emotion: validAevumEmotion(m.emotion),
         importance: validAevumImportance(m.importance),
         emotion_weight: validAevumImportance(m.emotion_weight ?? 5),
+        layers: insLayers,
         evidence: Array.isArray(m.evidence) ? m.evidence : [],
         tags: Array.isArray(m.tags) ? m.tags.map(String).filter(t => !['快乐', '美好', '重要', '温暖', '陪伴', '成长'].includes(t)).slice(0, 8) : [],
         source: 'auto-extract',
         episode_id: episodeId || null
       };
       let insResult = await supabase.from('aevum_memories').insert(insPayload).select();
-      // setup_aevum_v16.sql 未执行时 emotion_weight 列不存在：去掉该字段重试
-      if (insResult.error && /emotion_weight/i.test(insResult.error.message)) {
-        delete insPayload.emotion_weight;
-        insResult = await supabase.from('aevum_memories').insert(insPayload).select();
+      // 旧版本 SQL 未执行时的降级：emotion_weight / layers 列不存在则去掉重试
+      if (insResult.error) {
+        const emsg = insResult.error.message || '';
+        if (/emotion_weight/i.test(emsg)) {
+          delete insPayload.emotion_weight;
+          insResult = await supabase.from('aevum_memories').insert(insPayload).select();
+        }
+        if (insResult.error && /layers/i.test(insResult.error.message || '')) {
+          delete insPayload.layers;
+          insResult = await supabase.from('aevum_memories').insert(insPayload).select();
+        }
       }
       const insData = insResult.data;
       if (insResult.error) {
@@ -3474,13 +3503,26 @@ app.post('/api/aevum/backfill', async (req, res) => {
 // 记忆列表：?type= &status= &owner= &q=
 app.get('/api/aevum', async (req, res) => {
   try {
-    let q = supabase.from('aevum_memories').select('*').order('updated_at', { ascending: false }).limit(200);
-    if (AEVUM_TYPES.includes(req.query.type)) q = q.eq('type', req.query.type);
-    if (req.query.status) q = q.eq('status', req.query.status);
-    if (AEVUM_OWNERS.includes(req.query.owner)) q = q.eq('owner', req.query.owner);
-    if (AEVUM_DOMAINS.includes(req.query.domain)) q = q.contains('domain', [req.query.domain]);
-    if (req.query.q) q = q.ilike('content', `%${req.query.q}%`);
-    const { data, error } = await q;
+    const build = () => {
+      let q = supabase.from('aevum_memories').select('*').order('updated_at', { ascending: false }).limit(200);
+      if (req.query.status) q = q.eq('status', req.query.status);
+      if (AEVUM_OWNERS.includes(req.query.owner)) q = q.eq('owner', req.query.owner);
+      if (AEVUM_DOMAINS.includes(req.query.domain)) q = q.contains('domain', [req.query.domain]);
+      if (req.query.q) q = q.ilike('content', `%${req.query.q}%`);
+      return q;
+    };
+    let q = build();
+    // 多维归属：按主类型或 layers 命中都算（一条记忆可同时出现在多个层级页）
+    if (AEVUM_TYPES.includes(req.query.type)) {
+      q = q.or(`type.eq.${req.query.type},layers.cs.{${req.query.type}}`);
+    }
+    let { data, error } = await q;
+    // setup_aevum_v21.sql 未执行时 layers 列不存在：降级为只按主类型过滤
+    if (error && /layers/i.test(error.message)) {
+      q = build();
+      if (AEVUM_TYPES.includes(req.query.type)) q = q.eq('type', req.query.type);
+      ({ data, error } = await q);
+    }
     if (error) return res.json({ memories: [] });
     res.json({ memories: data || [] });
   } catch (e) {
@@ -3491,17 +3533,23 @@ app.get('/api/aevum', async (req, res) => {
 // 统计概览（Xylos 健康视角雏形）
 app.get('/api/aevum/stats', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('aevum_memories').select('type, status');
+    const { data, error } = await supabase.from('aevum_memories').select('type, status, layers');
     if (error) return res.json({ total: 0, byType: {}, byStatus: {}, byTypeProcessed: {}, byTypeActive: {} });
     const byType = {};
     const byStatus = {};
     const byTypeProcessed = {};
     const byTypeActive = {};
     for (const m of data || []) {
-      byType[m.type] = (byType[m.type] || 0) + 1;
+      // 多维归属：同一记忆按它挂载的所有层级计数，与层级页展示一致
+      const typeKeys = (Array.isArray(m.layers) && m.layers.length)
+        ? m.layers.filter(t => AEVUM_TYPES.includes(t))
+        : [m.type];
+      for (const k of typeKeys) {
+        byType[k] = (byType[k] || 0) + 1;
+        if (m.status !== 'candidate') byTypeProcessed[k] = (byTypeProcessed[k] || 0) + 1;
+        if (m.status === 'active' || m.status === 'verified') byTypeActive[k] = (byTypeActive[k] || 0) + 1;
+      }
       byStatus[m.status] = (byStatus[m.status] || 0) + 1;
-      if (m.status !== 'candidate') byTypeProcessed[m.type] = (byTypeProcessed[m.type] || 0) + 1;
-      if (m.status === 'active' || m.status === 'verified') byTypeActive[m.type] = (byTypeActive[m.type] || 0) + 1;
     }
     res.json({ total: (data || []).length, byType, byStatus, byTypeProcessed, byTypeActive });
   } catch (e) {
@@ -3531,26 +3579,62 @@ app.get('/api/aevum/promises', async (req, res) => {
 });
 
 // ================== 主题层（记忆地图） ==================
-app.post('/api/aevum/topics/generate', async (req, res) => {
+async function buildTopicClusters() {
   try {
-    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
     const { data } = await supabase
       .from('aevum_episodes')
       .select('id, topic, intention, message_count, started_at')
       .is('topic_id', null)
       .order('started_at', { ascending: false })
       .limit(50);
-    const list = (data || []).filter(e => String(e.topic || e.intention || '').trim());
-    if (list.length < 2) {
-      return res.json({ topics: [], created: 0, message: list.length === 0 ? '还没有可聚类的事件块（事件块需要先聊出主题信息），再多聊聊天试试~' : `目前只有 ${list.length} 个可聚类的事件块，至少需要 2 个才能聚成主题，再多聊聊天试试~` });
+    const eps = data || [];
+    // 拉取这些事件块里的所有记忆（各层级），让聚类能看到完整故事线
+    let mems = [];
+    if (eps.length) {
+      const { data: mm } = await supabase
+        .from('aevum_memories')
+        .select('episode_id, type, layers, domain, content')
+        .in('episode_id', eps.map(e => e.id))
+        .in('status', ['active', 'candidate', 'verified']);
+      mems = mm || [];
     }
-    const lines = list.map(e =>
-      `${e.id}. ${e.topic || '（无主题）'}${e.intention ? '｜' + String(e.intention).slice(0, 40) : ''}（${String(e.started_at || '').slice(0, 10)}）`
-    ).join('\n');
-    const system = `你是 Aevum Memory 的主题聚类器。把下面的对话事件块聚成几个主题。
+    const memByEp = {};
+    for (const m of mems) {
+      if (!m.episode_id) continue;
+      (memByEp[m.episode_id] = memByEp[m.episode_id] || []).push(m);
+    }
+    // 有记忆或标题的事件块都可参与聚类
+    const list = eps.filter(e => String(e.topic || e.intention || '').trim() || (memByEp[e.id] || []).length);
+    if (list.length < 2) {
+      return { topics: [], created: 0, message: list.length === 0 ? '还没有可聚类的事件块（先聊聊天，事件块需要聊出内容）~' : `目前只有 ${list.length} 个可聚类的事件块，至少需要 2 个才能聚成主题，再多聊聊天试试~` };
+    }
+    // 优先展示有记忆的事件块（新→旧），单次生成控制输入长度
+    const sorted = [...list].sort((a, b) => {
+      const ca = (memByEp[a.id] || []).length;
+      const cb = (memByEp[b.id] || []).length;
+      if (ca !== cb) return cb - ca;
+      return new Date(b.started_at || 0) - new Date(a.started_at || 0);
+    });
+    let budget = 9000;
+    const lines = [];
+    for (const e of sorted) {
+      if (budget <= 0) break;
+      let block = `${e.id}. ${e.topic || '（无主题）'}${e.intention ? '｜' + String(e.intention).slice(0, 40) : ''}（${String(e.started_at || '').slice(0, 10)}，${e.message_count || 0} 条消息）`;
+      const epMems = (memByEp[e.id] || []).slice(0, 6);
+      for (const m of epMems) {
+        const t = AEVUM_TYPE_CN[m.type] || m.type;
+        const dom = (m.domain && m.domain[0]) ? `/${m.domain[0]}` : '';
+        const multi = (Array.isArray(m.layers) && m.layers.length > 1)
+          ? `（多维：${m.layers.map(x => AEVUM_TYPE_CN[x] || x).join('+')}）` : '';
+        block += `\n   - [${t}${dom}]${multi} ${String(m.content || '').replace(/\s+/g, ' ').slice(0, 60)}`;
+      }
+      if (block.length > budget) { block = block.slice(0, budget); budget = 0; } else { budget -= block.length; }
+      lines.push(block);
+    }
+    const system = `你是 Aevum Memory 的主题聚类器。下面每一段是一个对话事件块（标题后面列出它已提取的记忆），把属于同一段故事线的事件块聚成几个主题。
 规则：
-- 语义相近、时间上属于同一段故事线的事件块归为一组
-- 每个主题给一个简洁标题（10 字内）和一句话摘要
+- 不要只按标题聚类：时间先后衔接、话题连续（例如"买了东西→到货→一起研究/调试"）的事件块是同一段故事线
+- 结合事件块内的记忆判断内容；每个主题给一个简洁标题（10 字内）和一句话摘要
 - 一次最多输出 8 个主题；每组至少 2 个事件块；太零散的事件块不要强行归类
 - 输出格式：只输出 [AEVUM_TOPICS]{"topics":[{"title":"...","summary":"...","episode_ids":[1,2]}]}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3571,17 +3655,17 @@ app.post('/api/aevum/topics/generate', async (req, res) => {
         stream: false
       })
     });
-    if (!resp.ok) return res.status(502).json({ error: 'AI 聚类失败，请稍后重试' });
+    if (!resp.ok) return { topics: [], created: 0, message: 'AI 聚类失败，请稍后重试' };
     const data2 = await resp.json();
     const reply = String(data2.choices?.[0]?.message?.content || '');
     const mk = '[AEVUM_TOPICS]';
     const mi = reply.indexOf(mk);
-    if (mi === -1) return res.json({ topics: [], created: 0 });
+    if (mi === -1) return { topics: [], created: 0 };
     let parsed = null;
     try {
       parsed = JSON.parse(reply.substring(mi + mk.length).trim());
     } catch (e) {
-      return res.json({ topics: [], created: 0 });
+      return { topics: [], created: 0 };
     }
     const validIds = new Set(list.map(e => e.id));
     const createdTopics = [];
@@ -3601,9 +3685,33 @@ app.post('/api/aevum/topics/generate', async (req, res) => {
       }
       createdTopics.push({ id: tp.id, title: tp.title, summary: tp.summary, episode_count: ids.length });
     }
-    res.json({ topics: createdTopics, created: createdTopics.length });
+    return { topics: createdTopics, created: createdTopics.length };
+  } catch (e) {
+    console.error('Aevum 主题聚类失败:', e.message);
+    return { topics: [], created: 0 };
+  }
+}
+
+app.post('/api/aevum/topics/generate', async (req, res) => {
+  try {
+    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
+    res.json(await buildTopicClusters());
   } catch (e) {
     res.status(500).json({ error: '主题生成失败' });
+  }
+});
+
+// 重新聚类：清掉现有主题与归类，用完整输入（含全部记忆）重新聚一遍（前端需确认）
+app.post('/api/aevum/topics/regenerate', async (req, res) => {
+  try {
+    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
+    await supabase.from('aevum_episodes').update({ topic_id: null, updated_at: new Date().toISOString() }).not('topic_id', 'is', null);
+    const { error: delErr } = await supabase.from('aevum_topics').delete().neq('id', -1);
+    if (delErr) return res.status(500).json({ error: '清理旧主题失败：' + delErr.message });
+    const result = await buildTopicClusters();
+    res.json({ ...result, regenerated: true });
+  } catch (e) {
+    res.status(500).json({ error: '重新聚类失败' });
   }
 });
 
@@ -3613,11 +3721,19 @@ app.get('/api/aevum/topics', async (req, res) => {
       supabase.from('aevum_topics').select('*').order('updated_at', { ascending: false }),
       supabase.from('aevum_episodes').select('id, topic_id, topic, started_at, message_count')
     ]);
+    const epsAll = e.data || [];
+    const idsAll = epsAll.map(x => x.id);
+    let memCountByEp = {};
+    if (idsAll.length) {
+      const { data: mm } = await supabase.from('aevum_memories').select('episode_id').in('episode_id', idsAll);
+      for (const r of mm || []) memCountByEp[r.episode_id] = (memCountByEp[r.episode_id] || 0) + 1;
+    }
     const topics = (t.data || []).map(tp => {
-      const eps = (e.data || []).filter(x => x.topic_id === tp.id);
+      const eps = epsAll.filter(x => x.topic_id === tp.id);
       return {
         ...tp,
         episode_count: eps.length,
+        memory_count: eps.reduce((s, x) => s + (memCountByEp[x.id] || 0), 0),
         latest: eps.map(x => x.started_at).sort().pop() || null
       };
     });
@@ -3858,14 +3974,15 @@ app.get('/api/aevum/:id/context', async (req, res) => {
 
 // 新增（默认进入候选队列）
 app.post('/api/aevum', async (req, res) => {
-  const { type, owner, content, confidence, evidence, tags, source, source_message_id, review_note, domain, emotion, importance, emotion_weight } = req.body || {};
+  const { type, owner, content, confidence, evidence, tags, source, source_message_id, review_note, domain, emotion, importance, emotion_weight, layers } = req.body || {};
   const text = String(content || '').trim();
   if (!AEVUM_TYPES.includes(type)) return res.status(400).json({ error: '层级无效' });
   if (!text) return res.status(400).json({ error: '内容不能为空' });
   try {
+    const insOwner = AEVUM_OWNERS.includes(owner) ? owner : 'USER';
     const insPayload = {
       type,
-      owner: AEVUM_OWNERS.includes(owner) ? owner : 'USER',
+      owner: insOwner,
       content: text,
       status: 'candidate',
       confidence: validAevumConfidence(confidence),
@@ -3873,6 +3990,7 @@ app.post('/api/aevum', async (req, res) => {
       emotion: validAevumEmotion(emotion),
       importance: validAevumImportance(importance),
       emotion_weight: validAevumImportance(emotion_weight ?? 5),
+      layers: validAevumLayers(layers, type, insOwner),
       evidence: Array.isArray(evidence) ? evidence : [],
       tags: Array.isArray(tags) ? tags.map(String) : [],
       source: source ? String(source) : null,
@@ -3884,9 +4002,16 @@ app.post('/api/aevum', async (req, res) => {
       .insert(insPayload)
       .select()
       .single();
-    if (insResult.error && /emotion_weight/i.test(insResult.error.message)) {
-      delete insPayload.emotion_weight;
-      insResult = await supabase.from('aevum_memories').insert(insPayload).select().single();
+    if (insResult.error) {
+      const emsg = insResult.error.message || '';
+      if (/emotion_weight/i.test(emsg)) {
+        delete insPayload.emotion_weight;
+        insResult = await supabase.from('aevum_memories').insert(insPayload).select().single();
+      }
+      if (insResult.error && /layers/i.test(insResult.error.message || '')) {
+        delete insPayload.layers;
+        insResult = await supabase.from('aevum_memories').insert(insPayload).select().single();
+      }
     }
     if (insResult.error) return res.status(500).json({ error: '保存失败，请先执行 setup_aevum.sql' });
     const data = insResult.data;
@@ -3899,7 +4024,7 @@ app.post('/api/aevum', async (req, res) => {
 
 // 修改
 app.put('/api/aevum/:id', async (req, res) => {
-  const { type, owner, content, confidence, evidence, tags, source, review_note, domain, emotion, importance, emotion_weight } = req.body || {};
+  const { type, owner, content, confidence, evidence, tags, source, review_note, domain, emotion, importance, emotion_weight, layers } = req.body || {};
   const patch = {};
   if (AEVUM_TYPES.includes(type)) patch.type = type;
   if (AEVUM_OWNERS.includes(owner)) patch.owner = owner;
@@ -3914,6 +4039,19 @@ app.put('/api/aevum/:id', async (req, res) => {
   if (emotion !== undefined) patch.emotion = validAevumEmotion(emotion);
   if (importance !== undefined) patch.importance = validAevumImportance(importance);
   if (emotion_weight !== undefined) patch.emotion_weight = validAevumImportance(emotion_weight);
+  if (layers !== undefined) {
+    // 未改类型/归属时按原记录校验，避免主类型从 layers 里消失
+    let curType = patch.type;
+    let curOwner = patch.owner;
+    if (!curType || !curOwner) {
+      const { data: cur } = await supabase.from('aevum_memories').select('type, owner').eq('id', req.params.id).maybeSingle();
+      if (cur) {
+        if (!curType) curType = cur.type;
+        if (!curOwner) curOwner = cur.owner;
+      }
+    }
+    patch.layers = validAevumLayers(layers, curType, curOwner);
+  }
   if (evidence !== undefined) patch.evidence = Array.isArray(evidence) ? evidence : [];
   if (tags !== undefined) patch.tags = Array.isArray(tags) ? tags.map(String) : [];
   if (source !== undefined) patch.source = source ? String(source) : null;
@@ -3929,6 +4067,11 @@ app.put('/api/aevum/:id', async (req, res) => {
     // setup_aevum_v16.sql 未执行时 emotion_weight 列不存在：去掉该字段重试
     if (error && patch.emotion_weight !== undefined && /emotion_weight/i.test(error.message)) {
       delete patch.emotion_weight;
+      ({ data, error } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single());
+    }
+    // setup_aevum_v21.sql 未执行时 layers 列不存在：去掉该字段重试
+    if (error && patch.layers !== undefined && /layers/i.test(error.message)) {
+      delete patch.layers;
       ({ data, error } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single());
     }
     if (error) return res.status(500).json({ error: error.message });
@@ -4062,12 +4205,24 @@ app.post('/api/aevum/:id/switch-layer', async (req, res) => {
     const layers = (mem.layer_content && typeof mem.layer_content === 'object') ? mem.layer_content : {};
     const text = String(layers[layer] || '').trim();
     if (!text) return res.status(400).json({ error: '这一层还没有内容（还没分析过，或 AI 认为这条记忆暂时到不了这层）' });
+    const curLayers = Array.isArray(mem.layers) && mem.layers.length ? mem.layers : [mem.type];
+    const newLayers = validAevumLayers([layer, ...curLayers], layer, mem.owner);
     const { data: updated, error: updErr } = await supabase
       .from('aevum_memories')
-      .update({ type: layer, content: text, updated_at: new Date().toISOString() })
+      .update({ type: layer, content: text, layers: newLayers, updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select()
       .single();
+    if (updErr && /layers/i.test(updErr.message)) {
+      const { data: fbUpd, error: fbErr } = await supabase
+        .from('aevum_memories')
+        .update({ type: layer, content: text, updated_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+        .select()
+        .single();
+      if (fbErr) return res.status(500).json({ error: fbErr.message });
+      return res.json({ ok: true, memory: fbUpd });
+    }
     if (updErr) return res.status(500).json({ error: updErr.message });
     res.json({ ok: true, memory: updated });
   } catch (e) {

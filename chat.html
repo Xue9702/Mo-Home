@@ -2240,16 +2240,17 @@
               <span style="font-size:14px;font-weight:600;color:#333;">记忆地图</span>
               <span style="font-size:12px;color:#8a83a8;">把散落的事件块聚成主题，默回忆时能看到整段故事线</span>
               <span style="margin-left:auto;">
+                <button data-regen-topics onclick="aevumRegenerateTopics()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;" title="清掉现有主题，用全部事件块（含记忆）重新聚类">♻ 重新聚类</button>
                 <button data-gentopics onclick="aevumGenerateTopics()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成主题</button>
               </span>
             </div>
-            <div style="font-size:11px;color:#b0a6c4;">点主题看事件，点事件看记忆和原文。</div>
+            <div style="font-size:11px;color:#b0a6c4;">点主题看事件，点事件看记忆和原文。每个事件块里的记忆（含关系/意义/人格）都会参与主题聚类。</div>
           </div>
           ${topics.length ? topics.map(t => `
             <div class="feature-card" style="align-items:stretch;gap:8px;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span data-title="${escapeHtml2(t.title)}" style="cursor:pointer;font-size:15px;font-weight:600;color:#333;" onclick="aevumToggleTopic(${t.id})">${escapeHtml2(t.title)}</span>
-                <span style="font-size:11px;color:#8a83a8;">${t.episode_count || 0} 个事件</span>
+                <span style="font-size:11px;color:#8a83a8;">${t.episode_count || 0} 个事件 · ${t.memory_count || 0} 条记忆</span>
                 <span style="margin-left:auto;cursor:pointer;color:#888;font-size:12px;" onclick="aevumRenameTopic(${t.id}, this)">✎ 重命名</span>
               </div>
               ${t.summary ? `<div style="font-size:12px;color:#8a83a8;">${escapeHtml2(t.summary)}</div>` : ''}
@@ -2318,6 +2319,13 @@
               <select id="aevumFormOwner" style="flex:1;min-width:100px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;">
                 ${Object.entries(AEVUM_OWNER_LABELS).map(([v, l]) => `<option value="${v}" ${o === v ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
+            </div>
+            <div style="font-size:12px;color:#888;">同时归入的维度（这条内容同时符合多个层级时勾选，主题聚类会完整读到）</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;" id="aevumFormLayers">
+              ${['event', 'fact', 'meaning', 'relationship', 'user_tendency', 'personality'].map(t => `
+                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#555;cursor:pointer;">
+                  <input type="checkbox" value="${t}" ${(base.layers && base.layers.length ? base.layers : [base.type]).includes(t) ? 'checked' : ''}> ${AEVUM_TYPE_LABELS[t] || t}
+                </label>`).join('')}
             </div>
             <textarea id="aevumFormContent" placeholder="记忆内容…" style="width:100%;min-height:80px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;">${escapeHtml2(base.content || '')}</textarea>
             <div style="font-size:12px;color:#888;">置信度</div>
@@ -2402,6 +2410,7 @@
           <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${AEVUM_TYPE_COLORS[m.type] || '#eee'};color:#fff;">${AEVUM_TYPE_LABELS[m.type] || m.type}</span>
+              ${(m.layers || []).filter(t => t !== m.type && AEVUM_TYPE_LABELS[t]).map(t => `<span title="同时属于这个维度" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#fff;color:#8a83a8;border:1px solid #e0d8ec;">${AEVUM_TYPE_LABELS[t]}</span>`).join('')}
               ${m.source === 'auto-extract' ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#eef3ff;color:#7f9fd9;">自动</span>' : ''}
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
@@ -2471,6 +2480,8 @@
         const tags = document.getElementById('aevumFormTags').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
         const source = document.getElementById('aevumFormSource').value.trim();
         const domains = [...document.querySelectorAll('#aevumFormDomains input:checked')].map(i => i.value);
+        const layers = [...document.querySelectorAll('#aevumFormLayers input:checked')].map(i => i.value);
+        if (layers.indexOf(type) === -1) layers.unshift(type);
         const emotion = {
           valence: parseFloat(document.getElementById('aevumFormValence').value),
           arousal: parseFloat(document.getElementById('aevumFormArousal').value)
@@ -2487,7 +2498,7 @@
         const res = await fetch(url, {
           method: aevumState.editingId ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, owner, content, tags, source, confidence, domain: domains, emotion, importance, emotion_weight: emotionWeight })
+          body: JSON.stringify({ type, owner, content, tags, source, confidence, domain: domains, emotion, importance, emotion_weight: emotionWeight, layers })
         });
         if (!res.ok) { alert('保存失败，请确认已执行 setup_aevum.sql'); return; }
         aevumState.showForm = false;
@@ -2616,6 +2627,27 @@
       }
       window.aevumGenerateTopics = aevumGenerateTopics;
 
+      async function aevumRegenerateTopics() {
+        if (!confirm('会清掉现有主题并重新聚类（AI 生成的主题会重建，手动改过的标题会丢失），确定吗？')) return;
+        const btn = document.querySelector('[data-regen-topics]');
+        const old = btn ? btn.textContent : '';
+        if (btn) btn.textContent = '⏳ 重新聚类中…';
+        try {
+          const res = await fetch('/api/aevum/topics/regenerate', { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '重新聚类失败，请确认已执行 setup_aevum_v17.sql'); return; }
+          aevumState.topicCache = {};
+          if (data.message) { alert(data.message); }
+          else { alert('✅ 已重新聚类 ' + (data.created || 0) + ' 个主题'); }
+          renderAevum();
+        } catch (e) {
+          alert('重新聚类失败，请稍后重试');
+        } finally {
+          if (btn) btn.textContent = old;
+        }
+      }
+      window.aevumRegenerateTopics = aevumRegenerateTopics;
+
       async function aevumToggleTopic(id) {
         const body = document.getElementById('aevumTopicBody_' + id);
         if (!body) return;
@@ -2642,7 +2674,7 @@
                 <div id="aevumEpBody_${ep.id}" style="display:none;margin-top:6px;padding-left:10px;border-left:2px solid #f0e9f5;">
                   ${memories.filter(m => m.episode_id === ep.id).map(m => `
                     <div style="font-size:12px;color:#666;margin:4px 0;">
-                      <span style="color:#8a5fb5;">[${AEVUM_TYPE_LABELS[m.type] || m.type}]</span> ${escapeHtml2(m.content.length > 80 ? m.content.slice(0, 80) + '…' : m.content)}
+                      <span style="color:#8a5fb5;">[${(m.layers && m.layers.length ? m.layers : [m.type]).map(t => AEVUM_TYPE_LABELS[t] || t).join('/')}]</span> ${escapeHtml2(m.content.length > 80 ? m.content.slice(0, 80) + '…' : m.content)}
                       <span style="cursor:pointer;color:#b0a6c4;font-size:11px;margin-left:4px;" onclick="aevumToggleContext(${m.id})">📜 原文</span>
                       <div id="aevumCtx_${m.id}" style="display:none;max-height:160px;overflow:auto;background:#faf7fc;border-radius:8px;padding:6px;margin-top:4px;font-size:11px;"></div>
                     </div>`).join('') || '<div style="font-size:12px;color:#b0a6c4;">这个事件还没有记忆</div>'}
