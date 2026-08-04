@@ -2042,7 +2042,7 @@
       // ---------- Aevum Memory（v1 Phase 1） ----------
       const AEVUM_TYPE_LABELS = {
         event: '事件', fact: '事实', meaning: '意义', relationship: '关系',
-        personality: '人格', self_candidate: 'Self候选', self_model: 'Self模型'
+        user_tendency: '用户倾向', personality: '人格', self_model: '核心'
       };
       const AEVUM_OWNER_LABELS = { USER: '雪', RELATIONSHIP: '关系', AGENT: '默', SYSTEM: '系统' };
       const AEVUM_STATUS_LABELS = {
@@ -2051,15 +2051,23 @@
       };
       const AEVUM_TYPE_COLORS = {
         event: '#8ec5ff', fact: '#9b8cff', meaning: '#ffb36b', relationship: '#ff8fab',
-        personality: '#7fb8ff', self_candidate: '#c084fc', self_model: '#e1789a'
+        user_tendency: '#ff9f7f', personality: '#7fb8ff', self_model: '#e1789a'
       };
       const AEVUM_DOMAINS_FRONT = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
-      const AEVUM_PROFILE_DIMENSIONS = ['目前职业', '偏好', '习惯', '爱情观', '价值观', '金钱观', '世界观', '重要关系', '自我定位'];
-      const AEVUM_PROMOTE_CHAIN = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate'];
+      const AEVUM_PROFILE_DIMENSIONS = ['目前职业', '家庭', '工作', '重要关系'];
+      const AEVUM_DERIVE_GRAPH = {
+        event: ['fact', 'meaning', 'relationship'],
+        fact: ['meaning', 'relationship'],
+        meaning: ['user_tendency', 'personality'],
+        relationship: ['user_tendency', 'personality'],
+        personality: ['self_model'],
+        user_tendency: [],
+        self_model: []
+      };
       const AEVUM_VIEWS = [
         ['sea', '记忆海'], ['promise', '承诺'], ['topic', '主题'], ['profile', '画像'],
         ['event', '事件'], ['fact', '事实'], ['meaning', '意义'],
-        ['relationship', '关系'], ['personality', '人格'], ['self_candidate', 'Self候选'], ['self_model', 'Self模型'],
+        ['relationship', '关系'], ['user_tendency', '用户倾向'], ['personality', '人格'], ['self_model', '核心'],
         ['archived', '已归档']
       ];
       let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false };
@@ -2152,7 +2160,7 @@
             </div>
             ${aevumState.view === 'promise' ? renderPromisePanel(promData) : ''}
             ${aevumState.view === 'topic' ? renderTopicPanel(topicData) : ''}
-            ${aevumState.view === 'profile' ? renderProfilePanel(profData) : ''}
+            ${aevumState.view === 'profile' ? renderProfilePanel(profData, list.filter(m => m.type === 'user_tendency' && m.status === 'active')) : ''}
             ${(aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
             ${aevumState.mergeGroups.length ? `
             <div class="feature-card" style="align-items:stretch;gap:10px;">
@@ -2251,10 +2259,11 @@
         `;
       }
 
-      function renderProfilePanel(profData) {
+      function renderProfilePanel(profData, tendencies) {
         const dims = (profData.dimensions && typeof profData.dimensions === 'object') ? profData.dimensions : null;
         const editing = aevumState.profileEditing;
         const hasContent = !!(profData.content || (dims && Object.keys(dims).length));
+        const tendList = tendencies || [];
         const dimRows = AEVUM_PROFILE_DIMENSIONS.map(k => {
           const v = (dims && dims[k]) ? dims[k] : '';
           return `
@@ -2280,6 +2289,16 @@
             <div style="font-size:11px;color:#b0a6c4;">按维度记录"我了解的雪"，默每次聊天和唤醒都会看到；AI 检测不到的维度可留空或手动补充。</div>
             ${hasContent || editing ? dimRows : '<div style="font-size:13px;color:#b0a6c4;">还没有画像，点「✨ AI 生成」让默根据活跃记忆归纳~</div>'}
             ${profData.updated_at ? `<div style="font-size:11px;color:#b0a6c4;">上次更新：${new Date(profData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:6px;">
+            <div style="font-size:14px;font-weight:600;color:#333;">用户倾向（${tendList.length}）</div>
+            <div style="font-size:11px;color:#b0a6c4;">雪的喜好 / 三观 / 性格，来自对话自动提取，可在记忆海的候选里确认或拒绝。</div>
+            ${tendList.length ? tendList.map(t => `
+              <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f6f2f8;">
+                <span style="color:#8a5fb5;">[${AEVUM_TYPE_LABELS[t.type] || t.type}]</span> ${escapeHtml2(t.content)}
+                <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">${new Date(t.created_at || Date.now()).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric' })}</div>
+              </div>`).join('')
+              : '<div style="font-size:13px;color:#b0a6c4;">还没有用户倾向记忆，聊到雪的喜好/三观/性格时默会自动提取~</div>'}
           </div>`;
       }
 
@@ -2349,33 +2368,34 @@
         const canReview = ['candidate', 'raw', 'extracted', 'verified'].includes(m.status);
         const layers = (m.layer_content && typeof m.layer_content === 'object') ? m.layer_content : {};
         const hasLayers = Object.keys(layers).length > 0;
-        const chainIdx = AEVUM_PROMOTE_CHAIN.indexOf(m.type);
-        let nextFilled = '';
-        if (chainIdx >= 0) {
-          for (let i = chainIdx + 1; i < AEVUM_PROMOTE_CHAIN.length; i++) {
-            if (layers[AEVUM_PROMOTE_CHAIN[i]]) {
-              nextFilled = AEVUM_TYPE_LABELS[AEVUM_PROMOTE_CHAIN[i]] || AEVUM_PROMOTE_CHAIN[i];
-              break;
-            }
-          }
+        const deriveTargets = AEVUM_DERIVE_GRAPH[m.type] || [];
+        const deriveChips = [
+          `<span style="cursor:default;padding:5px 12px;border-radius:16px;font-size:12px;background:#ffd3de;color:#fff;font-weight:600;">${AEVUM_TYPE_LABELS[m.type] || m.type}</span>`
+        ];
+        if (deriveTargets.length) {
+          deriveChips.push('<span style="color:#ddd;font-size:12px;">→</span>');
+          deriveTargets.forEach(t => {
+            const label = AEVUM_TYPE_LABELS[t] || t;
+            const hasContent = !!layers[t];
+            const clickable = hasLayers ? hasContent : true;
+            const style = hasContent
+              ? 'background:#f7eefb;color:#8a5fb5;border:1px solid #e3d9f2;'
+              : 'background:#fff;color:#ccc;border:1px solid #eee;';
+            const clickAttr = clickable ? `onclick="aevumSwitchLayer(${m.id}, '${t}')"` : '';
+            deriveChips.push(`<span ${clickAttr} style="cursor:${clickable ? 'pointer' : 'default'};padding:5px 12px;border-radius:16px;font-size:12px;${style}">${label}</span>`);
+          });
         }
-        const chainChips = AEVUM_PROMOTE_CHAIN.map((t, i) => {
-          const label = AEVUM_TYPE_LABELS[t] || t;
-          const isCurrent = i === chainIdx;
-          const hasContent = !!layers[t];
-          const clickable = isCurrent ? false : (hasLayers ? hasContent : true);
-          let style;
-          if (isCurrent) style = 'background:#ffd3de;color:#fff;font-weight:600;';
-          else if (hasContent) style = 'background:#f7eefb;color:#8a5fb5;border:1px solid #e3d9f2;';
-          else style = 'background:#fff;color:#ccc;border:1px solid #eee;';
-          const clickAttr = clickable ? `onclick="aevumSwitchLayer(${m.id}, '${t}')"` : '';
-          return `<span ${clickAttr} style="cursor:${clickable ? 'pointer' : 'default'};padding:5px 12px;border-radius:16px;font-size:12px;${style}">${label}</span>`;
-        }).join('');
-        const hintHtml = hasLayers
-          ? (nextFilled
-              ? `<div style="font-size:11px;color:#c084fc;">💡 可晋升为「${nextFilled}」</div>`
-              : '<div style="font-size:11px;color:#b0a6c4;">已分析：AI 认为这条记忆已到最高可表述层级</div>')
-          : '<div style="font-size:11px;color:#b0a6c4;">💡 还没分析层级：点「✨ 分析层级」让 AI 评定各层级</div>';
+        let hintHtml = '';
+        if (!deriveTargets.length) {
+          hintHtml = '<div style="font-size:11px;color:#b0a6c4;">这个类型没有可衍生的目标</div>';
+        } else if (hasLayers) {
+          const filled = deriveTargets.filter(t => layers[t]).map(t => AEVUM_TYPE_LABELS[t] || t);
+          hintHtml = filled.length
+            ? `<div style="font-size:11px;color:#c084fc;">💡 可衍生为「${filled.join('」「')}」</div>`
+            : '<div style="font-size:11px;color:#b0a6c4;">已分析：AI 认为这些目标暂时都无法可靠衍生</div>';
+        } else {
+          hintHtml = '<div style="font-size:11px;color:#b0a6c4;">💡 点「✨ 分析衍生」生成可衍生的内容</div>';
+        }
         const statusBg = m.status === 'active' ? '#e8f9f0' : m.status === 'rejected' ? '#fdecec' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6';
         const statusColor = m.status === 'active' ? '#2ecc71' : m.status === 'rejected' ? '#e74c3c' : m.status === 'archived' ? '#aaa' : '#b8860b';
         return `
@@ -2391,7 +2411,7 @@
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
             ${m.domain && m.domain.length ? `<div style="font-size:11px;color:#7f9fd9;">${m.domain.map(escapeHtml2).join(' · ')}</div>` : ''}
             <div style="font-size:11px;color:#aaa;">重要度 ${m.importance ?? 5} · 情感 ${m.emotion_weight ?? 5} · 来源 ${(conf.evidence || 0).toFixed(2)} · 稳定 ${(conf.stability || 0).toFixed(2)} · 效价 ${((m.emotion && m.emotion.valence) || 0).toFixed(1)} · 唤醒 ${((m.emotion && m.emotion.arousal) || 0).toFixed(1)}</div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;">${chainChips}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${deriveChips.join('')}</div>
             ${hintHtml}
             <div id="aevumCtx_${m.id}" style="display:none;max-height:200px;overflow:auto;background:#faf7fc;border:1px solid #f0e9f5;border-radius:10px;padding:8px;font-size:12px;"></div>
             <div style="display:flex;gap:10px;justify-content:flex-end;font-size:13px;flex-wrap:wrap;">
@@ -2400,7 +2420,7 @@
               ${m.status === 'archived' || m.status === 'rejected'
                 ? `<span style="cursor:pointer;color:#1e90ff;" onclick="aevumReview(${m.id},'approve')">↺ 恢复</span>`
                 : `<span style="cursor:pointer;color:#888;" onclick="aevumArchive(${m.id})">归档</span>`}
-              <span style="cursor:pointer;color:#c084fc;font-weight:600;" data-analyze="${m.id}" onclick="aevumAnalyzeLayers(${m.id})">✨ 分析层级</span>
+              ${deriveTargets.length ? `<span style="cursor:pointer;color:#c084fc;font-weight:600;" data-analyze="${m.id}" onclick="aevumAnalyzeLayers(${m.id})">✨ 分析衍生</span>` : ''}
               <span style="cursor:pointer;color:#8a83a8;" onclick="aevumToggleContext(${m.id})">📜 原文</span>
               <span style="cursor:pointer;color:#888;" onclick="aevumEdit(${m.id})">✎ 修改</span>
             </div>
@@ -2766,19 +2786,19 @@
           const layers = (data.memory && data.memory.layer_content && typeof data.memory.layer_content === 'object') ? data.memory.layer_content : {};
           hasLayers = Object.keys(layers).length > 0;
         } catch (e) { /* ignore */ }
-        if (hasLayers && !confirm('重新分析会覆盖现有各层级内容，确定吗？')) return;
+        if (hasLayers && !confirm('重新分析会覆盖现有的衍生内容，确定吗？')) return;
         const btn = document.querySelector(`[data-analyze="${id}"]`);
         if (btn) btn.textContent = '⏳ 分析中…';
         try {
           const res = await fetch('/api/aevum/' + id + '/analyze-layers', { method: 'POST' });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) { alert(data.error || '分析失败，请稍后重试'); return; }
-          alert('✅ 已生成六个层级的候选内容，点上面的圆框即可切换层级');
+          alert('✅ 已生成可衍生的候选内容，点上面的圆框即可切换');
           renderAevum();
         } catch (e) {
           alert('分析失败，请稍后重试');
         } finally {
-          if (btn) btn.textContent = '✨ 分析层级';
+          if (btn) btn.textContent = '✨ 分析衍生';
         }
       }
       window.aevumAnalyzeLayers = aevumAnalyzeLayers;

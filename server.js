@@ -469,11 +469,13 @@ function buildWebSearchTools() {
 }
 
 // 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
-function flushBufferedContent(contentBuffer, sendSSE) {
+// 流式补发：为拦截 [SEARCH_QUERY] 标签缓存的内容，按小间隔逐段补发，
+// 让默的回复看起来是流式打出来的（思考内容仍实时转发）
+async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 40, delayMs = 15) {
   if (!contentBuffer) return;
-  const chunkSize = 40;
   for (let i = 0; i < contentBuffer.length; i += chunkSize) {
     sendSSE({ content: contentBuffer.substring(i, i + chunkSize) });
+    if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
   }
 }
 
@@ -1078,7 +1080,7 @@ app.post('/api/chat', async (req, res) => {
       }
 
       // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成（不挂刷新按钮）
-      flushBufferedContent(preludeText, sendSSE);
+      await flushBufferedContent(preludeText, sendSSE);
       sendSSE({ done: true });
 
       console.log('🔍 默请求联网搜索:', searchReq.query);
@@ -1106,7 +1108,7 @@ app.post('/api/chat', async (req, res) => {
       console.log('🔍 联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
-      flushBufferedContent(first.contentBuffer, sendSSE);
+      await flushBufferedContent(first.contentBuffer, sendSSE);
       console.log('📊 流式读取完成，fullReply 长度:', fullReply.length, 'fullThinking 长度:', fullThinking.length);
     }
 
@@ -1424,7 +1426,7 @@ app.post('/api/regenerate', async (req, res) => {
       }
 
       // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成
-      flushBufferedContent(preludeText, sendSSE);
+      await flushBufferedContent(preludeText, sendSSE);
       sendSSE({ done: true });
 
       console.log('🔍 重新生成-默请求联网搜索:', searchReq.query);
@@ -1452,7 +1454,7 @@ app.post('/api/regenerate', async (req, res) => {
       console.log('🔍 重新生成-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
-      flushBufferedContent(first.contentBuffer, sendSSE);
+      await flushBufferedContent(first.contentBuffer, sendSSE);
     }
 
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
@@ -2818,12 +2820,33 @@ app.delete('/api/day-tags/:id', async (req, res) => {
 });
 
 // ================== Aevum Memory（v1 Phase 1） ==================
-const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate', 'self_model'];
+const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'user_tendency', 'personality', 'self_model'];
 const AEVUM_OWNERS = ['USER', 'RELATIONSHIP', 'AGENT', 'SYSTEM'];
 const AEVUM_DOMAINS = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
 const EPISODE_IDLE_MINUTES = 30;
 const EPISODE_MAX_MESSAGES = 40;
-const AEVUM_PROMOTE_CHAIN = ['event', 'fact', 'meaning', 'relationship', 'personality', 'self_candidate'];
+// 衍生图：每种类型可以衍生成哪些目标类型（替代旧的单条晋升链）
+const AEVUM_DERIVE_GRAPH = {
+  event: ['fact', 'meaning', 'relationship'],
+  fact: ['meaning', 'relationship'],
+  meaning: ['user_tendency', 'personality'],
+  relationship: ['user_tendency', 'personality'],
+  personality: ['self_model'],
+  user_tendency: [],
+  self_model: []
+};
+// 合并时取组内"最抽象"类型用的优先级（低→高）
+const AEVUM_TYPE_ORDER = ['event', 'fact', 'meaning', 'relationship', 'user_tendency', 'personality', 'self_model'];
+
+const AEVUM_TYPE_DESC = {
+  event: '事件记忆：客观发生的事',
+  fact: '事实记忆：稳定的信息/偏好/情况',
+  meaning: '意义记忆：这件事对雪或默的意义（写清主体是雪还是默）',
+  relationship: '关系记忆：雪与默之间的互动规律',
+  user_tendency: '用户倾向：雪的喜好/三观/性格',
+  personality: '人格记忆：默的稳定行为倾向',
+  self_model: '核心记忆：默的核心存在原则'
+};
 
 function validAevumDomains(d) {
   if (!Array.isArray(d)) return [];
@@ -3078,7 +3101,7 @@ async function aevumFindDuplicate(content) {
 
 const AEVUM_TYPE_CN = {
   event: '事件', fact: '事实', meaning: '意义', relationship: '关系',
-  personality: '人格', self_candidate: 'Self候选', self_model: 'Self模型'
+  user_tendency: '用户倾向', personality: '人格', self_model: '核心'
 };
 
 // 阿里百炼向量（text-embedding-v4，1024 维）；失败返回 null
@@ -3263,9 +3286,10 @@ async function extractAevumMemories(texts, episodeId = null) {
 【Memory Layer 层级，严格分类】
 - event=客观发生了什么（"发生了X事件"）
 - fact=从事件中提取的稳定客观信息（"关于对象的客观信息"）
-- meaning=极其严格：只允许分析雪对某件事的个人价值/情感/人生意义；主体必须是雪，且必须有雪明确表达或多次行为支持；不能解释系统价值或 AI 价值（"这次系统升级提高了可靠性"是 SYSTEM，不是 meaning）
+- meaning=极其严格：描述"这件事对谁有什么意义"，主体可以是雪(USER)或默(AGENT)，perspective 必须写清主体；必须有明确表达或多次行为支持；不能解释系统价值（"这次系统升级提高了可靠性"是 SYSTEM，不是 meaning）
 - relationship=只涉及雪↔默的互动模式时使用
-- personality=只有长期重复模式才允许生成；禁止单次事件生成人格
+- user_tendency=雪的喜好/三观/性格（例如"雪重视长期连续性"）；主体只能是雪(USER)，需证据，宁缺毋滥
+- personality=只描述默的稳定行为倾向（AGENT），例如"默倾向优先保持诚实"；雪的性格/喜好/三观绝不能标成 personality（应归 user_tendency）；只有长期重复模式才允许生成，禁止单次事件生成人格
 
 【不要强行提取】
 - 技术讨论、系统调试、临时决定、普通聊天、一次性话题、AI 客套话 → 不提取
@@ -3279,7 +3303,7 @@ async function extractAevumMemories(texts, episodeId = null) {
 - tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"type":"event|fact|meaning|relationship|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"type":"event|fact|meaning|relationship|user_tendency|personality","perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3361,11 +3385,18 @@ async function extractAevumMemories(texts, episodeId = null) {
         }
         continue;
       }
+      // v2.0 归属兜底：人格只属于默(AGENT)，用户倾向只属于雪(USER)
+      let insType = m.type;
+      let insOwner = AEVUM_OWNERS.includes(m.perspective) ? m.perspective : AEVUM_OWNERS.includes(m.owner) ? m.owner : 'USER';
+      if (insType === 'personality' && insOwner !== 'AGENT') { insType = 'user_tendency'; insOwner = 'USER'; }
+      if (insType === 'user_tendency' && insOwner !== 'USER') { insType = 'personality'; insOwner = 'AGENT'; }
+      // 事件/事实是客观层，自动激活直接进对应区域，不用逐个确认
+      const autoActive = insType === 'event' || insType === 'fact';
       const insPayload = {
-        type: m.type,
-        owner: AEVUM_OWNERS.includes(m.perspective) ? m.perspective : AEVUM_OWNERS.includes(m.owner) ? m.owner : 'USER',
+        type: insType,
+        owner: insOwner,
         content,
-        status: 'candidate',
+        status: autoActive ? 'active' : 'candidate',
         confidence: validAevumConfidence(m.confidence),
         domain: validAevumDomains(m.domain),
         emotion: validAevumEmotion(m.emotion),
@@ -3642,7 +3673,7 @@ app.put('/api/aevum/topics/:id', async (req, res) => {
 });
 
 // ================== 用户画像 ==================
-const PROFILE_DIMENSIONS = ['目前职业', '偏好', '习惯', '爱情观', '价值观', '金钱观', '世界观', '重要关系', '自我定位'];
+const PROFILE_DIMENSIONS = ['目前职业', '家庭', '工作', '重要关系'];
 
 function renderProfileText(dimensions) {
   if (!dimensions || typeof dimensions !== 'object') return '';
@@ -3684,12 +3715,12 @@ app.post('/api/aevum/profile/generate', async (req, res) => {
     const mems = data || [];
     if (!mems.length) return res.status(400).json({ error: '还没有活跃的雪记忆，先聊聊天让默记住一些吧~' });
     const list = mems.map((m, i) => `${i + 1}. [${(m.domain && m.domain[0]) || ''}] ${String(m.content || '').slice(0, 120)}`).join('\n');
-    const system = `你是 Aevum Memory 的用户画像生成器。根据雪的长期记忆，按维度归纳成一份用户画像。
+    const system = `你是 Aevum Memory 的用户画像生成器。根据雪的长期记忆，按客观维度归纳成一份用户画像。
 规则：
 - 只归纳有充分依据的信息，不编造
-- 维度：目前职业 / 偏好 / 习惯 / 爱情观 / 价值观 / 金钱观 / 世界观 / 重要关系 / 自我定位
+- 维度：目前职业 / 家庭 / 工作 / 重要关系（只填客观信息；喜好、三观、性格等主观内容不要写进画像）
 - 检测不到依据的维度直接跳过（不要硬编）；每项 20-60 字，简洁自然
-- 输出格式：只输出 [AEVUM_PROFILE]{"dimensions":{"目前职业":"...","偏好":"...","爱情观":"..."}}`;
+- 输出格式：只输出 [AEVUM_PROFILE]{"dimensions":{"目前职业":"...","家庭":"...","工作":"...","重要关系":"..."}}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -3940,32 +3971,7 @@ app.post('/api/aevum/:id/review', async (req, res) => {
   }
 });
 
-// 晋升：event→fact→meaning→relationship→personality→self_candidate（封顶，Self 相关仍走人工审核）
-app.post('/api/aevum/:id/promote', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('aevum_memories')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-    if (error || !data) return res.status(404).json({ error: '未找到' });
-    const idx = AEVUM_PROMOTE_CHAIN.indexOf(data.type);
-    const nextType = idx >= 0 ? AEVUM_PROMOTE_CHAIN[idx + 1] : null;
-    if (!nextType) return res.status(400).json({ error: '该层级已到顶，无法再晋升' });
-    const { data: updated, error: updErr } = await supabase
-      .from('aevum_memories')
-      .update({ type: nextType, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id)
-      .select()
-      .single();
-    if (updErr) return res.status(500).json({ error: updErr.message });
-    res.json({ ok: true, memory: updated });
-  } catch (e) {
-    res.status(500).json({ error: '晋升失败' });
-  }
-});
-
-// 六层级内容分析：AI 一次评定六个层级并写出各自内容，到不了的层级留空
+// 分析衍生：AI 按当前记忆的衍生图目标类型生成变体（替代旧的单条晋升链）
 app.post('/api/aevum/:id/analyze-layers', async (req, res) => {
   try {
     const { data: mem, error } = await supabase
@@ -3974,16 +3980,18 @@ app.post('/api/aevum/:id/analyze-layers', async (req, res) => {
       .eq('id', req.params.id)
       .single();
     if (error || !mem) return res.status(404).json({ error: '未找到' });
+    const targets = AEVUM_DERIVE_GRAPH[mem.type] || [];
+    if (!targets.length) return res.status(400).json({ error: '该类型没有可衍生的目标' });
     if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
 
-    const system = `你是 Aevum Memory 的层级分析器。把一条记忆按六个认知层级分别改写为各自的内容。
+    const targetDesc = targets.map(t => `${AEVUM_TYPE_CN[t] || t}（${AEVUM_TYPE_DESC[t] || ''}）`).join('；');
+    const system = `你是 Aevum Memory 的记忆衍生分析器。把一条记忆按可衍生的目标类型分别改写内容。
 规则：
-- 严格忠实于原始记忆与证据，只调整抽象层级，不编造、不脑补新信息
-- 每一层能写才写：信息不足以支撑的高层输出空字符串 ""（例如只凭一句话难以可靠推断 relationship/personality）
-- 低层内容通常都能写；event 必须非空
-- meaning 层极其严格：只描述雪对某件事的个人价值/情感/人生意义；系统价值、AI 价值、技术改动不属于 meaning，应留空
-- 涉及 系统/代码/部署/bug/修复/prompt/数据库/API/模型/架构/功能/测试/版本/更新 等技术内容时，最多写到 fact（客观技术事实），不要生成 meaning/relationship/personality
-- 输出格式：只输出 [AEVUM_LAYERS]{"event":"...","fact":"...","meaning":"...","relationship":"...","personality":"...","self_candidate":"..."}`;
+- 严格忠实于原始记忆与证据，只调整类型视角，不编造、不脑补新信息
+- 可衍生目标：${targetDesc}
+- 每个目标能写才写：无法可靠支撑的目标输出空字符串 ""
+- meaning 若涉及主体，写清是雪还是默；personality 只描述默的倾向；user_tendency 只描述雪的喜好/三观/性格
+- 输出格式：只输出 [AEVUM_LAYERS]{"${targets.join('":"...","')}":"..."}`;
 
     const evidenceText = (Array.isArray(mem.evidence) ? mem.evidence : []).slice(0, 2).join('\n');
     const userContent = `原始记忆（当前层级：${AEVUM_TYPE_CN[mem.type] || mem.type}）：\n${mem.content}`
@@ -4022,11 +4030,11 @@ app.post('/api/aevum/:id/analyze-layers', async (req, res) => {
       return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
     }
     const layers = {};
-    for (const t of AEVUM_PROMOTE_CHAIN) {
+    for (const t of targets) {
       const v = String(parsed?.[t] || '').trim();
       if (v) layers[t] = v;
     }
-    if (!layers.event) layers.event = String(mem.content || '').trim(); // 事件层保底
+    if (!Object.keys(layers).length) return res.status(502).json({ error: 'AI 没有生成有效内容，请重试' });
     const { data: updated, error: updErr } = await supabase
       .from('aevum_memories')
       .update({ layer_content: layers, updated_at: new Date().toISOString() })
@@ -4043,7 +4051,7 @@ app.post('/api/aevum/:id/analyze-layers', async (req, res) => {
 // 切换层级：把记忆切到 layer_content 中已有内容的层级（type 与 content 同步更新）
 app.post('/api/aevum/:id/switch-layer', async (req, res) => {
   const layer = String(req.body?.layer || '');
-  if (!AEVUM_PROMOTE_CHAIN.includes(layer)) return res.status(400).json({ error: '层级无效' });
+  if (!AEVUM_TYPES.includes(layer)) return res.status(400).json({ error: '类型无效' });
   try {
     const { data: mem, error } = await supabase
       .from('aevum_memories')
@@ -4239,7 +4247,7 @@ app.post('/api/aevum/merge', async (req, res) => {
     const { data: members, error } = await supabase.from('aevum_memories').select('*').in('id', idList);
     if (error || !members || members.length < 2) return res.status(400).json({ error: '找不到要合并的记忆' });
     let topType = members[0].type;
-    for (const t of AEVUM_PROMOTE_CHAIN) {
+    for (const t of AEVUM_TYPE_ORDER) {
       if (members.some(m => m.type === t)) topType = t;
     }
     const ownerCount = {};
@@ -4810,7 +4818,7 @@ app.post('/api/edit-message', async (req, res) => {
       }
 
       // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成
-      flushBufferedContent(preludeText, sendSSE);
+      await flushBufferedContent(preludeText, sendSSE);
       sendSSE({ done: true });
 
       console.log('🔍 编辑-默请求联网搜索:', searchReq.query);
@@ -4838,7 +4846,7 @@ app.post('/api/edit-message', async (req, res) => {
       console.log('🔍 编辑-联网搜索完成，最终回复长度:', fullReply.length);
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
-      flushBufferedContent(first.contentBuffer, sendSSE);
+      await flushBufferedContent(first.contentBuffer, sendSSE);
     }
 
     // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
