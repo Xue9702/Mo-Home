@@ -2263,6 +2263,42 @@
       }
       window.toySendPreset = toySendPreset;
 
+      // 顺序发送：一行一条指令，按间隔依次写入（用于测试需要整段序列的设备）
+      async function toySendSequence() {
+        if (!toyCharWrites.length) { alert('还没有写入口，先连接玩具'); return; }
+        const sel = document.getElementById('toyWriteSel');
+        const idx = sel ? parseInt(sel.value, 10) : 0;
+        const entry = toyCharWrites[idx];
+        if (!entry) return;
+        const ta = document.getElementById('toySeq');
+        const delay = parseInt((document.getElementById('toySeqDelay') || {}).value, 10) || 80;
+        const lines = (ta ? ta.value : '').split('\n').map(s => s.trim()).filter(Boolean);
+        if (!lines.length) { alert('先填指令序列，一行一条'); return; }
+        for (const line of lines) {
+          const bytes = toyParseHex(line);
+          if (!bytes) { alert('指令格式不对：' + line); return; }
+          try {
+            await entry.characteristic.writeValue(new Uint8Array(bytes));
+            toyLog(`发送 → ${entry.short}: ${bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+          } catch (e) {
+            toyLog('发送失败：' + (e && e.message ? e.message : e));
+            return;
+          }
+          if (delay > 0) await new Promise(r => setTimeout(r, delay));
+        }
+      }
+      window.toySendSequence = toySendSequence;
+
+      // 停止：按日志里的停止广播序列发一轮（03 00 / 08 00 / 09 00）
+      async function toySendStop() {
+        const ta = document.getElementById('toySeq');
+        if (ta) ta.value = '55 fe 03 00 00 00 00\n55 fe 08 00 00 00 00\n55 fe 09 00 00 00 00';
+        const delayInp = document.getElementById('toySeqDelay');
+        if (delayInp) delayInp.value = '80';
+        await toySendSequence();
+      }
+      window.toySendStop = toySendStop;
+
       async function renderToyLab() {
         const box = document.getElementById('toyContent');
         if (!box) return;
@@ -2271,13 +2307,7 @@
         const deviceName = toyDevice ? (toyDevice.name || '未知设备') : '';
         const writes = toyCharWrites;
         const options = writes.map((w, i) => `<option value="${i}">${w.short}（${w.uuid.includes('ffe') ? '串口' : '数据'}）</option>`).join('');
-        const presets = [
-          ['弱震', '55 01 00 00 01 01 00'],
-          ['中震', '55 01 00 00 01 02 00'],
-          ['强震', '55 01 00 00 01 03 00'],
-          ['脉冲', '55 02 00 00 02 02 00'],
-          ['全零(停)', '00 00 00 00 00 00 00 00 00 00 00 00 00 00']
-        ];
+        const modeHex = (n) => n.toString(16).padStart(2, '0');
         box.innerHTML = `
           <div class="feature-card" style="align-items:stretch;gap:10px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -2303,13 +2333,32 @@
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
                 <input id="toyHex" placeholder="十六进制指令，如 55 01 00 00 01 01 00" value="55 01 00 00 01 01 00" style="flex:1;min-width:180px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;outline:none;">
                 <button onclick="toySend()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">发送</button>
-                <button onclick="toySendPreset('55 00 00 00 00 00 00')" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#888;padding:9px 14px;font-size:12px;cursor:pointer;">停止</button>
+                <button onclick="toySendStop()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:9px 14px;font-size:12px;cursor:pointer;">⏹ 停止</button>
               </div>
-              <div style="font-size:12px;color:#8a83a8;">预设（教程通用格式猜测，需要实测，从弱震开始）：</div>
+              <div style="font-size:12px;color:#8a83a8;">解码预设（基于你的日志：伸缩=03，吸吮=09；先试单条，不动再试完整序列）：</div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                ${presets.map(([l, h]) => `<button onclick="toySendPreset('${h}')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 12px;font-size:12px;cursor:pointer;">${l}</button>`).join('')}
+                <span style="font-size:12px;color:#555;font-weight:600;">吸吮</span>
+                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 fe 09 ${modeHex(n)} 00 00 00 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <span style="font-size:12px;color:#555;font-weight:600;">伸缩</span>
+                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 fe 03 ${modeHex(n)} 00 00 00 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
               </div>
             ` : '<div style="font-size:13px;color:#b0a6c4;">还没找到写入口，先点「连接玩具」。</div>'}
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="font-size:14px;font-weight:600;color:#333;">指令序列（一行一条，按顺序发送）</div>
+            <div style="font-size:11px;color:#8a83a8;">如果单条指令没反应，试试把玩具广播的整段序列照发一遍（改掉模式字节）。</div>
+            <textarea id="toySeq" style="width:100%;min-height:90px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:12px;font-family:inherit;outline:none;box-sizing:border-box;">55 fe 03 01 00 00 00
+55 fe 08 01 00 00 00
+55 fe 09 00 00 00 00
+55 fe a0 01 00 00 00</textarea>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <span style="font-size:12px;color:#666;">间隔</span>
+              <input id="toySeqDelay" type="number" value="80" min="10" max="2000" style="width:70px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:12px;outline:none;">
+              <span style="font-size:12px;color:#666;">ms</span>
+              <button onclick="toySendSequence()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">顺序发送</button>
+            </div>
           </div>
           <div class="feature-card" style="align-items:stretch;gap:6px;text-align:left;">
             <div style="font-size:14px;font-weight:600;color:#333;">事件日志</div>
