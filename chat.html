@@ -2100,7 +2100,20 @@
         '0000ffe1-0000-1000-8000-00805f9b34fb',
         '0000ffe2-0000-1000-8000-00805f9b34fb',
         '0000ffe5-0000-1000-8000-00805f9b34fb',
+        '0000ffe9-0000-1000-8000-00805f9b34fb',
+        '0000fff0-0000-1000-8000-00805f9b34fb',
+        '0000fff1-0000-1000-8000-00805f9b34fb',
+        '0000fff2-0000-1000-8000-00805f9b34fb',
+        '0000fff3-0000-1000-8000-00805f9b34fb',
+        '0000ff00-0000-1000-8000-00805f9b34fb',
+        '0000ff01-0000-1000-8000-00805f9b34fb',
+        '0000ff02-0000-1000-8000-00805f9b34fb',
+        '0000ff05-0000-1000-8000-00805f9b34fb',
+        '0000ff10-0000-1000-8000-00805f9b34fb',
         '00001001-0000-1000-8000-00805f9b34fb',
+        '00001002-0000-1000-8000-00805f9b34fb',
+        '00001003-0000-1000-8000-00805f9b34fb',
+        '0000fe95-0000-1000-8000-00805f9b34fb',
         '00001800-0000-1000-8000-00805f9b34fb',
         '0000180a-0000-1000-8000-00805f9b34fb'
       ];
@@ -2292,7 +2305,7 @@
       // 停止：按日志里的停止广播序列发一轮（03 00 / 08 00 / 09 00）
       async function toySendStop() {
         const ta = document.getElementById('toySeq');
-        if (ta) ta.value = '55 fe 03 00 00 00 00\n55 fe 08 00 00 00 00\n55 fe 09 00 00 00 00';
+        if (ta) ta.value = '55 03 00 00 00 00\n55 08 00 00 00 00\n55 09 00 00 00 00';
         const delayInp = document.getElementById('toySeqDelay');
         if (delayInp) delayInp.value = '80';
         await toySendSequence();
@@ -2335,24 +2348,27 @@
                 <button onclick="toySend()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">发送</button>
                 <button onclick="toySendStop()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:9px 14px;font-size:12px;cursor:pointer;">⏹ 停止</button>
               </div>
-              <div style="font-size:12px;color:#8a83a8;">解码预设（基于你的日志：伸缩=03，吸吮=09；先试单条，不动再试完整序列）：</div>
+              <div style="font-size:12px;color:#8a83a8;">解码预设（官方命令格式：55 模式 00 00 数值 标志，不带 fe；吸吮=09，伸缩=03，震动=08）：</div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <span style="font-size:12px;color:#555;font-weight:600;">吸吮</span>
-                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 fe 09 ${modeHex(n)} 00 00 00 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
+                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 09 00 00 ${modeHex(n)} 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <span style="font-size:12px;color:#555;font-weight:600;">伸缩</span>
-                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 fe 03 ${modeHex(n)} 00 00 00 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
+                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 03 00 00 ${modeHex(n)} 01')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <span style="font-size:12px;color:#555;font-weight:600;">震动</span>
+                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 08 00 00 ${modeHex(n)} 01')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
               </div>
             ` : '<div style="font-size:13px;color:#b0a6c4;">还没找到写入口，先点「连接玩具」。</div>'}
           </div>
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="font-size:14px;font-weight:600;color:#333;">指令序列（一行一条，按顺序发送）</div>
             <div style="font-size:11px;color:#8a83a8;">如果单条指令没反应，试试把玩具广播的整段序列照发一遍（改掉模式字节）。</div>
-            <textarea id="toySeq" style="width:100%;min-height:90px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:12px;font-family:inherit;outline:none;box-sizing:border-box;">55 fe 03 01 00 00 00
-55 fe 08 01 00 00 00
-55 fe 09 00 00 00 00
-55 fe a0 01 00 00 00</textarea>
+            <textarea id="toySeq" style="width:100%;min-height:90px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:12px;font-family:inherit;outline:none;box-sizing:border-box;">55 03 00 00 01 01
+55 08 00 00 01 01
+55 09 00 00 01 00</textarea>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <span style="font-size:12px;color:#666;">间隔</span>
               <input id="toySeqDelay" type="number" value="80" min="10" max="2000" style="width:70px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:12px;outline:none;">
