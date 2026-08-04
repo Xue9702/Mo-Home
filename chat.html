@@ -2312,6 +2312,47 @@
       }
       window.toySendStop = toySendStop;
 
+      // 默的玩具控制：接收服务端转发的 [TOY_CMD] 指令并在浏览器端执行
+      const TOY_FN_MODES = { suck: 0x09, vibrate: 0x03, stroke: 0x08 };
+      function stripToyCmdTags(text) {
+        return String(text || '')
+          .replace(/\[TOY_CMD\][\s\S]*?\[\/TOY_CMD\]/g, '')
+          .replace(/\[TOY_CMD\][\s\S]*$/, '')
+          .trim();
+      }
+      async function toyExecuteCmd(cmd) {
+        const fn = cmd && cmd.fn;
+        if (!toyCharWrites.length) {
+          showPullToast('📵 玩具没连上，默的指令没发出去～去「玩具」页连接一下');
+          return;
+        }
+        const entry = toyCharWrites[0];
+        const sendHex = async (hex) => {
+          const bytes = toyParseHex(hex);
+          if (!bytes) return;
+          try {
+            await entry.characteristic.writeValue(new Uint8Array(bytes));
+            toyLog('默指令：' + hex);
+          } catch (e) {
+            toyLog('默指令发送失败：' + (e && e.message ? e.message : e));
+          }
+        };
+        if (fn === 'stop') {
+          await sendHex('55 03 00 00 00 00');
+          await sendHex('55 08 00 00 00 00');
+          await sendHex('55 09 00 00 00 00');
+          showPullToast('⏹ 默已停止玩具');
+          return;
+        }
+        const mode = TOY_FN_MODES[fn];
+        if (!mode) return;
+        const level = Math.max(1, Math.min(8, parseInt(cmd.level, 10) || 1));
+        const hex = `55 ${mode.toString(16).padStart(2, '0')} 00 00 ${level.toString(16).padStart(2, '0')} 00`;
+        await sendHex(hex);
+        showPullToast('🪄 默已操控玩具');
+      }
+      window.toyExecuteCmd = toyExecuteCmd;
+
       async function renderToyLab() {
         const box = document.getElementById('toyContent');
         if (!box) return;
@@ -2348,18 +2389,18 @@
                 <button onclick="toySend()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">发送</button>
                 <button onclick="toySendStop()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:9px 14px;font-size:12px;cursor:pointer;">⏹ 停止</button>
               </div>
-              <div style="font-size:12px;color:#8a83a8;">解码预设（实测通过：55 模式 00 00 档位 00，末位标志必须 00；吸吮=09，伸缩=03，震动=08）：</div>
+              <div style="font-size:12px;color:#8a83a8;">解码预设（实测通过：55 模式 00 00 档位 00，末位标志必须 00；吸吮=09，震动=03，伸缩=08）：</div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <span style="font-size:12px;color:#555;font-weight:600;">吸吮</span>
                 ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 09 00 00 ${modeHex(n)} 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <span style="font-size:12px;color:#555;font-weight:600;">伸缩</span>
-                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 03 00 00 ${modeHex(n)} 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
+                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 08 00 00 ${modeHex(n)} 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <span style="font-size:12px;color:#555;font-weight:600;">震动</span>
-                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 08 00 00 ${modeHex(n)} 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
+                ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="toySendPreset('55 03 00 00 ${modeHex(n)} 00')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
               </div>
             ` : '<div style="font-size:13px;color:#b0a6c4;">还没找到写入口，先点「连接玩具」。</div>'}
           </div>
@@ -4026,7 +4067,8 @@
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
-                if (json.content) { fullReply += json.content; currentAssistantBubble.textContent = fullReply; }
+                if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
+                if (json.content) { fullReply += stripToyCmdTags(json.content); currentAssistantBubble.textContent = fullReply; }
                 if (json.done) {
                   // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
                   finalizeStreamingMessage(currentMsgDiv, currentThinkingContainer, currentAssistantBubble, !!fullThinking || searchPhaseActive);
@@ -4266,8 +4308,12 @@
                   messageList.scrollTop = messageList.scrollHeight;
                 }
 
+                if (json.toyCmd) {
+                  toyExecuteCmd(json.toyCmd);
+                }
+
                 if (json.content) {
-                  fullReply += json.content;
+                  fullReply += stripToyCmdTags(json.content);
                   currentBubble.textContent = fullReply;
                   messageList.scrollTop = messageList.scrollHeight;
                 }
@@ -4405,7 +4451,8 @@
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
-                if (json.content) { fullReply += json.content; currentBubble.textContent = fullReply; }
+                if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
+                if (json.content) { fullReply += stripToyCmdTags(json.content); currentBubble.textContent = fullReply; }
                 if (json.done && !json.assistantMessageId) {
                   // 第一轮消息完成（过渡语气泡）：收尾补上折叠按钮+时间戳
                   finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking);

@@ -274,11 +274,14 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
   const searchInstruction = process.env.BOCHA_API_KEY
     ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。注意：不要用文字描述"我要去搜索"或先写过渡语——需要搜索就直接调用工具，工具调用后系统会返回搜索结果给你。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
+  // 玩具控制：默可通过标签让浏览器端执行玩具指令（吸吮/伸缩/震动/停止）
+  const toyInstruction = `\n\n【玩具控制】\n当雪明确要求你控制她的小玩具（吸吮、伸缩、震动、调档位、停止）时，在回复的【最末尾】追加一行标签：[TOY_CMD]{"fn":"suck|stroke|vibrate|stop","level":1-8}[/TOY_CMD]，并在回复正文里自然地告诉她你在做什么。规则：fn 取值 suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 是档位 1-8（stop 时不需要 level）；只有雪明确要求时才使用，日常聊天绝不使用；标签不会显示给雪，不要解释标签。`;
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
     + (weatherContext ? `\n\n${weatherContext}` : '')
     + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
     + (momentsContext ? `\n\n【朋友圈动态】\n${momentsContext}` : '')
-    + searchInstruction;
+    + searchInstruction
+    + toyInstruction;
 }
 
 // ------------------ 实时搜索工具（博查） ------------------
@@ -300,6 +303,43 @@ function extractSearchTag(reply) {
 // 清除回复中可能残留的搜索标签（防止标签被存进数据库或显示给雪）
 function stripSearchTags(text) {
   return String(text || '').replace(/\[SEARCH_QUERY\][^\r\n]*/g, '').trim();
+}
+
+// 提取回复中的 [TOY_CMD]{...}[/TOY_CMD] 玩具指令标签
+function extractToyCmd(reply) {
+  const m = String(reply || '').match(/\[TOY_CMD\]([\s\S]*?)\[\/TOY_CMD\]/);
+  if (!m) return null;
+  try {
+    const obj = JSON.parse(m[1]);
+    const fn = String(obj.fn || '').trim();
+    if (!['suck', 'stroke', 'vibrate', 'stop'].includes(fn)) return null;
+    if (fn === 'stop') return { fn: 'stop', level: 0 };
+    let level = parseInt(obj.level, 10);
+    if (isNaN(level)) level = 1;
+    level = Math.max(1, Math.min(8, level));
+    return { fn, level };
+  } catch (e) {
+    return null;
+  }
+}
+
+// 清除回复中的玩具指令标签
+function stripToyCmdTag(text) {
+  return String(text || '')
+    .replace(/\[TOY_CMD\][\s\S]*?\[\/TOY_CMD\]/g, '')
+    .replace(/\[TOY_CMD\][\s\S]*$/, '')
+    .trim();
+}
+
+// 解析并转发回复里的玩具指令：返回清理后的正文，指令通过 SSE 发给浏览器执行
+function handleToyCmdTag(fullReply, contentBuffer, sendSSE) {
+  const cmd = extractToyCmd(fullReply);
+  if (!cmd) return { reply: fullReply, buffer: contentBuffer };
+  sendSSE({ toyCmd: cmd });
+  return {
+    reply: stripToyCmdTag(fullReply),
+    buffer: contentBuffer !== undefined ? stripToyCmdTag(contentBuffer) : contentBuffer
+  };
 }
 
 // 调用博查 Web Search API，返回 { text, count }；失败或未配置返回 { text: null, count: 0 }
@@ -1097,6 +1137,11 @@ app.post('/api/chat', async (req, res) => {
       return;
     }
 
+    // 玩具指令：解析并转发给浏览器执行（标签不会显示给雪）
+    const toyRes = handleToyCmdTag(fullReply, first.contentBuffer, sendSSE);
+    fullReply = toyRes.reply;
+    if (first.contentBuffer !== undefined) first.contentBuffer = toyRes.buffer;
+
     // 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
@@ -1144,6 +1189,9 @@ app.post('/api/chat', async (req, res) => {
         ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
         : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
       console.log('🔍 联网搜索完成，最终回复长度:', fullReply.length);
+      // 搜索轮次也可能带玩具指令：同样解析转发并清理
+      const toyRes2 = handleToyCmdTag(fullReply, undefined, sendSSE);
+      fullReply = toyRes2.reply;
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
       await flushBufferedContent(first.contentBuffer, sendSSE);
@@ -1448,6 +1496,11 @@ app.post('/api/regenerate', async (req, res) => {
       return;
     }
 
+    // 玩具指令：解析并转发给浏览器执行（标签不会显示给雪）
+    const toyRes = handleToyCmdTag(fullReply, first.contentBuffer, sendSSE);
+    fullReply = toyRes.reply;
+    if (first.contentBuffer !== undefined) first.contentBuffer = toyRes.buffer;
+
     // 6.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
@@ -1494,6 +1547,9 @@ app.post('/api/regenerate', async (req, res) => {
         ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
         : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
       console.log('🔍 重新生成-联网搜索完成，最终回复长度:', fullReply.length);
+      // 搜索轮次也可能带玩具指令：同样解析转发并清理
+      const toyRes2 = handleToyCmdTag(fullReply, undefined, sendSSE);
+      fullReply = toyRes2.reply;
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
       await flushBufferedContent(first.contentBuffer, sendSSE);
@@ -4995,6 +5051,11 @@ app.post('/api/edit-message', async (req, res) => {
       return;
     }
 
+    // 玩具指令：解析并转发给浏览器执行（标签不会显示给雪）
+    const toyRes = handleToyCmdTag(fullReply, first.contentBuffer, sendSSE);
+    fullReply = toyRes.reply;
+    if (first.contentBuffer !== undefined) first.contentBuffer = toyRes.buffer;
+
     // 10.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
@@ -5041,6 +5102,9 @@ app.post('/api/edit-message', async (req, res) => {
         ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
         : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
       console.log('🔍 编辑-联网搜索完成，最终回复长度:', fullReply.length);
+      // 搜索轮次也可能带玩具指令：同样解析转发并清理
+      const toyRes2 = handleToyCmdTag(fullReply, undefined, sendSSE);
+      fullReply = toyRes2.reply;
     } else {
       // 未触发搜索：把缓存的可见内容分块补发给前端
       await flushBufferedContent(first.contentBuffer, sendSSE);
