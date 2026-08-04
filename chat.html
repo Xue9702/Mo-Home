@@ -1134,6 +1134,11 @@
         <div class="home-content" id="xueHomeContent"></div>
       </div>
 
+      <!-- 玩具实验室（Web Bluetooth 直连） -->
+      <div class="page" id="toyPage">
+        <div class="home-content" id="toyContent"></div>
+      </div>
+
       <!-- 设置页面 -->
       <div id="settingsPage" class="page">
         <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
@@ -1216,6 +1221,9 @@
       <button class="tab-btn" data-page="memoryPage" aria-label="记忆">
         <span class="tab-icon" id="memoryIcon"></span>
       </button>
+      <button class="tab-btn" data-page="toyPage" aria-label="玩具">
+        <span class="tab-icon" id="toyIcon"></span>
+      </button>
       <button class="tab-btn" data-page="xueHomePage" aria-label="我的小屋">
         <span class="tab-icon" id="xueHomeIcon"></span>
       </button>
@@ -1257,6 +1265,7 @@
       const moHomePage = document.getElementById('moHomePage');
       const togetherPage = document.getElementById('togetherPage');
       const memoryPage = document.getElementById('memoryPage');
+      const toyPage = document.getElementById('toyPage');
       const xueHomePage = document.getElementById('xueHomePage');
       const settingsPage = document.getElementById('settingsPage');
       const tabBar = document.getElementById('tabBar');
@@ -1280,6 +1289,7 @@
       const togetherIcon = document.getElementById('togetherIcon');
       const chatIcon = document.getElementById('chatIcon');
       const memoryIcon = document.getElementById('memoryIcon');
+      const toyIcon = document.getElementById('toyIcon');
       const xueHomeIcon = document.getElementById('xueHomeIcon');
       const headerSettingsBtn = document.getElementById('headerSettingsBtn');
 
@@ -1289,6 +1299,7 @@
         togetherPage: { title: 'together', el: togetherPage },
         chatPage: { title: '默', el: chatPage },
         memoryPage: { title: '记忆', el: memoryPage },
+        toyPage: { title: '玩具', el: toyPage },
         xueHomePage: { title: '我的小屋', el: xueHomePage },
         settingsPage: { title: '设置', el: settingsPage }
       };
@@ -1341,6 +1352,9 @@
         if (pageName === 'memoryPage') {
           setTimeout(() => renderAevum(), 50);
         }
+        if (pageName === 'toyPage') {
+          setTimeout(() => renderToyLab(), 50);
+        }
       }
 
       function renderTabIcons(activePage) {
@@ -1355,6 +1369,8 @@
         chatIcon.appendChild(createChatIcon(activePage === 'chatPage'));
         memoryIcon.innerHTML = '';
         memoryIcon.appendChild(createSparkleIcon(activePage === 'memoryPage'));
+        toyIcon.innerHTML = '';
+        toyIcon.appendChild(createGamepadIcon(activePage === 'toyPage'));
         xueHomeIcon.innerHTML = '';
         xueHomeIcon.appendChild(createHeartBigIcon(activePage === 'xueHomePage'));
       }
@@ -2071,6 +2087,243 @@
         ['archived', '已归档']
       ];
       let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false };
+
+      // ================== 玩具实验室（Web Bluetooth 直连） ==================
+      let toyDevice = null;
+      let toyServer = null;
+      let toyCharWrites = [];
+      let toyNotifyChars = [];
+      window.__toyLogs = [];
+
+      const TOY_SERVICE_UUIDS = [
+        '0000ffe0-0000-1000-8000-00805f9b34fb',
+        '0000ffe1-0000-1000-8000-00805f9b34fb',
+        '0000ffe2-0000-1000-8000-00805f9b34fb',
+        '0000ffe5-0000-1000-8000-00805f9b34fb',
+        '00001001-0000-1000-8000-00805f9b34fb',
+        '00001800-0000-1000-8000-00805f9b34fb',
+        '0000180a-0000-1000-8000-00805f9b34fb'
+      ];
+
+      function createGamepadIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '24');
+        svg.setAttribute('height', '24');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        const l1 = document.createElementNS(svgNS, 'line'); l1.setAttribute('x1', '6'); l1.setAttribute('x2', '10'); l1.setAttribute('y1', '11'); l1.setAttribute('y2', '11'); svg.appendChild(l1);
+        const l2 = document.createElementNS(svgNS, 'line'); l2.setAttribute('x1', '8'); l2.setAttribute('x2', '8'); l2.setAttribute('y1', '9'); l2.setAttribute('y2', '13'); svg.appendChild(l2);
+        const l3 = document.createElementNS(svgNS, 'line'); l3.setAttribute('x1', '15'); l3.setAttribute('x2', '15.01'); l3.setAttribute('y1', '12'); l3.setAttribute('y2', '12'); svg.appendChild(l3);
+        const l4 = document.createElementNS(svgNS, 'line'); l4.setAttribute('x1', '18'); l4.setAttribute('x2', '18.01'); l4.setAttribute('y1', '10'); l4.setAttribute('y2', '10'); svg.appendChild(l4);
+        const p = document.createElementNS(svgNS, 'path');
+        p.setAttribute('d', 'M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z');
+        svg.appendChild(p);
+        return svg;
+      }
+
+      function toyLog(msg) {
+        const t = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        const html = `<div style="font-size:12px;color:#666;margin:3px 0;">[${t}] ${escapeHtml2(msg)}</div>`;
+        window.__toyLogs.push(html);
+        if (window.__toyLogs.length > 60) window.__toyLogs.shift();
+        const box = document.getElementById('toyLog');
+        if (box) box.innerHTML = window.__toyLogs.join('');
+      }
+
+      function toyShortUuid(uuid) {
+        const s = String(uuid || '').toLowerCase();
+        const m = s.match(/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/);
+        return m ? m[1] : s.replace(/^0000(.*)$/, '$1').slice(0, 8);
+      }
+
+      async function doToyConnect(extraServices) {
+        if (!navigator.bluetooth) {
+          alert('当前浏览器不支持 Web Bluetooth，请用电脑上的 Chrome / Edge 打开，并确认电脑有蓝牙');
+          return;
+        }
+        try {
+          const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: [...TOY_SERVICE_UUIDS, ...(extraServices || [])]
+          });
+          toyDevice = device;
+          toyServer = null;
+          toyCharWrites = [];
+          toyNotifyChars = [];
+          device.addEventListener('gattserverdisconnected', () => {
+            toyServer = null;
+            toyCharWrites = [];
+            toyNotifyChars = [];
+            toyLog('连接已断开');
+            renderToyLab();
+          });
+          const server = await device.gatt.connect();
+          toyServer = server;
+          toyLog(`已连接：${device.name || '未知设备'}`);
+          let services = [];
+          try { services = await server.getPrimaryServices(); } catch (e) { toyLog('枚举服务失败：' + (e.message || e)); }
+          let found = 0;
+          for (const s of services) {
+            let chars = [];
+            try { chars = await s.getCharacteristics(); } catch (e) { continue; }
+            for (const ch of chars) {
+              const props = ch.properties;
+              const uuid = ch.uuid.toLowerCase();
+              const short = toyShortUuid(uuid);
+              if (props.write || props.writeWithoutResponse) {
+                toyCharWrites.push({ uuid, short, characteristic: ch });
+                toyLog(`找到写入口 ${short}（${props.writeWithoutResponse ? 'write-no-response' : 'write'}）`);
+                found++;
+              }
+              if (props.notify || props.indicate) {
+                toyNotifyChars.push({ uuid, short, characteristic: ch });
+                try {
+                  await ch.startNotifications();
+                  ch.addEventListener('characteristicvaluechanged', (e) => {
+                    const v = e.target.value;
+                    const hex = Array.from(new Uint8Array(v.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    toyLog(`收到通知 ${short}: ${hex}`);
+                  });
+                  toyLog(`订阅通知 ${short}`);
+                } catch (e) { /* 订阅失败忽略 */ }
+              }
+            }
+          }
+          if (!found) toyLog('没找到带 write 的特征：如果知道服务 UUID，可以在下方输入后「加入并重连」');
+          renderToyLab();
+        } catch (e) {
+          if (e && e.name === 'NotFoundError') toyLog('已取消选择设备');
+          else toyLog('连接失败：' + (e && e.message ? e.message : e));
+          renderToyLab();
+        }
+      }
+
+      async function toyConnect() { await doToyConnect([]); }
+      window.toyConnect = toyConnect;
+
+      async function toyConnectCustom() {
+        const inp = document.getElementById('toyCustomService');
+        const uuid = inp ? inp.value.trim() : '';
+        if (!uuid) { alert('先输入要加入的服务 UUID（形如 0000ffe1-0000-1000-8000-00805f9b34fb）'); return; }
+        await doToyConnect([uuid]);
+      }
+      window.toyConnectCustom = toyConnectCustom;
+
+      async function toyDisconnect() {
+        try {
+          if (toyDevice && toyDevice.gatt && toyDevice.gatt.connected) toyDevice.gatt.disconnect();
+        } catch (e) { /* 忽略 */ }
+        toyServer = null;
+        toyCharWrites = [];
+        toyNotifyChars = [];
+        toyLog('已断开');
+        renderToyLab();
+      }
+      window.toyDisconnect = toyDisconnect;
+
+      function toyParseHex(str) {
+        const parts = String(str || '').trim().split(/[\s,]+/).filter(Boolean);
+        if (!parts.length) return null;
+        const bytes = [];
+        for (const p of parts) {
+          const n = parseInt(p, 16);
+          if (isNaN(n) || n < 0 || n > 255) return null;
+          bytes.push(n);
+        }
+        return bytes;
+      }
+
+      async function toySend() {
+        if (!toyCharWrites.length) { alert('还没有写入口，先连接玩具'); return; }
+        const sel = document.getElementById('toyWriteSel');
+        const idx = sel ? parseInt(sel.value, 10) : 0;
+        const entry = toyCharWrites[idx];
+        if (!entry) return;
+        const hexInput = document.getElementById('toyHex');
+        const bytes = toyParseHex(hexInput ? hexInput.value : '');
+        if (!bytes) { alert('指令格式不对，请用十六进制，如 55 01 00 00 01 01 00'); return; }
+        try {
+          await entry.characteristic.writeValue(new Uint8Array(bytes));
+          toyLog(`发送 → ${entry.short}: ${bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+        } catch (e) {
+          toyLog('发送失败：' + (e && e.message ? e.message : e));
+        }
+      }
+      window.toySend = toySend;
+
+      async function toySendPreset(hex) {
+        const input = document.getElementById('toyHex');
+        if (input) input.value = hex;
+        await toySend();
+      }
+      window.toySendPreset = toySendPreset;
+
+      async function renderToyLab() {
+        const box = document.getElementById('toyContent');
+        if (!box) return;
+        const supported = !!(navigator.bluetooth);
+        const st = toyServer ? '已连接' : '未连接';
+        const deviceName = toyDevice ? (toyDevice.name || '未知设备') : '';
+        const writes = toyCharWrites;
+        const options = writes.map((w, i) => `<option value="${i}">${w.short}（${w.uuid.includes('ffe') ? '串口' : '数据'}）</option>`).join('');
+        const presets = [
+          ['弱震', '55 01 00 00 01 01 00'],
+          ['中震', '55 01 00 00 01 02 00'],
+          ['强震', '55 01 00 00 01 03 00'],
+          ['脉冲', '55 02 00 00 02 02 00'],
+          ['全零(停)', '00 00 00 00 00 00 00 00 00 00 00 00 00 00']
+        ];
+        box.innerHTML = `
+          <div class="feature-card" style="align-items:stretch;gap:10px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:15px;font-weight:600;color:#333;">玩具实验室</span>
+              <span style="font-size:11px;color:#8a83a8;">Web Bluetooth 直连 · 数据只在你的浏览器里</span>
+            </div>
+            ${supported ? '' : '<div style="font-size:12px;color:#e74c3c;">当前浏览器不支持 Web Bluetooth。请用电脑上的 Chrome / Edge 打开，并确认电脑有蓝牙。</div>'}
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <button onclick="toyConnect()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">${st === '已连接' ? '已连接 · 重新连接' : '🔗 连接玩具'}</button>
+              ${st === '已连接' ? `<button onclick="toyDisconnect()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:9px 18px;font-size:13px;cursor:pointer;">断开</button>` : ''}
+              <span style="font-size:12px;color:#8a83a8;">${st}${deviceName ? ' · ' + escapeHtml2(deviceName) : ''}</span>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+              <input id="toyCustomService" placeholder="自定义服务 UUID（可选）" style="flex:1;min-width:200px;border:1px solid #eee;border-radius:10px;padding:7px 10px;font-size:12px;outline:none;">
+              <button onclick="toyConnectCustom()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 12px;font-size:12px;cursor:pointer;">加入并重连</button>
+            </div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">步骤：① 先关掉司沃康 App、断开手机蓝牙；② 点「连接玩具」，在弹窗里选 ST420A；③ 下方选写入口发指令试反应。连上蓝牙后物理按键会失灵，属正常现象。</div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="font-size:14px;font-weight:600;color:#333;">写入口（${writes.length}）</div>
+            ${writes.length ? `
+              <select id="toyWriteSel" style="border:1px solid #eee;border-radius:10px;padding:7px;font-size:13px;">${options}</select>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <input id="toyHex" placeholder="十六进制指令，如 55 01 00 00 01 01 00" value="55 01 00 00 01 01 00" style="flex:1;min-width:180px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;outline:none;">
+                <button onclick="toySend()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">发送</button>
+                <button onclick="toySendPreset('55 00 00 00 00 00 00')" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#888;padding:9px 14px;font-size:12px;cursor:pointer;">停止</button>
+              </div>
+              <div style="font-size:12px;color:#8a83a8;">预设（教程通用格式猜测，需要实测，从弱震开始）：</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                ${presets.map(([l, h]) => `<button onclick="toySendPreset('${h}')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 12px;font-size:12px;cursor:pointer;">${l}</button>`).join('')}
+              </div>
+            ` : '<div style="font-size:13px;color:#b0a6c4;">还没找到写入口，先点「连接玩具」。</div>'}
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:6px;text-align:left;">
+            <div style="font-size:14px;font-weight:600;color:#333;">事件日志</div>
+            <div id="toyLog" style="max-height:220px;overflow:auto;background:#faf7fc;border:1px solid #f0e9f5;border-radius:10px;padding:8px;font-size:12px;"></div>
+            <div style="font-size:11px;color:#b0a6c4;">如果日志里收到的内容和发出去一模一样，那多半是"回声通道"，真正的写入口可能是另一个——试着换一个写入口。</div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:6px;text-align:left;">
+            <div style="font-size:13px;font-weight:600;color:#e1789a;">安全提醒</div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">· 玩具请放在手边，随时可以断电 / 拔电池急停<br>· 从最低强度开始试，别一上来就强震<br>· 这是你自己的设备，数据只在浏览器里，不会上传</div>
+          </div>`;
+        const logBox = document.getElementById('toyLog');
+        if (logBox && window.__toyLogs.length) logBox.innerHTML = window.__toyLogs.join('');
+      }
+      window.renderToyLab = renderToyLab;
 
       async function renderAevum() {
         const box = document.getElementById('aevumContent');
