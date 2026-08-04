@@ -386,64 +386,76 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data: ')) continue;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
 
-      const payload = trimmed.slice(6);
-      if (payload === '[DONE]') continue;
+        const payload = trimmed.slice(6);
+        if (payload === '[DONE]') continue;
 
-      try {
-        const json = JSON.parse(payload);
-        const delta = json.choices?.[0]?.delta;
+        try {
+          const json = JSON.parse(payload);
+          const delta = json.choices?.[0]?.delta;
 
-        if (delta?.reasoning_content) {
-          const t = delta.reasoning_content;
-          // 尾缀去重：模型偶尔会重发思考分片，避免思考内容重复
-          if (!fullThinking.endsWith(t)) {
-            fullThinking += t;
-            sendSSE({ thinking: t });
-          }
-        }
-
-        if (delta?.content) {
-          const c = delta.content;
-          const isNew = !fullReply.endsWith(c);
-          if (isNew) {
-            fullReply += c;
-            if (bufferContent) {
-              contentBuffer += c;
-            } else {
-              sendSSE({ content: c });
+          if (delta?.reasoning_content) {
+            const t = delta.reasoning_content;
+            // 尾缀去重：模型偶尔会重发思考分片，避免思考内容重复
+            if (!fullThinking.endsWith(t)) {
+              fullThinking += t;
+              sendSSE({ thinking: t });
             }
           }
-        }
 
-        // 累积模型发起的工具调用（可能分多次 delta 到达）
-        if (delta?.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const idx = tc.index ?? 0;
-            const cur = toolCallsMap.get(idx) || { id: '', type: 'function', function: { name: '', arguments: '' } };
-            if (tc.id) cur.id = tc.id;
-            if (tc.type) cur.type = tc.type;
-            // 尾缀去重：与思考分片一样，工具调用分片也可能被重发，避免参数/名称被重复拼接
-            if (tc.function?.name && !cur.function.name.endsWith(tc.function.name)) cur.function.name += tc.function.name;
-            if (tc.function?.arguments && !cur.function.arguments.endsWith(tc.function.arguments)) cur.function.arguments += tc.function.arguments;
-            toolCallsMap.set(idx, cur);
+          if (delta?.content) {
+            const c = delta.content;
+            const isNew = !fullReply.endsWith(c);
+            if (isNew) {
+              fullReply += c;
+              if (bufferContent) {
+                contentBuffer += c;
+              } else {
+                sendSSE({ content: c });
+              }
+            }
           }
+
+          // 累积模型发起的工具调用（可能分多次 delta 到达）
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              const cur = toolCallsMap.get(idx) || { id: '', type: 'function', function: { name: '', arguments: '' } };
+              if (tc.id) cur.id = tc.id;
+              if (tc.type) cur.type = tc.type;
+              // 尾缀去重：与思考分片一样，工具调用分片也可能被重发，避免参数/名称被重复拼接
+              if (tc.function?.name && !cur.function.name.endsWith(tc.function.name)) cur.function.name += tc.function.name;
+              if (tc.function?.arguments && !cur.function.arguments.endsWith(tc.function.arguments)) cur.function.arguments += tc.function.arguments;
+              toolCallsMap.set(idx, cur);
+            }
+          }
+        } catch (e) {
+          // 忽略非 JSON 数据
         }
-      } catch (e) {
-        // 忽略非 JSON 数据
       }
     }
+  } catch (e) {
+    // DeepSeek 流式连接中途断开：把已生成的部分带回去，让上层抢救保存，而不是整条丢弃
+    console.error('❌ DeepSeek 流式中断:', e.message);
+    return {
+      error: 'AI 回复中途被中断，请重试',
+      fullReply,
+      fullThinking,
+      contentBuffer,
+      toolCalls: toolCallsMap.size ? [...toolCallsMap.values()] : null
+    };
   }
 
   const toolCalls = toolCallsMap.size ? [...toolCallsMap.values()] : null;
@@ -534,8 +546,24 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
     );
   }
 
-  if (second.error) return { error: second.error };
+  if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
   return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking, pageCount };
+}
+
+// 回复中断时保存一条可见的部分回复，避免整条消息凭空消失（前端可重新生成）
+async function savePartialAssistant(content, thinking) {
+  try {
+    await supabase.from('messages').insert({
+      session_id: 1,
+      role: 'assistant',
+      content: String(content || '').trim() || '（这条回复生成到一半被中断了，点「重新生成」再试一次吧）',
+      reasoning_content: thinking || null,
+      visible: true,
+      created_at: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('保存中断回复失败:', e.message);
+  }
 }
 
 // ================== 天气感知（Open-Meteo，免注册） ==================
@@ -941,6 +969,10 @@ app.post('/api/chat', async (req, res) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  // 声明在 try 外：流式中断时也能拿到已生成的部分内容用于抢救保存
+  let fullReply = '';
+  let fullThinking = '';
+
   try {
     // 识别图片（如果有）：转成中文描述，让默"看见"图片
     let imageAlt = null;
@@ -1044,13 +1076,18 @@ app.post('/api/chat', async (req, res) => {
     });
 
     if (first.error) {
+      // 中断时若已有部分内容：补发给当前设备，并存一条可见回复，避免"消失"
+      if (first.fullReply || first.fullThinking) {
+        await flushBufferedContent(first.contentBuffer || first.fullReply, sendSSE).catch(() => {});
+        await savePartialAssistant(first.fullReply, first.fullThinking);
+      }
       sendSSE({ error: first.error });
       res.end();
       return;
     }
 
-    let fullReply = first.fullReply;
-    let fullThinking = first.fullThinking;
+    fullReply = first.fullReply;
+    fullThinking = first.fullThinking;
 
     // 检查是否收到了完整的回复
     if (!fullReply) {
@@ -1096,6 +1133,7 @@ app.post('/api/chat', async (req, res) => {
       });
 
       if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking);
         sendSSE({ error: phase.error });
         res.end();
         return;
@@ -1186,6 +1224,10 @@ app.post('/api/chat', async (req, res) => {
 
   } catch (err) {
     console.error('对话接口错误:', err.message);
+    // 意外中断：已有部分内容也抢救保存，避免整条回复凭空消失
+    if (fullReply || fullThinking) {
+      await savePartialAssistant(fullReply, fullThinking).catch(() => {});
+    }
     sendSSE({ error: '处理请求时出错' });
     res.end();
   }
