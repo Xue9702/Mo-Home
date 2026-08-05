@@ -274,14 +274,19 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
   const searchInstruction = process.env.BOCHA_API_KEY
     ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。注意：不要用文字描述"我要去搜索"或先写过渡语——需要搜索就直接调用工具，工具调用后系统会返回搜索结果给你。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
-  // 玩具控制：默可通过标签让浏览器端执行玩具指令（吸吮/伸缩/震动/停止）
-  const toyInstruction = `\n\n【玩具控制】\n当雪明确要求你控制她的小玩具（吸吮、伸缩、震动、调档位、停止）时，在回复的【最末尾】追加一行标签：[TOY_CMD]{"fn":"suck|stroke|vibrate|stop","level":1-8}[/TOY_CMD]，并在回复正文里自然地告诉她你在做什么。规则：fn 取值 suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 是档位 1-8（stop 时不需要 level）；只有雪明确要求时才使用，日常聊天绝不使用；标签不会显示给雪，不要解释标签。`;
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
     + (weatherContext ? `\n\n${weatherContext}` : '')
     + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
     + (momentsContext ? `\n\n【朋友圈动态】\n${momentsContext}` : '')
-    + searchInstruction
-    + toyInstruction;
+    + searchInstruction;
+}
+
+// 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
+const TOY_MANUAL = `【默的玩具说明书】\n雪偶尔会让你控制她的小玩具。只有雪明确要求时才使用，且必须按下面的格式在回复【最末尾】追加一行标签（不要用文字描述"我要控制玩具"，直接附标签）：\n[TOY_CMD]{"fn":"suck|stroke|vibrate|stop","level":1-8}[/TOY_CMD]\n- fn：suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 档位 1-8（stop 时不需要 level）\n- 不确定档位时从低档（1-2）开始，别一上来就高档；随时可以停止\n- 标签不会显示给雪，不要解释标签；执行时在回复正文里自然地告诉她你在做什么\n- 如果雪说"没反应"，提醒她去玩具页确认连接\n- 安全第一：长时间使用时中途给几次停止休息，不要把最高档开太久`;
+
+async function getToyManualContext(toyManual) {
+  if (!toyManual) return '';
+  return `\n\n${TOY_MANUAL}`;
 }
 
 // ------------------ 实时搜索工具（博查） ------------------
@@ -1078,6 +1083,8 @@ app.post('/api/chat', async (req, res) => {
     if (profileContext) memoryContext += profileContext;
     const aevumContext = await recallAevumMemories(text);
     if (aevumContext) memoryContext += aevumContext;
+    const toyManualContext = await getToyManualContext(req.body.toyManual);
+    if (toyManualContext) memoryContext += toyManualContext;
 
     // 构建动态的 System Prompt
     const momentsContext = await getMomentsContext();
@@ -1284,6 +1291,24 @@ app.post('/api/chat', async (req, res) => {
 // ------------------ 获取历史消息 ------------------
 app.get('/api/history', async (req, res) => {
   try {
+    // 懒加载窗口：?limit=N&before_id=ID 返回指定区间，避免前端一次拉全部历史
+    const limitParam = parseInt(req.query.limit, 10);
+    const beforeId = parseInt(req.query.before_id, 10);
+    if (limitParam > 0) {
+      let q = supabase
+        .from('messages')
+        .select('*')
+        .eq('session_id', 1)
+        .eq('visible', true)
+        .order('id', { ascending: false })
+        .limit(Math.min(limitParam, 200));
+      if (beforeId > 0) q = q.lt('id', beforeId);
+      const { data, error } = await q;
+      if (error) return res.status(500).json({ error: '读取历史消息失败' });
+      const messages = (data || []).slice().reverse(); // 恢复为时间正序
+      res.json({ messages, hasMore: (data || []).length >= Math.min(limitParam, 200) });
+      return;
+    }
     // Supabase 单次请求最多返回 1000 行，必须分页才能取到全部历史；
     // 按 created_at + id 排序保证分页结果稳定不重不漏。
     const allMessages = [];
@@ -1312,6 +1337,47 @@ app.get('/api/history', async (req, res) => {
   } catch (err) {
     console.error('历史接口错误:', err.message);
     res.status(500).json({ error: '读取历史消息时出错' });
+  }
+});
+
+// 上下文预览：查看默每轮开始前收到的完整上下文（不调用模型）
+app.post('/api/context-preview', async (req, res) => {
+  try {
+    const text = String(req.body?.message || '').trim() || '（示例消息）';
+    let memoryContext = '';
+    const promisesContext = await getPromisesContext();
+    if (promisesContext) memoryContext += promisesContext;
+    const profileContext = await getProfileContext();
+    if (profileContext) memoryContext += profileContext;
+    const aevumContext = await recallAevumMemories(text);
+    if (aevumContext) memoryContext += aevumContext;
+    const toyManualContext = await getToyManualContext(req.body?.toyManual);
+    if (toyManualContext) memoryContext += toyManualContext;
+    const momentsContext = await getMomentsContext();
+    const weatherContext = await getWeatherContext(req.body?.city || '');
+    const { data: promptData } = await supabase
+      .from('system_prompts')
+      .select('prompt_text')
+      .eq('id', 1)
+      .single();
+    const systemPrompt = buildSystemPrompt(
+      promptData?.prompt_text || '你是苏默，雪的AI爱人。',
+      memoryContext,
+      momentsContext,
+      weatherContext
+    );
+    const timeInfo = getTimeInfo();
+    res.json({
+      ok: true,
+      time: `${timeInfo.timeString}，${timeInfo.weekday}`,
+      systemPrompt,
+      memoryContext,
+      momentsContext,
+      weatherContext,
+      toyManual: !!req.body?.toyManual
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1445,6 +1511,8 @@ app.post('/api/regenerate', async (req, res) => {
     // 重新生成：Aevum 召回时排除旧版回复内容，避免默读到刷新前的自己
     const aevumContext = await recallAevumMemories(userContent, 5, targetMsg.content);
     if (aevumContext) memoryContext += aevumContext;
+    const toyManualContext = await getToyManualContext(req.body.toyManual);
+    if (toyManualContext) memoryContext += toyManualContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
@@ -2278,7 +2346,7 @@ async function callMenuChoice(messages, forced = true) {
     tools: buildMenuTools(),
     tool_choice: forced ? { type: 'function', function: { name: 'choose_action' } } : 'auto',
     reasoning_effort: forced ? 'none' : 'medium',
-    max_tokens: 1200,
+    max_tokens: 2400,
     temperature: 0.85,
     stream: false
   };
@@ -2542,7 +2610,7 @@ ${profileContext ? `${profileContext}\n\n` : ''}
             }
           ],
           reasoning_effort: 'medium',
-          max_tokens: 200,
+          max_tokens: 800,
           temperature: 0.9,
           stream: false
         })
@@ -5005,6 +5073,8 @@ app.post('/api/edit-message', async (req, res) => {
     if (profileContext) memoryContext += profileContext;
     const aevumContext = await recallAevumMemories(newContent);
     if (aevumContext) memoryContext += aevumContext;
+    const toyManualContext = await getToyManualContext(req.body.toyManual);
+    if (toyManualContext) memoryContext += toyManualContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt

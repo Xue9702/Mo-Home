@@ -1089,6 +1089,7 @@
     <!-- 顶部标题栏（左上角设置入口） -->
     <div class="header" id="headerBar">
       <button id="headerSettingsBtn" class="header-settings-btn" aria-label="设置" title="设置"></button>
+      <button id="headerContextBtn" class="header-settings-btn" style="margin-left:auto;" aria-label="查看默的上下文" title="查看默每轮收到的上下文">👁</button>
       <div class="header-title" id="headerTitle">默</div>
     </div>
 
@@ -1354,6 +1355,9 @@
         }
         if (pageName === 'toyPage') {
           setTimeout(() => renderToyLab(), 50);
+        }
+        if (pageName === 'chatPage') {
+          setTimeout(() => { if (messageList) messageList.scrollTop = messageList.scrollHeight; }, 60);
         }
       }
 
@@ -2317,8 +2321,7 @@
       function stripToyCmdTags(text) {
         return String(text || '')
           .replace(/\[TOY_CMD\][\s\S]*?\[\/TOY_CMD\]/g, '')
-          .replace(/\[TOY_CMD\][\s\S]*$/, '')
-          .trim();
+          .replace(/\[TOY_CMD\][\s\S]*$/, '');
       }
       async function toyExecuteCmd(cmd) {
         const fn = cmd && cmd.fn;
@@ -2353,6 +2356,16 @@
       }
       window.toyExecuteCmd = toyExecuteCmd;
 
+      // 默的玩具说明书开关：开启后每轮注入记忆上下文，关闭后默不再携带
+      function toyManualOn() { return !!localStorage.getItem('moToyManual'); }
+      async function toyToggleManual() {
+        const next = !toyManualOn();
+        if (next) localStorage.setItem('moToyManual', '1'); else localStorage.removeItem('moToyManual');
+        showPullToast(next ? '📖 说明书已交给默' : '📕 说明书已收回');
+        renderToyLab();
+      }
+      window.toyToggleManual = toyToggleManual;
+
       async function renderToyLab() {
         const box = document.getElementById('toyContent');
         if (!box) return;
@@ -2379,6 +2392,15 @@
               <button onclick="toyConnectCustom()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 12px;font-size:12px;cursor:pointer;">加入并重连</button>
             </div>
             <div style="font-size:12px;color:#8a83a8;line-height:1.7;">步骤：① 先关掉司沃康 App、断开手机蓝牙；② 点「连接玩具」，在弹窗里选 ST420A；③ 下方选写入口发指令试反应。连上蓝牙后物理按键会失灵，属正常现象。</div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">默的玩具说明书</span>
+              <span style="margin-left:auto;">
+                <button onclick="toyToggleManual()" style="border:none;border-radius:12px;padding:8px 14px;font-size:13px;cursor:pointer;${toyManualOn() ? 'background:#ffd3de;color:#fff;' : 'border:1px solid #ffd3de;background:#fff;color:#e1789a;'}">${toyManualOn() ? '📖 已交给默（点击收回）' : '📕 未交给默（点击开启）'}</button>
+              </span>
+            </div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">开启后，默每一轮都会收到这份说明书（含指令格式和安全守则），控制玩具会更稳；关闭后默不再携带它，也就不会主动操控。玩之前开启、平时关着就好。</div>
           </div>
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="font-size:14px;font-weight:600;color:#333;">写入口（${writes.length}）</div>
@@ -4013,7 +4035,7 @@
         tempUserMsg.appendChild(tempBubble); messageList.appendChild(tempUserMsg); messageList.scrollTop = messageList.scrollHeight;
         showTyping();
         try {
-          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText, city: localStorage.getItem('moWeatherCity') || '' }) });
+          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn() }) });
           if (!response.ok) throw new Error('请求失败');
           removeTyping();
           let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
@@ -4106,13 +4128,20 @@
 
       function removeTyping() { const el = document.getElementById('typingIndicator'); if (el) el.remove(); }
 
+      let historyOldestId = null;
+      let historyHasMore = true;
+      let historyLoadingMore = false;
+
       async function loadHistory() {
         try {
-          const response = await fetch('/api/history'); if (!response.ok) return;
+          const response = await fetch('/api/history?limit=40'); if (!response.ok) return;
           const data = await response.json();
           if (!data.messages || data.messages.length === 0) { addMessage('assistant', '你好，夫人。我已准备好与你对话。', null, formatTime()); return; }
+          const msgs = data.messages;
+          historyOldestId = Math.min(...msgs.map(m => m.id));
+          historyHasMore = !!data.hasMore;
           const groupMap = new Map();
-          data.messages.forEach(msg => {
+          msgs.forEach(msg => {
             const role = msg.role === 'user' ? 'user' : 'assistant';
             addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
             if (msg.group_id) {
@@ -4157,7 +4186,38 @@
               last.appendChild(btn);
             }
           }
+          messageList.scrollTop = messageList.scrollHeight;
         } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
+      }
+
+      // 上拉加载更早的历史（懒加载）
+      async function loadMoreHistory() {
+        if (historyLoadingMore || !historyHasMore || !historyOldestId) return;
+        historyLoadingMore = true;
+        try {
+          const response = await fetch('/api/history?limit=40&before_id=' + historyOldestId);
+          if (!response.ok) return;
+          const data = await response.json();
+          const msgs = data.messages || [];
+          if (!msgs.length) { historyHasMore = false; return; }
+          const beforeHeight = messageList.scrollHeight;
+          const anchor = messageList.firstElementChild;
+          msgs.forEach(msg => {
+            const role = msg.role === 'user' ? 'user' : 'assistant';
+            addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
+            messageList.insertBefore(messageList.lastElementChild, anchor);
+          });
+          historyOldestId = Math.min(historyOldestId, ...msgs.map(m => m.id));
+          historyHasMore = !!data.hasMore;
+          messageList.scrollTop += messageList.scrollHeight - beforeHeight;
+        } catch (e) { console.error('加载更早历史失败:', e); }
+        finally { historyLoadingMore = false; }
+      }
+
+      if (messageList) {
+        messageList.addEventListener('scroll', () => {
+          if (messageList.scrollTop < 60 && !historyLoadingMore && historyHasMore && historyOldestId) loadMoreHistory();
+        });
       }
 
       // ---------- 下拉刷新（Render 偶发连不上时不用退出重进） ----------
@@ -4175,6 +4235,49 @@
         clearTimeout(el._t);
         el._t = setTimeout(() => { el.style.opacity = '0'; }, 1800);
       }
+
+      // 查看默每轮开始前收到的完整上下文
+      async function openContextPreview() {
+        const message = (userInput && userInput.value.trim()) || '（示例消息）';
+        let data = null;
+        try {
+          const res = await fetch('/api/context-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn() })
+          });
+          data = await res.json();
+          if (!res.ok) throw new Error(data.error || '加载失败');
+        } catch (e) {
+          alert('上下文加载失败：' + e.message);
+          return;
+        }
+        const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const section = (title, text) => `<details style="margin:10px 0;border:1px solid #f0e9f5;border-radius:10px;padding:10px;font-size:13px;"><summary style="cursor:pointer;font-weight:600;color:#333;">${title}（${(text || '').length} 字）</summary><pre style="white-space:pre-wrap;word-break:break-all;margin-top:8px;font-family:inherit;color:#555;font-size:12px;line-height:1.7;">${esc(text) || '（空）'}</pre></details>`;
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;';
+        overlay.id = 'ctxOverlay';
+        const box = document.createElement('div');
+        box.style.cssText = 'width:min(92vw,720px);max-height:86vh;overflow:auto;background:#fff;border-radius:16px;padding:18px;box-sizing:border-box;';
+        box.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <span style="font-size:15px;font-weight:600;color:#333;">默的上下文预览</span>
+            <span style="font-size:11px;color:#8a83a8;">示例消息：${esc(message.length > 20 ? message.slice(0, 20) + '…' : message)}</span>
+            <span style="margin-left:auto;cursor:pointer;color:#888;font-size:14px;" onclick="document.getElementById('ctxOverlay').remove()">✕</span>
+          </div>
+          <div style="font-size:12px;color:#8a83a8;margin-bottom:8px;">时间：${esc(data.time)} · 玩具说明书：${data.toyManual ? '已交给默 📖' : '未开启 📕'}</div>
+          ${section('系统提示（时间 + 人设 + 搜索）', data.systemPrompt)}
+          ${section('注入的记忆（承诺/画像/召回/说明书）', data.memoryContext)}
+          ${section('朋友圈动态', data.momentsContext)}
+          ${section('天气', data.weatherContext)}`;
+        box.classList.add('feature-modal');
+        overlay.appendChild(box);
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+      }
+      window.openContextPreview = openContextPreview;
+      const headerContextBtn = document.getElementById('headerContextBtn');
+      if (headerContextBtn) headerContextBtn.addEventListener('click', openContextPreview);
 
       async function refreshChat() {
         showPullToast('🔄 刷新中…');
@@ -4252,7 +4355,7 @@
           const response = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, image: sentImage, file: sentFile, city: localStorage.getItem('moWeatherCity') || '' })
+            body: JSON.stringify({ message: text, image: sentImage, file: sentFile, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn() })
           });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
@@ -4411,7 +4514,7 @@
           let currentMsgDiv = newMsgDiv, currentThinkDiv = thinkDiv, currentBubble = bubble, currentThinkBody = null;
           let searchPhaseActive = false;
           let doneInfo = null;
-          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId, city: localStorage.getItem('moWeatherCity') || '' }) });
+          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn() }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
           while (true) {
