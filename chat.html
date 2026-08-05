@@ -2064,7 +2064,8 @@
         event: '事件', fact: '事实', meaning: '意义', relationship: '关系',
         user_tendency: '用户倾向', personality: '人格', self_model: '核心'
       };
-      const AEVUM_OWNER_LABELS = { USER: '雪', RELATIONSHIP: '关系', AGENT: '默', SYSTEM: '系统' };
+      const AEVUM_OWNER_LABELS = { USER: '雪', AGENT: '默', OTHER: '其他', RELATIONSHIP: '关系', SYSTEM: '系统' };
+      const AEVUM_OWNER_OPTIONS = [['USER', '雪'], ['AGENT', '默'], ['OTHER', '其他']];
       const AEVUM_STATUS_LABELS = {
         raw: '原始', extracted: '已提取', candidate: '候选', verified: '已确认',
         active: '活跃', archived: '已归档', rejected: '已拒绝', outdated: '过期', conflicted: '冲突'
@@ -2085,7 +2086,7 @@
         self_model: []
       };
       const AEVUM_VIEWS = [
-        ['sea', '记忆海'], ['promise', '承诺'], ['topic', '主题'], ['profile', '画像'],
+        ['sea', '记忆海'], ['promise', '承诺'], ['topic', '记忆书'], ['profile', '画像'],
         ['event', '事件'], ['fact', '事实'], ['meaning', '意义'],
         ['relationship', '关系'], ['user_tendency', '用户倾向'], ['personality', '人格'], ['self_model', '核心'],
         ['archived', '已归档']
@@ -2519,7 +2520,7 @@
               <div style="font-size:13px;color:#666;font-weight:600;">${viewTitle}</div>
               ${inSimple ? '' : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 ${inSea ? '' : filterSel('aevumStatus', Object.entries(AEVUM_STATUS_LABELS), aevumState.filters.status, '全部状态')}
-                ${filterSel('aevumOwner', Object.entries(AEVUM_OWNER_LABELS), aevumState.filters.owner, '全部归属')}
+                ${filterSel('aevumOwner', AEVUM_OWNER_OPTIONS, aevumState.filters.owner, '全部归属')}
                 ${filterSel('aevumDomain', AEVUM_DOMAINS_FRONT.map(d => [d, d]), aevumState.filters.domain, '全部领域')}
                 <input id="aevumQ" placeholder="搜索内容…" value="${escapeHtml2(aevumState.filters.q)}" oninput="aevumFilter()"
                   style="flex:1;min-width:90px;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 10px;font-size:13px;background:rgba(255,255,255,0.7);outline:none;">
@@ -2618,26 +2619,26 @@
         return `
           <div class="feature-card" style="align-items:stretch;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span style="font-size:14px;font-weight:600;color:#333;">记忆地图</span>
-              <span style="font-size:12px;color:#8a83a8;">把散落的事件块聚成主题，默回忆时能看到整段故事线</span>
+              <span style="font-size:14px;font-weight:600;color:#333;">记忆书</span>
+              <span style="font-size:12px;color:#8a83a8;">把散落的事件块整理成故事线，默回忆时能看到整段经过</span>
               <span style="margin-left:auto;">
-                <button data-regen-topics onclick="aevumRegenerateTopics()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;" title="清掉现有主题，用全部事件块（含记忆）重新聚类">♻ 重新聚类</button>
-                <button data-gentopics onclick="aevumGenerateTopics()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成主题</button>
+                <button data-regen-topics onclick="aevumRegenerateTopics()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;" title="清掉现有记忆书，用全部事件块（含记忆）重新整理">♻ 重新整理</button>
+                <button data-gentopics onclick="aevumGenerateTopics()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成记忆书</button>
               </span>
             </div>
-            <div style="font-size:11px;color:#b0a6c4;">点主题看事件，点事件看记忆和原文。每个事件块里的记忆（含关系/意义/人格）都会参与主题聚类。</div>
+            <div style="font-size:11px;color:#b0a6c4;">点故事线看事件，点事件看记忆和原文。每个事件块里的记忆（含关系/意义/人格）都会参与整理。</div>
           </div>
           ${topics.length ? topics.map(t => `
             <div class="feature-card" style="align-items:stretch;gap:8px;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <span data-title="${escapeHtml2(t.title)}" style="cursor:pointer;font-size:15px;font-weight:600;color:#333;" onclick="aevumToggleTopic(${t.id})">${escapeHtml2(t.title)}</span>
-                <span style="font-size:11px;color:#8a83a8;">${t.episode_count || 0} 个事件 · ${t.memory_count || 0} 条记忆</span>
-                <span style="margin-left:auto;cursor:pointer;color:#888;font-size:12px;" onclick="aevumRenameTopic(${t.id}, this)">✎ 重命名</span>
+                <span data-title="${escapeHtml2(t.title)}" style="cursor:pointer;font-size:14px;font-weight:600;color:#333;" onclick="aevumToggleTopic(${t.id})">${escapeHtml2(t.title)}</span>
+                <span style="font-size:11px;color:#8a83a8;">${t.episode_count || 0} 段 · ${t.memory_count || 0} 条记忆</span>
+                <span style="margin-left:auto;cursor:pointer;color:#888;font-size:12px;" onclick="aevumRenameTopic(${t.id}, this)">✎ 改名</span>
               </div>
               ${t.summary ? `<div style="font-size:12px;color:#8a83a8;">${escapeHtml2(t.summary)}</div>` : ''}
               <div id="aevumTopicBody_${t.id}" style="display:none;"></div>
             </div>`).join('')
-            : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">还没有主题，点「✨ 生成主题」把事件块聚起来吧~</div>'}
+            : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">记忆书还是空的，点「✨ 生成记忆书」把事件块整理成故事线吧~</div>'}
         `;
       }
 
@@ -2698,7 +2699,7 @@
                 ${Object.entries(AEVUM_TYPE_LABELS).map(([v, l]) => `<option value="${v}" ${t === v ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
               <select id="aevumFormOwner" style="flex:1;min-width:100px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;">
-                ${Object.entries(AEVUM_OWNER_LABELS).map(([v, l]) => `<option value="${v}" ${o === v ? 'selected' : ''}>${l}</option>`).join('')}
+                ${AEVUM_OWNER_OPTIONS.map(([v, l]) => `<option value="${v}" ${o === v ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
             </div>
             <div style="font-size:12px;color:#888;">同时归入的维度（这条内容同时符合多个层级时勾选，主题聚类会完整读到）</div>
@@ -2988,7 +2989,7 @@
 
       // 主题层：生成 / 浏览 / 重命名
       async function aevumGenerateTopics() {
-        if (!confirm('让 AI 把未分类的事件块聚成主题？')) return;
+        if (!confirm('让 AI 把未分类的事件块整理成记忆书故事线？')) return;
         const btn = document.querySelector('[data-gentopics]');
         const old = btn ? btn.textContent : '';
         if (btn) btn.textContent = '⏳ 生成中…';
@@ -2998,7 +2999,7 @@
           if (!res.ok) { alert(data.error || '生成失败，请确认已执行 setup_aevum_v17.sql'); return; }
           aevumState.topicCache = {};
           if (data.message) { alert(data.message); }
-          else { alert('✅ 已生成 ' + (data.created || 0) + ' 个主题'); }
+          else { alert('✅ 已生成 ' + (data.created || 0) + ' 段故事线'); }
           renderAevum();
         } catch (e) {
           alert('生成失败，请稍后重试');
@@ -3009,7 +3010,7 @@
       window.aevumGenerateTopics = aevumGenerateTopics;
 
       async function aevumRegenerateTopics() {
-        if (!confirm('会清掉现有主题并重新聚类（AI 生成的主题会重建，手动改过的标题会丢失），确定吗？')) return;
+        if (!confirm('会清掉现有记忆书并重新整理（AI 生成的会重建，手动改过的标签会丢失），确定吗？')) return;
         const btn = document.querySelector('[data-regen-topics]');
         const old = btn ? btn.textContent : '';
         if (btn) btn.textContent = '⏳ 重新聚类中…';
@@ -3019,7 +3020,7 @@
           if (!res.ok) { alert(data.error || '重新聚类失败，请确认已执行 setup_aevum_v17.sql'); return; }
           aevumState.topicCache = {};
           if (data.message) { alert(data.message); }
-          else { alert('✅ 已重新聚类 ' + (data.created || 0) + ' 个主题'); }
+          else { alert('✅ 已重新整理 ' + (data.created || 0) + ' 段故事线'); }
           renderAevum();
         } catch (e) {
           alert('重新聚类失败，请稍后重试');
@@ -4285,6 +4286,7 @@
           <div style="font-size:12px;color:#8a83a8;margin-bottom:8px;">时间：${esc(data.time)} · 玩具说明书：${data.toyManual ? '已交给默 📖' : '未开启 📕'}</div>
           ${section('系统提示（时间 + 人设 + 搜索）', data.systemPrompt)}
           ${section('注入的记忆（承诺/画像/召回/说明书）', data.memoryContext)}
+          ${section('聊天记录（最近10轮）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
           ${section('动态', data.momentsContext)}
           ${section('天气', data.weatherContext)}`;
         box.classList.add('feature-modal');

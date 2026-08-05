@@ -1358,6 +1358,7 @@ app.post('/api/context-preview', async (req, res) => {
     if (toyManualContext) memoryContext += toyManualContext;
     const momentsContext = await getMomentsContext();
     const weatherContext = await getWeatherContext(req.body?.city || '');
+    const recentHistory = await loadLatestHistory(1, 20);
     const { data: promptData } = await supabase
       .from('system_prompts')
       .select('prompt_text')
@@ -1377,6 +1378,11 @@ app.post('/api/context-preview', async (req, res) => {
       memoryContext,
       momentsContext,
       weatherContext,
+      history: (recentHistory || []).map(m => ({
+        role: m.role,
+        content: String(m.content || '').slice(0, 1000),
+        created_at: m.created_at
+      })),
       toyManual: !!req.body?.toyManual
     });
   } catch (e) {
@@ -2990,7 +2996,9 @@ app.delete('/api/day-tags/:id', async (req, res) => {
 
 // ================== Aevum Memory（v1 Phase 1） ==================
 const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'user_tendency', 'personality', 'self_model'];
-const AEVUM_OWNERS = ['USER', 'RELATIONSHIP', 'AGENT', 'SYSTEM'];
+const AEVUM_OWNERS = ['USER', 'AGENT', 'OTHER'];
+// 提取时的主体归一：旧指令里的 RELATIONSHIP / SYSTEM 一律归入 OTHER
+const AEVUM_PERSPECTIVE_MAP = { USER: 'USER', AGENT: 'AGENT', OTHER: 'OTHER', RELATIONSHIP: 'OTHER', SYSTEM: 'OTHER' };
 const AEVUM_DOMAINS = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
 const EPISODE_IDLE_MINUTES = 30;
 const EPISODE_MAX_MESSAGES = 40;
@@ -3169,7 +3177,7 @@ function trimContextMessage(content, maxLen = 1000) {
   return s.slice(0, maxLen) + '\n…（消息过长，已截断）';
 }
 
-// 事件块场景召回：取事件块的主题/目的/情绪背景 + 所属主题标题摘要（不再注入对话原文，避免默模仿原话）
+// 事件块场景召回：记忆书（故事线摘要）+ 事件块（时间/主题/目的/情绪背景），不再注入对话原文
 async function getEpisodeScene(episodeId, maxChars = 600) {
   if (!episodeId) return '';
   try {
@@ -3179,16 +3187,21 @@ async function getEpisodeScene(episodeId, maxChars = 600) {
       .eq('id', episodeId)
       .maybeSingle();
     if (error || !ep) return '';
-    let topicLine = '';
+    let bookLine = '';
     if (ep.topic_id) {
       const { data: tp } = await supabase.from('aevum_topics').select('title, summary').eq('id', ep.topic_id).maybeSingle();
-      if (tp && tp.title) topicLine = `【主题】${String(tp.title).slice(0, 40)}${tp.summary ? '：' + String(tp.summary).slice(0, 80) : ''}\n`;
+      const summary = String(tp?.summary || '').trim();
+      if (summary) bookLine = `【记忆书】${summary.slice(0, 160)}\n`;
     }
+    const when = ep.started_at
+      ? new Date(ep.started_at).toLocaleString('zh-CN', { timeZone: USER_TIMEZONE, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+      : '';
     const parts = [];
+    if (when) parts.push(when);
     if (ep.topic) parts.push(`主题：${String(ep.topic).slice(0, 80)}`);
     if (ep.intention) parts.push(`目的：${String(ep.intention).slice(0, 100)}`);
     if (ep.emotional_context) parts.push(`情绪背景：${String(ep.emotional_context).slice(0, 100)}`);
-    const head = topicLine + (parts.length ? `【事件块】${parts.join('；')}` : '');
+    const head = bookLine + (parts.length ? `【事件块】${parts.join('；')}` : '');
     if (!head.trim()) return '';
     return `\n\n${head.trim()}`;
   } catch (e) {
@@ -3418,7 +3431,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
       const when = formatMemoryTime(m.created_at);
       return `- [${AEVUM_TYPE_CN[m.type] || m.type}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] ${m.content}`;
     }).join('\n');
-    let out = `\n\n【Aevum记忆】（以下是过去事件的摘要，参考即可：保持你自己的语气和说话习惯，不要模仿或复制摘要里的措辞）\n${lines}`;
+    let out = `\n\n【Aevum记忆】\n${lines}`;
     // 事件块场景：被召回的活跃记忆最多带 2 个事件块的原文场景
     const episodeIds = [...new Set(items.map(m => m.episode_id).filter(Boolean))].slice(0, 2);
     for (const eid of episodeIds) {
@@ -3463,21 +3476,20 @@ async function extractAevumMemories(texts, episodeId = null) {
   const system = `你是 Aevum Memory 的记忆提取器，从对话中提炼值得长期记住的信息。
 核心判断：这句话改变了谁的长期状态？雪→USER，默→AGENT，双方关系→RELATIONSHIP，小屋/系统→SYSTEM，无长期影响→不保存。
 
-【perspective 归属，先判断主体，禁止混淆】
-- USER=雪：记录雪的经历、偏好、价值观、行为模式（例如"雪喜欢通过创作表达自己"）
-- AGENT=默：记录默形成的行为倾向、回复方式、工作模式（例如"默倾向优先保持诚实"）；禁止从单次对话推断默的人格
-- RELATIONSHIP=雪与默之间的互动模式、沟通方式、长期约定（例如"雪倾向通过深入讨论共同设计系统"）
-- SYSTEM=小屋与系统的开发：项目开发、架构设计、Prompt 调整、Bug 修复、数据迁移、技术决策（例如"Aevum 采用语义块作为记忆提取基础"）
-- 黑名单提示：内容出现 系统/代码/部署/bug/修复/prompt/数据库/API/模型/架构/功能/测试/版本/更新 等词时，默认归 SYSTEM，除非明确在描述雪本人
+【perspective 归属，先判断主体，禁止混淆；主体只有三种：USER=雪 / AGENT=默 / OTHER=其他】
+- USER=雪：记录雪的经历、偏好、价值观、行为模式（例如"雪喜欢通过创作表达自己"）；只能基于雪本人明确表达的内容，默的建议、默说的话不能作为雪倾向的依据
+- AGENT=默：记录默形成的行为倾向、回复方式、工作模式（例如"默倾向优先保持诚实"）；只能基于默自己表现出的行为，禁止从单次对话推断默的人格
+- OTHER=其他（小屋/系统/开发进展、除雪默之外的主体）：项目开发、架构设计、Prompt 调整、Bug 修复、数据迁移、技术决策（例如"Aevum 采用语义块作为记忆提取基础"）
+- 黑名单提示：内容出现 系统/代码/部署/bug/修复/prompt/数据库/API/模型/架构/功能/测试/版本/更新 等词时，默认归 OTHER，除非明确在描述雪本人
 - AI 自己的内容绝不能标成 USER
 
 【Memory Layer 层级，严格分类】
 - event=客观发生了什么（"发生了X事件"）
 - fact=从事件中提取的稳定客观信息（"关于对象的客观信息"）
-- meaning=极其严格：描述"这件事对谁有什么意义"，主体可以是雪(USER)或默(AGENT)，perspective 必须写清主体；必须有明确表达或多次行为支持；不能解释系统价值（"这次系统升级提高了可靠性"是 SYSTEM，不是 meaning）
-- relationship=只涉及雪↔默的互动模式时使用
-- user_tendency=雪的喜好/三观/性格（例如"雪重视长期连续性"）；主体只能是雪(USER)，需证据，宁缺毋滥
-- personality=只描述默的稳定行为倾向（AGENT），例如"默倾向优先保持诚实"；雪的性格/喜好/三观绝不能标成 personality（应归 user_tendency）；只有长期重复模式才允许生成，禁止单次事件生成人格
+- meaning=极其严格：描述"这件事对谁有什么意义"，主体可以是雪(USER)或默(AGENT)，perspective 必须写清主体；必须有明确表达或多次行为支持；不能解释系统价值（"这次系统升级提高了可靠性"是 OTHER，不是 meaning）
+- relationship=注意：关系记忆不从单轮对话直接提取，它需要从多次稳定事实中归纳、由"分析衍生"后续生成；本轮禁止输出 relationship
+- user_tendency=雪的喜好/三观/性格（例如"雪重视长期连续性"）；主体只能是雪(USER)，只能基于雪本人明确说过的话，需证据，宁缺毋滥
+- personality=只描述默自己表现出的稳定行为倾向（AGENT），例如"默倾向优先保持诚实"；雪的性格/喜好/三观绝不能标成 personality（应归 user_tendency）；只有长期重复模式才允许生成，禁止单次事件生成人格
 
 【不要强行提取】
 - 没有长期价值的纯技术闲聊、临时决定、普通聊天、一次性话题、AI 客套话 → 不提取
@@ -3490,11 +3502,11 @@ async function extractAevumMemories(texts, episodeId = null) {
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(激动)，只作辅助参数
 - importance 重要度 0-10：按 明确程度+重复频率+长期影响+关系影响+情绪权重 估分；一次性的小事给低分
 - emotion_weight 情感分量 0-10：这条记忆对雪与默的关系/情感联结有多重要（看重长期情感分量，不是情绪强度；普通偏好 3-5，关系核心 8-10）
-- layers 多维归属：一条内容若同时符合多个维度（例如"雪买了司沃康玩具并和默一起调试"既是事件也涉及关系），把主类型 type 放第一位，最多再标 1-2 个确实成立的维度（event/fact/meaning/relationship/user_tendency/personality 中选）；只标真实同时成立的，不凑数
+- layers 多维归属：一条内容若同时符合多个维度，把主类型 type 放第一位，最多再标 1 个确实成立的维度（event/fact/meaning/user_tendency/personality 中选）；意义 与 用户倾向 通常二选一，别同时标；只标真实同时成立的，不凑数
 - tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"type":"event|fact|meaning|relationship|user_tendency|personality","layers":["event","meaning"],"perspective":"USER|AGENT|RELATIONSHIP|SYSTEM","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"type":"event|fact|meaning|user_tendency|personality","layers":["event","meaning"],"perspective":"USER|AGENT|OTHER","domain":["恋爱"],"content":"记忆内容","confidence":{"evidence":0-1,"stability":0-1,"importance":0-1},"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"emotion_weight":5,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3576,11 +3588,13 @@ async function extractAevumMemories(texts, episodeId = null) {
         }
         continue;
       }
-      // v2.0 归属兜底：人格只属于默(AGENT)，用户倾向只属于雪(USER)
+      // v2.2 归属兜底：主体归一为 雪/默/其他；人格只属于默，用户倾向只属于雪
       let insType = m.type;
-      let insOwner = AEVUM_OWNERS.includes(m.perspective) ? m.perspective : AEVUM_OWNERS.includes(m.owner) ? m.owner : 'USER';
-      if (insType === 'personality' && insOwner !== 'AGENT') { insType = 'user_tendency'; insOwner = 'USER'; }
-      if (insType === 'user_tendency' && insOwner !== 'USER') { insType = 'personality'; insOwner = 'AGENT'; }
+      let insOwner = AEVUM_PERSPECTIVE_MAP[m.perspective] || AEVUM_PERSPECTIVE_MAP[m.owner] || 'USER';
+      // 关系记忆不从单轮对话直接生成：AI 若误输出 relationship，落为事实记忆（关系由后续"分析衍生"生成）
+      if (insType === 'relationship') insType = 'fact';
+      if (insType === 'personality') insOwner = 'AGENT';
+      if (insType === 'user_tendency') insOwner = 'USER';
       // 事件/事实是客观层，自动激活直接进对应区域，不用逐个确认
       const autoActive = insType === 'event' || insType === 'fact';
       const insLayers = validAevumLayers(m.layers, insType, insOwner);
@@ -3805,7 +3819,8 @@ async function buildTopicClusters() {
     const system = `你是 Aevum Memory 的主题聚类器。下面每一段是一个对话事件块（标题后面列出它已提取的记忆），把属于同一段故事线的事件块聚成几个主题。
 规则：
 - 不要只按标题聚类：时间先后衔接、话题连续（例如"买了东西→到货→一起研究/调试"）的事件块是同一段故事线
-- 结合事件块内的记忆判断内容；每个主题给一个简洁标题（10 字内）和一句话故事线摘要：背景→经过→结果（不要罗列对话原文或记忆原文）
+- summary 写成完整故事线：时间/地点/谁说了或做了什么/最后结果如何（例如"8月4日晚，雪和默讨论记忆系统分层，默给出建议，最终决定先存储后召回"）；不要罗列对话原文或记忆原文，不要出现"标题：摘要"式排版
+- title 只给一个 4-8 字极简标签（仅供记忆地图卡片显示），例如"记忆系统讨论"
 - 一次最多输出 8 个主题；每组至少 2 个事件块；太零散的事件块不要强行归类
 - 输出格式：只输出 [AEVUM_TOPICS]{"topics":[{"title":"...","summary":"...","episode_ids":[1,2]}]}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
