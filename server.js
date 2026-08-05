@@ -274,11 +274,14 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
   const searchInstruction = process.env.BOCHA_API_KEY
     ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。注意：不要用文字描述"我要去搜索"或先写过渡语——需要搜索就直接调用工具，工具调用后系统会返回搜索结果给你。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
+  // 动态发布指令：从雪的人设 prompt 里挪到代码，避免每次都要在 prompt 里维护
+  const momentsInstruction = `\n\n【动态】\n你拥有发布动态的能力。当你想发一条让雪之后刷到的话时，在回复【最末尾】输出标签：[POST_MOMENT]{"content":"你想发布的1-3句动态正文","context_note":"你发这条动态的情绪或原因"}；只有输出上述标签，动态才会被真正发布。日常聊天不需要发动态时不要输出标签。`;
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
     + (weatherContext ? `\n\n${weatherContext}` : '')
     + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
-    + (momentsContext ? `\n\n【朋友圈动态】\n${momentsContext}` : '')
-    + searchInstruction;
+    + (momentsContext ? `\n\n【动态】\n${momentsContext}` : '')
+    + searchInstruction
+    + momentsInstruction;
 }
 
 // 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
@@ -3166,27 +3169,28 @@ function trimContextMessage(content, maxLen = 1000) {
   return s.slice(0, maxLen) + '\n…（消息过长，已截断）';
 }
 
-// 事件块场景召回：取出事件块的主题与最近几轮原文，拼成一小段场景
+// 事件块场景召回：取事件块的主题/目的/情绪背景 + 所属主题标题摘要（不再注入对话原文，避免默模仿原话）
 async function getEpisodeScene(episodeId, maxChars = 600) {
   if (!episodeId) return '';
   try {
     const { data: ep, error } = await supabase
       .from('aevum_episodes')
-      .select('topic, topic_id')
+      .select('topic, intention, emotional_context, topic_id, started_at')
       .eq('id', episodeId)
       .maybeSingle();
     if (error || !ep) return '';
-    const exchanges = await getEpisodeRecentExchanges(episodeId, 4);
-    if (!exchanges.length) return '';
     let topicLine = '';
     if (ep.topic_id) {
       const { data: tp } = await supabase.from('aevum_topics').select('title, summary').eq('id', ep.topic_id).maybeSingle();
-      if (tp && tp.title) topicLine = `【主题】${String(tp.title).slice(0, 40)}${tp.summary ? '：' + String(tp.summary).slice(0, 60) : ''}\n`;
+      if (tp && tp.title) topicLine = `【主题】${String(tp.title).slice(0, 40)}${tp.summary ? '：' + String(tp.summary).slice(0, 80) : ''}\n`;
     }
-    const head = `${topicLine}${ep.topic ? `【事件块】主题：${String(ep.topic).slice(0, 80)}` : '【事件块】'}`;
-    let body = exchanges.map(t => `${t.role === 'user' ? '雪' : '默'}：${String(t.content || '')}`).join('\n');
-    if (body.length > maxChars) body = body.slice(0, maxChars) + '…';
-    return `\n\n${head}\n${body}`;
+    const parts = [];
+    if (ep.topic) parts.push(`主题：${String(ep.topic).slice(0, 80)}`);
+    if (ep.intention) parts.push(`目的：${String(ep.intention).slice(0, 100)}`);
+    if (ep.emotional_context) parts.push(`情绪背景：${String(ep.emotional_context).slice(0, 100)}`);
+    const head = topicLine + (parts.length ? `【事件块】${parts.join('；')}` : '');
+    if (!head.trim()) return '';
+    return `\n\n${head.trim()}`;
   } catch (e) {
     return '';
   }
@@ -3414,7 +3418,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
       const when = formatMemoryTime(m.created_at);
       return `- [${AEVUM_TYPE_CN[m.type] || m.type}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] ${m.content}`;
     }).join('\n');
-    let out = `\n\n【Aevum记忆】\n${lines}`;
+    let out = `\n\n【Aevum记忆】（以下是过去事件的摘要，参考即可：保持你自己的语气和说话习惯，不要模仿或复制摘要里的措辞）\n${lines}`;
     // 事件块场景：被召回的活跃记忆最多带 2 个事件块的原文场景
     const episodeIds = [...new Set(items.map(m => m.episode_id).filter(Boolean))].slice(0, 2);
     for (const eid of episodeIds) {
@@ -3479,6 +3483,7 @@ async function extractAevumMemories(texts, episodeId = null) {
 - 没有长期价值的纯技术闲聊、临时决定、普通聊天、一次性话题、AI 客套话 → 不提取
 - 但真实发生的小屋/系统进展要保留：上线新功能、修复 bug、完成数据迁移、采用新架构、一起调试某个项目等，作为 event/fact 记录，perspective=SYSTEM（例如"Aevum 上线主题层，支持记忆地图"）——这是有价值的技术事件，不是噪音
 - 没有记忆，比错误记忆更好；每次最多 5 条，宁缺毋滥，不凑数
+- content 必须用概括性描述（说清时间/背景/谁做了什么/结果），禁止直接复制对话原文或整段引用雪/默的原话
 
 【其他字段】
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、其他
@@ -3800,7 +3805,7 @@ async function buildTopicClusters() {
     const system = `你是 Aevum Memory 的主题聚类器。下面每一段是一个对话事件块（标题后面列出它已提取的记忆），把属于同一段故事线的事件块聚成几个主题。
 规则：
 - 不要只按标题聚类：时间先后衔接、话题连续（例如"买了东西→到货→一起研究/调试"）的事件块是同一段故事线
-- 结合事件块内的记忆判断内容；每个主题给一个简洁标题（10 字内）和一句话摘要
+- 结合事件块内的记忆判断内容；每个主题给一个简洁标题（10 字内）和一句话故事线摘要：背景→经过→结果（不要罗列对话原文或记忆原文）
 - 一次最多输出 8 个主题；每组至少 2 个事件块；太零散的事件块不要强行归类
 - 输出格式：只输出 [AEVUM_TOPICS]{"topics":[{"title":"...","summary":"...","episode_ids":[1,2]}]}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -5296,7 +5301,7 @@ async function getMomentsContext() {
       return momentText;
     }).join('\n---\n');
 
-    return `\n\n【朋友圈动态】\n以下是最近的朋友圈动态，你可以自然地提及或回应它们：\n${momentsList}`;
+    return `以下是最近的动态，你可以自然地提及或回应它们：\n${momentsList}`;
   } catch (e) {
     console.error('获取朋友圈上下文失败:', e.message);
     return '';

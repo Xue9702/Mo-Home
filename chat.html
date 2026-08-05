@@ -1089,7 +1089,7 @@
     <!-- 顶部标题栏（左上角设置入口） -->
     <div class="header" id="headerBar">
       <button id="headerSettingsBtn" class="header-settings-btn" aria-label="设置" title="设置"></button>
-      <button id="headerContextBtn" class="header-settings-btn" style="margin-left:auto;" aria-label="查看默的上下文" title="查看默每轮收到的上下文">👁</button>
+      <button id="headerContextBtn" class="header-settings-btn" style="margin-left:auto;" aria-label="查看默的上下文" title="查看默每轮收到的上下文"></button>
       <div class="header-title" id="headerTitle">默</div>
     </div>
 
@@ -4237,6 +4237,21 @@
       }
 
       // 查看默每轮开始前收到的完整上下文
+      const EYE_SVG_CLOSED = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-.722-3.25"/><path d="M2 8a10.645 10.645 0 0 0 20 0"/><path d="m20 15-1.726-2.05"/><path d="m4 15 1.726-2.05"/><path d="m9 18 .722-3.25"/></svg>';
+      const EYE_SVG_OPEN = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>';
+      let ctxPreviewOpen = false;
+      function setCtxEyeIcon(open) {
+        const btn = document.getElementById('headerContextBtn');
+        if (btn) btn.innerHTML = open ? EYE_SVG_OPEN : EYE_SVG_CLOSED;
+      }
+      function closeCtxPreview() {
+        const ov = document.getElementById('ctxOverlay');
+        if (ov) ov.remove();
+        ctxPreviewOpen = false;
+        setCtxEyeIcon(false);
+      }
+      window.closeCtxPreview = closeCtxPreview;
+
       async function openContextPreview() {
         const message = (userInput && userInput.value.trim()) || '（示例消息）';
         let data = null;
@@ -4252,6 +4267,8 @@
           alert('上下文加载失败：' + e.message);
           return;
         }
+        ctxPreviewOpen = true;
+        setCtxEyeIcon(true);
         const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const section = (title, text) => `<details style="margin:10px 0;border:1px solid #f0e9f5;border-radius:10px;padding:10px;font-size:13px;"><summary style="cursor:pointer;font-weight:600;color:#333;">${title}（${(text || '').length} 字）</summary><pre style="white-space:pre-wrap;word-break:break-all;margin-top:8px;font-family:inherit;color:#555;font-size:12px;line-height:1.7;">${esc(text) || '（空）'}</pre></details>`;
         const overlay = document.createElement('div');
@@ -4263,21 +4280,27 @@
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
             <span style="font-size:15px;font-weight:600;color:#333;">默的上下文预览</span>
             <span style="font-size:11px;color:#8a83a8;">示例消息：${esc(message.length > 20 ? message.slice(0, 20) + '…' : message)}</span>
-            <span style="margin-left:auto;cursor:pointer;color:#888;font-size:14px;" onclick="document.getElementById('ctxOverlay').remove()">✕</span>
+            <span style="margin-left:auto;cursor:pointer;color:#888;font-size:14px;" onclick="window.closeCtxPreview()">✕</span>
           </div>
           <div style="font-size:12px;color:#8a83a8;margin-bottom:8px;">时间：${esc(data.time)} · 玩具说明书：${data.toyManual ? '已交给默 📖' : '未开启 📕'}</div>
           ${section('系统提示（时间 + 人设 + 搜索）', data.systemPrompt)}
           ${section('注入的记忆（承诺/画像/召回/说明书）', data.memoryContext)}
-          ${section('朋友圈动态', data.momentsContext)}
+          ${section('动态', data.momentsContext)}
           ${section('天气', data.weatherContext)}`;
         box.classList.add('feature-modal');
         overlay.appendChild(box);
-        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        overlay.addEventListener('click', e => { if (e.target === overlay) closeCtxPreview(); });
         document.body.appendChild(overlay);
       }
       window.openContextPreview = openContextPreview;
       const headerContextBtn = document.getElementById('headerContextBtn');
-      if (headerContextBtn) headerContextBtn.addEventListener('click', openContextPreview);
+      if (headerContextBtn) {
+        headerContextBtn.innerHTML = EYE_SVG_CLOSED;
+        headerContextBtn.addEventListener('click', () => {
+          if (ctxPreviewOpen) closeCtxPreview();
+          else openContextPreview();
+        });
+      }
 
       async function refreshChat() {
         showPullToast('🔄 刷新中…');
