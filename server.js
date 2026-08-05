@@ -3059,10 +3059,12 @@ function validAevumConfidence(c) {
 function validAevumLayers(arr, primaryType, owner) {
   if (primaryType === 'self_model') return [];
   let out = [];
+  // 只允许"当前类型可直接衍生的目标层级"，不允许跳级（例如事实不能直接标用户倾向）
+  const allowed = AEVUM_DERIVE_GRAPH[primaryType] || [];
   if (Array.isArray(arr)) {
     for (const x of arr) {
       const t = String(x);
-      if (AEVUM_LAYER_TYPES.includes(t) && !out.includes(t)) out.push(t);
+      if (allowed.includes(t) && !out.includes(t)) out.push(t);
     }
   }
   if (owner !== 'AGENT') out = out.filter(t => t !== 'personality');
@@ -3502,7 +3504,7 @@ async function extractAevumMemories(texts, episodeId = null) {
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(激动)，只作辅助参数
 - importance 重要度 0-10：按 明确程度+重复频率+长期影响+关系影响+情绪权重 估分；一次性的小事给低分
 - emotion_weight 情感分量 0-10：这条记忆对雪与默的关系/情感联结有多重要（看重长期情感分量，不是情绪强度；普通偏好 3-5，关系核心 8-10）
-- layers 多维归属：一条内容若同时符合多个维度，把主类型 type 放第一位，最多再标 1 个确实成立的维度（event/fact/meaning/user_tendency/personality 中选）；意义 与 用户倾向 通常二选一，别同时标；只标真实同时成立的，不凑数
+- layers 多维归属：只能标"当前类型可直接衍生的目标层级"，不能跳级（例如事实只能标意义/关系，不能标用户倾向；意义才能标用户倾向/人格）；把主类型 type 放第一位，最多再标 1 个；只标真实同时成立的，不凑数
 - tags：5-8 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
@@ -3836,7 +3838,7 @@ async function buildTopicClusters() {
           { role: 'user', content: `事件块列表：\n${lines}` }
         ],
         reasoning_effort: 'low',
-        max_tokens: 1000,
+        max_tokens: 2000,
         temperature: 0.3,
         stream: false
       })
@@ -3846,12 +3848,22 @@ async function buildTopicClusters() {
     const reply = String(data2.choices?.[0]?.message?.content || '');
     const mk = '[AEVUM_TOPICS]';
     const mi = reply.indexOf(mk);
-    if (mi === -1) return { topics: [], created: 0 };
+    if (mi === -1) {
+      console.warn('Aevum 记忆书聚类未找到标记，回复前 200 字:', reply.slice(0, 200));
+      return { topics: [], created: 0, message: 'AI 没有返回有效结果，请稍后再试' };
+    }
     let parsed = null;
     try {
-      parsed = JSON.parse(reply.substring(mi + mk.length).trim());
+      let jsonText = reply.substring(mi + mk.length).trim();
+      // 兼容模型把 JSON 包在 ``` 代码块里，或前后有解释文字的情况
+      jsonText = jsonText.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      if (jsonText.indexOf('{') !== -1 && jsonText.lastIndexOf('}') > jsonText.indexOf('{')) {
+        jsonText = jsonText.substring(jsonText.indexOf('{'), jsonText.lastIndexOf('}') + 1);
+      }
+      parsed = JSON.parse(jsonText);
     } catch (e) {
-      return { topics: [], created: 0 };
+      console.error('Aevum 记忆书聚类结果解析失败:', e.message, '回复前 300 字:', reply.slice(0, 300));
+      return { topics: [], created: 0, message: 'AI 返回格式异常，请稍后再试' };
     }
     const validIds = new Set(list.map(e => e.id));
     const createdTopics = [];
@@ -3870,6 +3882,9 @@ async function buildTopicClusters() {
         await supabase.from('aevum_episodes').update({ topic_id: tp.id, updated_at: new Date().toISOString() }).eq('id', eid);
       }
       createdTopics.push({ id: tp.id, title: tp.title, summary: tp.summary, episode_count: ids.length });
+    }
+    if (!createdTopics.length) {
+      return { topics: [], created: 0, message: 'AI 认为目前的事件块太零散，暂时整理不出完整故事线；再多聊几段相关话题后再试试~' };
     }
     return { topics: createdTopics, created: createdTopics.length };
   } catch (e) {
