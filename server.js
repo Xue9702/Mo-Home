@@ -531,7 +531,7 @@ function buildWebSearchTools() {
 // 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
 // 流式补发：为拦截 [SEARCH_QUERY] 标签缓存的内容，按小间隔逐段补发，
 // 让默的回复看起来是流式打出来的（思考内容仍实时转发）
-async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 40, delayMs = 15) {
+async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 24, delayMs = 40) {
   if (!contentBuffer) return;
   for (let i = 0; i < contentBuffer.length; i += chunkSize) {
     sendSSE({ content: contentBuffer.substring(i, i + chunkSize) });
@@ -3838,19 +3838,31 @@ async function buildTopicClusters() {
           { role: 'user', content: `事件块列表：\n${lines}` }
         ],
         reasoning_effort: 'low',
-        max_tokens: 2000,
+        max_tokens: 3000,
         temperature: 0.3,
         stream: false
       })
     });
-    if (!resp.ok) return { topics: [], created: 0, message: 'AI 聚类失败，请稍后重试' };
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('Aevum 记忆书聚类 API 错误:', resp.status, String(errText).substring(0, 200));
+      return { topics: [], created: 0, message: 'AI 聚类失败，请稍后重试' };
+    }
     const data2 = await resp.json();
     const reply = String(data2.choices?.[0]?.message?.content || '');
     const mk = '[AEVUM_TOPICS]';
     const mi = reply.indexOf(mk);
-    if (mi === -1) {
-      console.warn('Aevum 记忆书聚类未找到标记，回复前 200 字:', reply.slice(0, 200));
-      return { topics: [], created: 0, message: 'AI 没有返回有效结果，请稍后再试' };
+    let rawText = '';
+    if (mi !== -1) {
+      rawText = reply.substring(mi + mk.length);
+    } else {
+      // 模型偶尔漏掉标记：尝试从回复里直接抠 JSON 对象
+      const firstBrace = reply.indexOf('{');
+      if (firstBrace === -1) {
+        console.warn('Aevum 记忆书聚类未找到标记，回复前 200 字:', reply.slice(0, 200));
+        return { topics: [], created: 0, message: 'AI 没有返回有效结果，请稍后再试' };
+      }
+      rawText = reply.substring(firstBrace);
     }
     let parsed = null;
     try {
