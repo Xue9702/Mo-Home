@@ -2089,6 +2089,9 @@
       const AEVUM_VIEWS = [
         ['sea', '记忆海'], ['book', '记忆书'], ['heart', '记忆心']
       ];
+      const AEVUM_SEA_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15h-6.5a2.5 2.5 0 1 1 0 -5h.5"/><path d="M15 12v6.5a2.5 2.5 0 1 1 -5 0v-.5"/><path d="M12 9h6.5a2.5 2.5 0 1 1 0 5h-.5"/><path d="M9 12v-6.5a2.5 2.5 0 0 1 5 0v.5"/></svg>';
+      const AEVUM_BOOK_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v8l3-3 3 3V2"/><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/></svg>';
+      const AEVUM_HEART_ICON = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v16"/><path d="m19 13 2-1a9 9 0 0 1-18 0l2 1"/><path d="M9 11h6"/><circle cx="12" cy="4" r="2"/></svg>';
       let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false };
 
       // ================== 玩具实验室（Web Bluetooth 直连） ==================
@@ -2494,21 +2497,28 @@
           const viewTitle = inSea ? '记忆海 · 事件单元'
             : aevumState.view === 'book' ? '记忆书 · 故事线与计划'
             : '记忆心 · 我眼里的默 / 画像 / 承诺';
-          const chips = AEVUM_VIEWS.map(([v, l]) => {
+          const entryCards = AEVUM_VIEWS.map(([v, l]) => {
             const active = aevumState.view === v;
             let count = '';
+            let desc = '';
             if (v === 'sea') count = stats.total || 0;
             else if (v === 'book') count = (bookData.books || []).length;
-            return `<span onclick="aevumSetView('${v}')" style="cursor:pointer;padding:6px 14px;border-radius:16px;font-size:13px;${active
-              ? 'background:#ffd3de;color:#fff;'
-              : 'background:#fff;color:#8a83a8;border:1px solid #f0e9f5;'}">${l}${count ? ` <span style="opacity:0.85;">(${count})</span>` : ''}</span>`;
+            if (v === 'sea') desc = '事件单元 · 自动提取，随时回顾';
+            else if (v === 'book') desc = '故事线 + 计划';
+            else desc = '我眼里的默 / 画像 / 承诺';
+            const icon = v === 'sea' ? AEVUM_SEA_ICON : v === 'book' ? AEVUM_BOOK_ICON : AEVUM_HEART_ICON;
+            return `<div onclick="aevumSetView('${v}')" style="cursor:pointer;flex:1;min-width:150px;border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:5px;${active
+              ? 'background:#ffd3de;color:#fff;box-shadow:0 2px 10px rgba(225,120,154,0.25);'
+              : 'background:#fff;color:#333;border:1px solid #f0e9f5;'}">
+                <span style="font-size:24px;line-height:1;">${icon}</span>
+                <span style="font-size:15px;font-weight:600;">${l}${count ? ` <span style="opacity:0.85;font-size:12px;">(${count})</span>` : ''}</span>
+                <span style="font-size:11px;${active ? 'color:rgba(255,255,255,0.85);' : 'color:#b0a6c4;'}">${desc}</span>
+              </div>`;
           }).join('');
 
           let html = `
             <div class="feature-card" style="align-items:stretch;gap:8px;">
-              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                ${chips}
-              </div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;">${entryCards}</div>
               <div style="font-size:13px;color:#666;font-weight:600;">${viewTitle}</div>
               ${inSea ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 ${filterSel('aevumStatus', [['active', '活跃'], ['archived', '已归档']], aevumState.filters.status, '全部状态')}
@@ -2588,29 +2598,7 @@
         const expired = planData.expired || [];
         const today = new Date(); today.setHours(0, 0, 0, 0);
         const todayEnd = new Date(today.getTime() + 86400000);
-        return `
-          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span style="font-size:14px;font-weight:600;color:#333;">记忆书 · 故事线</span>
-              <span style="font-size:11px;color:#8a83a8;">把记忆海的事件单元串成完整故事，默回忆时能看到整段经过</span>
-              <span style="margin-left:auto;">
-                <button data-regen-books onclick="aevumRegenerateBooks()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;" title="清掉现有故事线，用全部事件单元重新整理">♻ 重新整理</button>
-                <button data-genbooks onclick="aevumGenerateBooks()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成记忆书</button>
-              </span>
-            </div>
-            <div style="font-size:11px;color:#b0a6c4;">点故事线看它包含的事件单元；点事件可看原文。</div>
-          </div>
-          ${books.length ? books.map(b => `
-            <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <span style="cursor:pointer;font-size:14px;font-weight:600;color:#333;" onclick="aevumToggleBook(${b.id})">${escapeHtml2(b.label || '（无标签）')}</span>
-                <span style="font-size:11px;color:#8a83a8;">${b.unit_count || 0} 个事件单元</span>
-                <span style="margin-left:auto;cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumRenameBook(${b.id}, this)">✎ 改名/改摘要</span>
-              </div>
-              <div style="font-size:13px;color:#555;line-height:1.7;">${escapeHtml2(b.summary)}</div>
-              <div id="aevumBookBody_${b.id}" style="display:none;"></div>
-            </div>`).join('')
-            : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">记忆书还是空的，点「✨ 生成记忆书」把事件单元串成故事线吧~</div>'}
+        const plansCard = `
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="font-size:14px;font-weight:600;color:#333;">计划</div>
             <div style="font-size:12px;color:#8a83a8;">写下一件要在有效期内做的事，默会记得提醒你。</div>
@@ -2641,6 +2629,31 @@
             : '<div style="font-size:13px;color:#b0a6c4;padding:6px 0;">还没有计划，写一件想做的事吧~</div>'}
             ${expired.length ? `<div style="font-size:12px;color:#b0a6c4;margin-top:4px;">已到期 ${expired.length} 条（不再提醒，可在下轮清掉）</div>` : ''}
           </div>`;
+        const storiesHtml = books.length ? books.map(b => `
+            <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="cursor:pointer;font-size:14px;font-weight:600;color:#333;" onclick="aevumToggleBook(${b.id})">${escapeHtml2(b.label || '（无标签）')}</span>
+                <span style="font-size:11px;color:#8a83a8;">${b.unit_count || 0} 个事件单元</span>
+                <span style="margin-left:auto;cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumRenameBook(${b.id}, this)">✎ 改名/改摘要</span>
+              </div>
+              <div style="font-size:13px;color:#555;line-height:1.7;">${escapeHtml2(b.summary)}</div>
+              <div id="aevumBookBody_${b.id}" style="display:none;"></div>
+            </div>`).join('')
+            : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">记忆书还是空的，点「✨ 生成记忆书」把事件单元串成故事线吧~</div>';
+        return `
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">记忆书 · 故事线</span>
+              <span style="font-size:11px;color:#8a83a8;">把记忆海的事件单元串成完整故事，默回忆时能看到整段经过</span>
+              <span style="margin-left:auto;">
+                <button data-regen-books onclick="aevumRegenerateBooks()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;" title="清掉现有故事线，用全部事件单元重新整理">♻ 重新整理</button>
+                <button data-genbooks onclick="aevumGenerateBooks()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成记忆书</button>
+              </span>
+            </div>
+            <div style="font-size:11px;color:#b0a6c4;">点故事线看它包含的事件单元；点事件可看原文。</div>
+          </div>
+          ${plansCard}
+          ${storiesHtml}`;
       }
 
       // v3.0 记忆心面板：我眼里的默 / 画像 / 承诺 / 默札占位
