@@ -1,5 +1,5 @@
 // sw.js - 基础 Service Worker
-const CACHE_NAME = 'mo-home-v3';
+const CACHE_NAME = 'mo-home-v4';
 const urlsToCache = [
   '/',
   '/chat.html',
