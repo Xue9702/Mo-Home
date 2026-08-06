@@ -2091,7 +2091,7 @@
         ['relationship', '关系'], ['user_tendency', '用户倾向'], ['personality', '人格'], ['self_model', '核心'],
         ['archived', '已归档']
       ];
-      let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false };
+      let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false };
 
       // ================== 玩具实验室（Web Bluetooth 直连） ==================
       let toyDevice = null;
@@ -2460,30 +2460,31 @@
         box.innerHTML = '<div class="weather-loading">加载中…</div>';
         try {
           const params = new URLSearchParams();
-          if (AEVUM_TYPE_LABELS[aevumState.view]) params.set('type', aevumState.view);
-          if (aevumState.view === 'sea') params.set('status', 'candidate');
-          else if (aevumState.view !== 'archived' && aevumState.filters.status) params.set('status', aevumState.filters.status);
+          if (aevumState.view === 'sea') {
+            if (aevumState.filters.status) params.set('status', aevumState.filters.status);
+            else params.set('status', 'active');
+          }
           if (aevumState.filters.owner) params.set('owner', aevumState.filters.owner);
           if (aevumState.filters.domain) params.set('domain', aevumState.filters.domain);
           if (aevumState.filters.q) params.set('q', aevumState.filters.q);
-          const [listRes, statsRes, promRes, topicRes, profRes] = await Promise.all([
+          const [listRes, statsRes, bookRes, planRes, profRes, moRes, promRes, mozhaRes] = await Promise.all([
             fetch('/api/aevum?' + params.toString()),
             fetch('/api/aevum/stats'),
+            fetch('/api/aevum/books').catch(() => null),
+            fetch('/api/aevum/plans').catch(() => null),
+            fetch('/api/aevum/profile').catch(() => null),
+            fetch('/api/aevum/mo-view').catch(() => null),
             fetch('/api/aevum/promises').catch(() => null),
-            fetch('/api/aevum/topics').catch(() => null),
-            fetch('/api/aevum/profile').catch(() => null)
+            fetch('/api/aevum/mozha/count').catch(() => null)
           ]);
           let list = (await listRes.json()).memories || [];
           const stats = await statsRes.json();
-          const promData = promRes && promRes.ok ? await promRes.json() : { active: [], archived: [] };
-          const topicData = topicRes && topicRes.ok ? await topicRes.json() : { topics: [] };
+          const bookData = bookRes && bookRes.ok ? await bookRes.json() : { books: [] };
+          const planData = planRes && planRes.ok ? await planRes.json() : { active: [], expired: [] };
           const profData = profRes && profRes.ok ? await profRes.json() : { content: '', dimensions: null, updated_at: null };
-          // 层级页默认只显示活跃/已确认的记忆；已归档页只显示归档/已拒绝
-          if (aevumState.view === 'archived') {
-            list = list.filter(m => m.status === 'archived' || m.status === 'rejected');
-          } else if (AEVUM_TYPE_LABELS[aevumState.view] && !aevumState.filters.status) {
-            list = list.filter(m => m.status === 'active' || m.status === 'verified');
-          }
+          const moData = moRes && moRes.ok ? await moRes.json() : { content: '', updated_at: null };
+          const promData = promRes && promRes.ok ? await promRes.json() : { active: [], archived: [] };
+          const mozhaCount = mozhaRes && mozhaRes.ok ? ((await mozhaRes.json()).count || 0) : 0;
 
           const filterSel = (id, options, value, placeholder) => `
             <select id="${id}" onchange="aevumFilter()" style="flex:1;min-width:0;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 8px;font-size:13px;background:rgba(255,255,255,0.7);color:#444;outline:none;">
@@ -2492,21 +2493,14 @@
             </select>`;
 
           const inSea = aevumState.view === 'sea';
-          const inSimple = ['promise', 'topic', 'profile'].includes(aevumState.view);
-          const viewTitle = inSea ? '记忆海 · 待你处理'
-            : aevumState.view === 'promise' ? '承诺区'
-            : aevumState.view === 'topic' ? '主题 · 记忆地图'
-            : aevumState.view === 'profile' ? '用户画像'
-            : aevumState.view === 'archived' ? '已归档 · 回收站'
-            : `${AEVUM_TYPE_LABELS[aevumState.view] || aevumState.view}记忆`;
+          const viewTitle = inSea ? '记忆海 · 事件单元'
+            : aevumState.view === 'book' ? '记忆书 · 故事线与计划'
+            : '记忆心 · 我眼里的默 / 画像 / 承诺';
           const chips = AEVUM_VIEWS.map(([v, l]) => {
             const active = aevumState.view === v;
             let count = '';
-            if (v === 'sea') count = (stats.byStatus && stats.byStatus.candidate) || 0;
-            else if (v === 'promise') count = (promData.active || []).length;
-            else if (v === 'topic') count = (topicData.topics || []).length;
-            else if (v === 'archived') count = ((stats.byStatus && (stats.byStatus.archived || 0)) + (stats.byStatus && (stats.byStatus.rejected || 0))) || 0;
-            else count = (stats.byTypeActive && stats.byTypeActive[v]) || 0;
+            if (v === 'sea') count = stats.total || 0;
+            else if (v === 'book') count = (bookData.books || []).length;
             return `<span onclick="aevumSetView('${v}')" style="cursor:pointer;padding:6px 14px;border-radius:16px;font-size:13px;${active
               ? 'background:#ffd3de;color:#fff;'
               : 'background:#fff;color:#8a83a8;border:1px solid #f0e9f5;'}">${l}${count ? ` <span style="opacity:0.85;">(${count})</span>` : ''}</span>`;
@@ -2518,52 +2512,31 @@
                 ${chips}
               </div>
               <div style="font-size:13px;color:#666;font-weight:600;">${viewTitle}</div>
-              ${inSimple ? '' : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                ${inSea ? '' : filterSel('aevumStatus', Object.entries(AEVUM_STATUS_LABELS), aevumState.filters.status, '全部状态')}
+              ${inSea ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                ${filterSel('aevumStatus', [['active', '活跃'], ['archived', '已归档']], aevumState.filters.status, '全部状态')}
                 ${filterSel('aevumOwner', AEVUM_OWNER_OPTIONS, aevumState.filters.owner, '全部归属')}
                 ${filterSel('aevumDomain', AEVUM_DOMAINS_FRONT.map(d => [d, d]), aevumState.filters.domain, '全部领域')}
                 <input id="aevumQ" placeholder="搜索内容…" value="${escapeHtml2(aevumState.filters.q)}" oninput="aevumFilter()"
                   style="flex:1;min-width:90px;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 10px;font-size:13px;background:rgba(255,255,255,0.7);outline:none;">
-                <button onclick="aevumManualExtract()" title="从最近 12 条对话提取候选记忆"
+                <button onclick="aevumManualExtract()" title="从最近 12 条对话提取事件单元"
                   style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">从最近对话提取</button>
                 <button onclick="aevumBackfill()" title="给还没有向量的记忆补算向量"
                   style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">补算向量</button>
-                <button data-mergecheck onclick="aevumMergeCheck()" title="让 AI 检查相似记忆，可一键合并"
-                  style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">🔗 合并检查</button>
                 <button onclick="aevumToggleForm()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">${aevumState.showForm || aevumState.editingId ? '收起' : '+ 新增记忆'}</button>
-              </div>`}
-              ${inSimple ? '' : `<div style="font-size:12px;color:#8a83a8;display:flex;gap:12px;flex-wrap:wrap;">
+              </div>` : ''}
+              ${inSea ? `<div style="font-size:12px;color:#8a83a8;display:flex;gap:12px;flex-wrap:wrap;">
                 <span>共 ${stats.total || 0} 条</span>
-                <span style="color:#e1789a;">待处理 ${(stats.byStatus && stats.byStatus.candidate) || 0}</span>
                 <span style="color:#2ecc71;">活跃 ${(stats.byStatus && stats.byStatus.active) || 0}</span>
                 <span style="color:#aaa;">已归档 ${(stats.byStatus && stats.byStatus.archived) || 0}</span>
-                <span style="color:#e74c3c;">已拒绝 ${(stats.byStatus && stats.byStatus.rejected) || 0}</span>
-              </div>`}
+              </div>` : ''}
             </div>
-            ${aevumState.view === 'promise' ? renderPromisePanel(promData) : ''}
-            ${aevumState.view === 'topic' ? renderTopicPanel(topicData) : ''}
-            ${aevumState.view === 'profile' ? renderProfilePanel(profData, list.filter(m => m.type === 'user_tendency' && m.status === 'active')) : ''}
-            ${(aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
-            ${aevumState.mergeGroups.length ? `
-            <div class="feature-card" style="align-items:stretch;gap:10px;">
-              <div style="font-size:14px;font-weight:600;color:#333;">可合并的记忆（${aevumState.mergeGroups.length} 组）</div>
-              ${aevumState.mergeGroups.map((g, gi) => `
-                <div style="border:1px solid #f0e9f5;border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;">
-                  <div style="font-size:12px;color:#8a83a8;">${escapeHtml2(g.reason || '内容相似')}（${g.ids.map(id => '#' + id).join('、')}）</div>
-                  <textarea id="mergeContent_${gi}" style="width:100%;min-height:60px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">${escapeHtml2(g.merged_content)}</textarea>
-                  <div style="display:flex;gap:8px;justify-content:flex-end;">
-                    <button onclick="aevumMergeApply(${gi})" style="border:none;border-radius:10px;background:#ffd3de;color:#fff;padding:6px 14px;font-size:12px;cursor:pointer;">合并</button>
-                    <button onclick="aevumMergeSkip(${gi})" style="border:1px solid #ddd;border-radius:10px;background:#fff;color:#888;padding:6px 14px;font-size:12px;cursor:pointer;">跳过</button>
-                  </div>
-                </div>`).join('')}
-            </div>` : ''}
-            <div style="display:flex;flex-direction:column;gap:10px;">
-              ${inSimple ? '' : (list.length
-                ? list.map(m => renderAevumCard(m)).join('')
-                : `<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">${inSea
-                    ? '记忆海空空的~默的对话会自动提取新记忆到这里等你处理'
-                    : '这里还没有已处理的记忆'}</div>`)}
-            </div>`;
+            ${aevumState.view === 'book' ? renderBookPanel(bookData, planData) : ''}
+            ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, promData, mozhaCount) : ''}
+            ${inSea && (aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
+            ${inSea ? `<div style="display:flex;flex-direction:column;gap:10px;">
+              ${list.length ? list.map(m => renderSeaCard(m)).join('')
+                : `<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">${aevumState.filters.status === 'archived' ? '这里还没有归档的记忆' : '记忆海空空的~默的对话会自动把事件单元存进来'}</div>`}
+            </div>` : ''}`;
           box.innerHTML = html;
         } catch (e) {
           box.innerHTML = '<div class="weather-loading">加载失败，请先执行 setup_aevum.sql 并确认后端已部署</div>';
@@ -2584,14 +2557,10 @@
             <div style="font-size:12px;color:#8a83a8;">雪对默许下的承诺，默每次醒来和每次聊天都会固定看到；到期后自动转为一条普通记忆。</div>
             <textarea id="promiseInput" placeholder="例如：会让你慢慢完整起来…" style="width:100%;min-height:70px;border:1px solid #eee;border-radius:12px;padding:8px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;"></textarea>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <select id="promiseDays" style="border:1px solid #eee;border-radius:10px;padding:6px 8px;font-size:13px;">
-                <option value="3">有效期：3 天</option>
-                <option value="7">有效期：7 天</option>
-                <option value="30" selected>有效期：30 天</option>
-                <option value="0">一直有效</option>
-              </select>
+              <input id="promiseExpires" type="datetime-local" title="留空 = 一直有效" style="flex:1;min-width:150px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;outline:none;">
               <button onclick="aevumAddPromise()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;">💗 记下承诺</button>
             </div>
+            <div style="font-size:11px;color:#b0a6c4;">有效期至：选择具体日期时间；留空表示一直有效。到期后自动转为一条记忆海的普通记忆。</div>
           </div>
           <div class="feature-card" style="align-items:stretch;gap:6px;">
             <div style="font-size:14px;font-weight:600;color:#333;">进行中的承诺（${active.length}）</div>
@@ -2600,7 +2569,7 @@
                 <span style="font-size:20px;">💗</span>
                 <div style="flex:1;font-size:13px;color:#444;line-height:1.5;">
                   <div>${escapeHtml2(p.content)}</div>
-                  <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">${p.expires_at ? '还有 ' + promiseRemainDays(p.expires_at) + ' 天' : '一直有效'}</div>
+                  <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">${p.expires_at ? '有效期至 ' + new Date(p.expires_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '（还有 ' + promiseRemainDays(p.expires_at) + ' 天）' : '一直有效'}</div>
                 </div>
                 <span style="cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0;" onclick="aevumDeletePromise(${p.id})">移除</span>
               </div>`).join('')
@@ -2612,6 +2581,97 @@
             ${archived.slice(0, 5).map(p => `
               <div style="font-size:12px;color:#aaa;padding:4px 0;border-bottom:1px solid #f6f2f8;">${escapeHtml2(p.content)}</div>`).join('')}
           </div>` : ''}`;
+      }
+
+      // v3.0 记忆书面板：故事线 + 计划
+      function renderBookPanel(bookData, planData) {
+        const books = bookData.books || [];
+        const plans = planData.active || [];
+        const expired = planData.expired || [];
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(today.getTime() + 86400000);
+        return `
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">记忆书 · 故事线</span>
+              <span style="font-size:11px;color:#8a83a8;">把记忆海的事件单元串成完整故事，默回忆时能看到整段经过</span>
+              <span style="margin-left:auto;">
+                <button data-regen-books onclick="aevumRegenerateBooks()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;" title="清掉现有故事线，用全部事件单元重新整理">♻ 重新整理</button>
+                <button data-genbooks onclick="aevumGenerateBooks()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成记忆书</button>
+              </span>
+            </div>
+            <div style="font-size:11px;color:#b0a6c4;">点故事线看它包含的事件单元；点事件可看原文。</div>
+          </div>
+          ${books.length ? books.map(b => `
+            <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="cursor:pointer;font-size:14px;font-weight:600;color:#333;" onclick="aevumToggleBook(${b.id})">${escapeHtml2(b.label || '（无标签）')}</span>
+                <span style="font-size:11px;color:#8a83a8;">${b.unit_count || 0} 个事件单元</span>
+                <span style="margin-left:auto;cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumRenameBook(${b.id}, this)">✎ 改名/改摘要</span>
+              </div>
+              <div style="font-size:13px;color:#555;line-height:1.7;">${escapeHtml2(b.summary)}</div>
+              <div id="aevumBookBody_${b.id}" style="display:none;"></div>
+            </div>`).join('')
+            : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">记忆书还是空的，点「✨ 生成记忆书」把事件单元串成故事线吧~</div>'}
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="font-size:14px;font-weight:600;color:#333;">计划</div>
+            <div style="font-size:12px;color:#8a83a8;">写下一件要在有效期内做的事，默会记得提醒你。</div>
+            <textarea id="planInput" placeholder="例如：周五之前陪我去挑新画架…" style="width:100%;min-height:60px;border:1px solid #eee;border-radius:12px;padding:8px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;"></textarea>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <input id="planExpires" type="datetime-local" title="留空 = 长期计划" style="flex:1;min-width:150px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;outline:none;">
+              <button onclick="aevumAddPlan()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;">📌 记下计划</button>
+            </div>
+            <div style="font-size:14px;font-weight:600;color:#333;margin-top:6px;">进行中的计划（${plans.length}）</div>
+            ${plans.length ? plans.map(p => {
+              let dueText = '长期计划';
+              if (p.expires_at) {
+                const t = new Date(p.expires_at).getTime();
+                dueText = t >= today.getTime() && t < todayEnd.getTime()
+                  ? '今天到期 ⏰'
+                  : '还有 ' + promiseRemainDays(p.expires_at) + ' 天（' + new Date(p.expires_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '）';
+              }
+              return `
+                <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f6f2f8;">
+                  <span style="font-size:18px;">📌</span>
+                  <div style="flex:1;font-size:13px;color:#444;line-height:1.5;">
+                    <div>${escapeHtml2(p.content)}</div>
+                    <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">${dueText}</div>
+                  </div>
+                  <span style="cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0;" onclick="aevumDeletePlan(${p.id})">移除</span>
+                </div>`;
+            }).join('')
+            : '<div style="font-size:13px;color:#b0a6c4;padding:6px 0;">还没有计划，写一件想做的事吧~</div>'}
+            ${expired.length ? `<div style="font-size:12px;color:#b0a6c4;margin-top:4px;">已到期 ${expired.length} 条（不再提醒，可在下轮清掉）</div>` : ''}
+          </div>`;
+      }
+
+      // v3.0 记忆心面板：我眼里的默 / 画像 / 承诺 / 默札占位
+      function renderHeartPanel(moData, profData, promData, mozhaCount) {
+        const mo = String(moData.content || '');
+        const moEditing = aevumState.moEditing;
+        return `
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">我眼里的默</span>
+              <span style="font-size:11px;color:#8a83a8;">默对自己的长期认知，每次聊天和唤醒都会固定看到</span>
+              <span style="margin-left:auto;display:flex;gap:8px;">
+                ${moEditing
+                  ? `<button onclick="aevumMoSave()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">保存</button>
+                     <button onclick="aevumMoCancelEdit()" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#888;padding:8px 14px;font-size:13px;cursor:pointer;">取消</button>`
+                  : `<button onclick="aevumMoGenerate()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;">✨ AI 生成</button>
+                     ${mo ? `<button onclick="aevumMoEdit()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 编辑</button>` : ''}`}
+              </span>
+            </div>
+            ${moEditing
+              ? `<textarea id="aevumMoContent" style="width:100%;min-height:120px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">${escapeHtml2(mo)}</textarea>`
+              : (mo ? `<div style="font-size:13px;color:#555;line-height:1.8;white-space:pre-wrap;">${escapeHtml2(mo)}</div>` : '<div style="font-size:13px;color:#b0a6c4;">还没有内容，点「✨ AI 生成」根据默的行为记录归纳~</div>')}
+            ${moData.updated_at ? `<div style="font-size:11px;color:#b0a6c4;">上次更新：${new Date(moData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
+          </div>
+          ${renderProfilePanel(profData, [])}
+          ${renderPromisePanel(promData)}
+          <div class="feature-card" style="align-items:center;gap:6px;">
+            <div style="font-size:13px;color:#8a83a8;">📓 默札 · ${mozhaCount} 篇（仅默可见，他不主动翻开时谁也看不到）</div>
+          </div>`;
       }
 
       function renderTopicPanel(topicData) {
@@ -2688,35 +2748,19 @@
       function renderAevumForm() {
         const editing = aevumState.editingId;
         const base = editing ? (aevumState.editingData || {}) : {};
-        const t = base.type || 'event';
         const o = base.owner || 'USER';
-        const c = base.confidence || { evidence: 0.5, stability: 0.5, importance: 0.5 };
+        const evt = base.event_time ? String(base.event_time).slice(0, 16) : '';
         return `
           <div class="feature-card" style="align-items:stretch;gap:10px;">
-            <div style="font-size:15px;font-weight:600;color:#333;">${editing ? '修改记忆' : '新增记忆'}</div>
+            <div style="font-size:15px;font-weight:600;color:#333;">${editing ? '修改事件单元' : '新增事件单元'}</div>
+            <input id="aevumFormTitle" placeholder="标题（一句话，10 字内）" value="${escapeHtml2(base.title || '')}" style="border:1px solid #eee;border-radius:10px;padding:6px 10px;font-size:13px;outline:none;">
+            <textarea id="aevumFormContent" placeholder="事件内容（时间/背景/谁说了或做了什么/结果）…" style="width:100%;min-height:80px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;">${escapeHtml2(base.content || '')}</textarea>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <select id="aevumFormType" style="flex:1;min-width:100px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;">
-                ${Object.entries(AEVUM_TYPE_LABELS).map(([v, l]) => `<option value="${v}" ${t === v ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
               <select id="aevumFormOwner" style="flex:1;min-width:100px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;">
                 ${AEVUM_OWNER_OPTIONS.map(([v, l]) => `<option value="${v}" ${o === v ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
+              <input id="aevumFormEventTime" type="datetime-local" value="${escapeHtml2(evt)}" style="flex:1;min-width:140px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;outline:none;">
             </div>
-            <div style="font-size:12px;color:#888;">同时归入的维度（这条内容同时符合多个层级时勾选，主题聚类会完整读到）</div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;" id="aevumFormLayers">
-              ${['event', 'fact', 'meaning', 'relationship', 'user_tendency', 'personality'].map(t => `
-                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#555;cursor:pointer;">
-                  <input type="checkbox" value="${t}" ${(base.layers && base.layers.length ? base.layers : [base.type]).includes(t) ? 'checked' : ''}> ${AEVUM_TYPE_LABELS[t] || t}
-                </label>`).join('')}
-            </div>
-            <textarea id="aevumFormContent" placeholder="记忆内容…" style="width:100%;min-height:80px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;">${escapeHtml2(base.content || '')}</textarea>
-            <div style="font-size:12px;color:#888;">置信度</div>
-            ${['evidence', 'stability', 'importance'].map(k => `
-              <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#666;">
-                <span style="width:64px;flex-shrink:0;">${k === 'evidence' ? '来源可信' : k === 'stability' ? '稳定程度' : '长期影响'}</span>
-                <input id="aevumFormRange_${k}" type="range" min="0" max="1" step="0.05" value="${c[k] || 0.5}" oninput="document.getElementById('aevumConf_${k}').textContent = (+this.value).toFixed(2)" style="flex:1;">
-                <span id="aevumConf_${k}" style="width:36px;text-align:right;">${(c[k] || 0.5).toFixed(2)}</span>
-              </div>`).join('')}
             <div style="font-size:12px;color:#888;">领域</div>
             <div style="display:flex;flex-wrap:wrap;gap:6px;" id="aevumFormDomains">
               ${AEVUM_DOMAINS_FRONT.map(d => `
@@ -2730,7 +2774,7 @@
               <span id="aevumFormValenceVal" style="width:36px;text-align:right;">${((base.emotion && base.emotion.valence) || 0).toFixed(2)}</span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#666;">
-              <span style="width:64px;flex-shrink:0;">唤醒度</span>
+              <span style="width:64px;flex-shrink:0;">唤醒</span>
               <input id="aevumFormArousal" type="range" min="0" max="1" step="0.05" value="${(base.emotion && base.emotion.arousal) || 0}" oninput="document.getElementById('aevumFormArousalVal').textContent = (+this.value).toFixed(2)" style="flex:1;">
               <span id="aevumFormArousalVal" style="width:36px;text-align:right;">${((base.emotion && base.emotion.arousal) || 0).toFixed(2)}</span>
             </div>
@@ -2739,13 +2783,7 @@
               <input id="aevumFormImportance" type="range" min="0" max="10" step="1" value="${base.importance ?? 5}" oninput="document.getElementById('aevumFormImportanceVal').textContent = this.value" style="flex:1;">
               <span id="aevumFormImportanceVal" style="width:24px;text-align:right;">${base.importance ?? 5}</span>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#666;">
-              <span style="width:64px;flex-shrink:0;">情感分量</span>
-              <input id="aevumFormEmotionWeight" type="range" min="0" max="10" step="1" value="${base.emotion_weight ?? 5}" oninput="document.getElementById('aevumFormEmotionWeightVal').textContent = this.value" style="flex:1;">
-              <span id="aevumFormEmotionWeightVal" style="width:24px;text-align:right;">${base.emotion_weight ?? 5}</span>
-            </div>
             <input id="aevumFormTags" placeholder="标签（逗号分隔）" value="${escapeHtml2((base.tags || []).join('，'))}" style="border:1px solid #eee;border-radius:10px;padding:6px 10px;font-size:13px;">
-            <input id="aevumFormSource" placeholder="来源（可选）" value="${escapeHtml2(base.source || '')}" style="border:1px solid #eee;border-radius:10px;padding:6px 10px;font-size:13px;">
             <div style="display:flex;gap:10px;justify-content:flex-end;">
               <button onclick="aevumCancelForm()" style="border:1px solid #ddd;border-radius:14px;background:#fff;color:#666;padding:8px 16px;font-size:13px;cursor:pointer;">取消</button>
               <button onclick="aevumSave()" style="border:none;border-radius:14px;background:#ffd3de;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;">${editing ? '保存修改' : '新增'}</button>
@@ -2753,65 +2791,28 @@
           </div>`;
       }
 
-      function renderAevumCard(m) {
-        const conf = m.confidence || {};
-        const canReview = ['candidate', 'raw', 'extracted', 'verified'].includes(m.status);
-        const layers = (m.layer_content && typeof m.layer_content === 'object') ? m.layer_content : {};
-        const hasLayers = Object.keys(layers).length > 0;
-        const deriveTargets = AEVUM_DERIVE_GRAPH[m.type] || [];
-        const deriveChips = [
-          `<span style="cursor:default;padding:5px 12px;border-radius:16px;font-size:12px;background:#ffd3de;color:#fff;font-weight:600;">${AEVUM_TYPE_LABELS[m.type] || m.type}</span>`
-        ];
-        if (deriveTargets.length) {
-          deriveChips.push('<span style="color:#ddd;font-size:12px;">→</span>');
-          deriveTargets.forEach(t => {
-            const label = AEVUM_TYPE_LABELS[t] || t;
-            const hasContent = !!layers[t];
-            const clickable = hasLayers ? hasContent : true;
-            const style = hasContent
-              ? 'background:#f7eefb;color:#8a5fb5;border:1px solid #e3d9f2;'
-              : 'background:#fff;color:#ccc;border:1px solid #eee;';
-            const clickAttr = clickable ? `onclick="aevumSwitchLayer(${m.id}, '${t}')"` : '';
-            deriveChips.push(`<span ${clickAttr} style="cursor:${clickable ? 'pointer' : 'default'};padding:5px 12px;border-radius:16px;font-size:12px;${style}">${label}</span>`);
-          });
-        }
-        let hintHtml = '';
-        if (!deriveTargets.length) {
-          hintHtml = '<div style="font-size:11px;color:#b0a6c4;">这个类型没有可衍生的目标</div>';
-        } else if (hasLayers) {
-          const filled = deriveTargets.filter(t => layers[t]).map(t => AEVUM_TYPE_LABELS[t] || t);
-          hintHtml = filled.length
-            ? `<div style="font-size:11px;color:#c084fc;">💡 可衍生为「${filled.join('」「')}」</div>`
-            : '<div style="font-size:11px;color:#b0a6c4;">已分析：AI 认为这些目标暂时都无法可靠衍生</div>';
-        } else {
-          hintHtml = '<div style="font-size:11px;color:#b0a6c4;">💡 点「✨ 分析衍生」生成可衍生的内容</div>';
-        }
-        const statusBg = m.status === 'active' ? '#e8f9f0' : m.status === 'rejected' ? '#fdecec' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6';
-        const statusColor = m.status === 'active' ? '#2ecc71' : m.status === 'rejected' ? '#e74c3c' : m.status === 'archived' ? '#aaa' : '#b8860b';
+      function renderSeaCard(m) {
+        const statusBg = m.status === 'active' ? '#e8f9f0' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6';
+        const statusColor = m.status === 'active' ? '#2ecc71' : m.status === 'archived' ? '#aaa' : '#b8860b';
+        const when = m.event_time || m.created_at;
         return `
           <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${AEVUM_TYPE_COLORS[m.type] || '#eee'};color:#fff;">${AEVUM_TYPE_LABELS[m.type] || m.type}</span>
-              ${(m.layers || []).filter(t => t !== m.type && AEVUM_TYPE_LABELS[t]).map(t => `<span title="同时属于这个维度" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#fff;color:#8a83a8;border:1px solid #e0d8ec;">${AEVUM_TYPE_LABELS[t]}</span>`).join('')}
-              ${m.source === 'auto-extract' ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#eef3ff;color:#7f9fd9;">自动</span>' : ''}
+              <span style="font-size:14px;font-weight:600;color:#333;">${escapeHtml2(m.title || '（无标题）')}</span>
+              ${m.occurrence > 1 ? `<span title="这件事反复出现过" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#fdf3e7;color:#c0846b;">x${m.occurrence}</span>` : ''}
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
-              <span style="margin-left:auto;font-size:11px;color:#b0a6c4;">${new Date(m.updated_at || m.created_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+              <span style="margin-left:auto;font-size:11px;color:#b0a6c4;">${when ? new Date(when).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span>
             </div>
             <div style="font-size:14px;color:#444;line-height:1.6;white-space:pre-wrap;">${escapeHtml2(m.content)}</div>
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
             ${m.domain && m.domain.length ? `<div style="font-size:11px;color:#7f9fd9;">${m.domain.map(escapeHtml2).join(' · ')}</div>` : ''}
-            <div style="font-size:11px;color:#aaa;">重要度 ${m.importance ?? 5} · 情感 ${m.emotion_weight ?? 5} · 来源 ${(conf.evidence || 0).toFixed(2)} · 稳定 ${(conf.stability || 0).toFixed(2)} · 效价 ${((m.emotion && m.emotion.valence) || 0).toFixed(1)} · 唤醒 ${((m.emotion && m.emotion.arousal) || 0).toFixed(1)}</div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${deriveChips.join('')}</div>
-            ${hintHtml}
+            <div style="font-size:11px;color:#aaa;">重要度 ${m.importance ?? 5} · 效价 ${((m.emotion && m.emotion.valence) || 0).toFixed(1)} · 唤醒 ${((m.emotion && m.emotion.arousal) || 0).toFixed(1)}</div>
             <div id="aevumCtx_${m.id}" style="display:none;max-height:200px;overflow:auto;background:#faf7fc;border:1px solid #f0e9f5;border-radius:10px;padding:8px;font-size:12px;"></div>
             <div style="display:flex;gap:10px;justify-content:flex-end;font-size:13px;flex-wrap:wrap;">
-              ${canReview ? `<span style="cursor:pointer;color:#2ecc71;" onclick="aevumReview(${m.id},'approve')">✓ 确认</span>
-              <span style="cursor:pointer;color:#e74c3c;" onclick="aevumReview(${m.id},'reject')">✕ 拒绝</span>` : ''}
               ${m.status === 'archived' || m.status === 'rejected'
                 ? `<span style="cursor:pointer;color:#1e90ff;" onclick="aevumReview(${m.id},'approve')">↺ 恢复</span>`
                 : `<span style="cursor:pointer;color:#888;" onclick="aevumArchive(${m.id})">归档</span>`}
-              ${deriveTargets.length ? `<span style="cursor:pointer;color:#c084fc;font-weight:600;" data-analyze="${m.id}" onclick="aevumAnalyzeLayers(${m.id})">✨ 分析衍生</span>` : ''}
               <span style="cursor:pointer;color:#8a83a8;" onclick="aevumToggleContext(${m.id})">📜 原文</span>
               <span style="cursor:pointer;color:#888;" onclick="aevumEdit(${m.id})">✎ 修改</span>
             </div>
@@ -2835,6 +2836,7 @@
         aevumState.showForm = false;
         aevumState.editingId = null;
         aevumState.editingData = null;
+        aevumState.moEditing = false;
         renderAevum();
       }
       window.aevumSetView = aevumSetView;
@@ -2856,33 +2858,25 @@
       window.aevumCancelForm = aevumCancelForm;
 
       async function aevumSave() {
-        const type = document.getElementById('aevumFormType').value;
+        const title = document.getElementById('aevumFormTitle').value.trim();
         const owner = document.getElementById('aevumFormOwner').value;
         const content = document.getElementById('aevumFormContent').value.trim();
+        const eventTime = document.getElementById('aevumFormEventTime').value;
         const tags = document.getElementById('aevumFormTags').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-        const source = document.getElementById('aevumFormSource').value.trim();
         const domains = [...document.querySelectorAll('#aevumFormDomains input:checked')].map(i => i.value);
-        const layers = [...document.querySelectorAll('#aevumFormLayers input:checked')].map(i => i.value);
-        if (layers.indexOf(type) === -1) layers.unshift(type);
         const emotion = {
           valence: parseFloat(document.getElementById('aevumFormValence').value),
           arousal: parseFloat(document.getElementById('aevumFormArousal').value)
         };
         const importance = parseInt(document.getElementById('aevumFormImportance').value, 10);
-        const emotionWeight = parseInt(document.getElementById('aevumFormEmotionWeight').value, 10);
-        const confidence = {};
-        ['evidence', 'stability', 'importance'].forEach(k => {
-          const r = document.getElementById('aevumFormRange_' + k);
-          confidence[k] = r ? parseFloat(r.value) : 0.5;
-        });
         if (!content) { alert('内容不能为空'); return; }
         const url = aevumState.editingId ? '/api/aevum/' + aevumState.editingId : '/api/aevum';
         const res = await fetch(url, {
           method: aevumState.editingId ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, owner, content, tags, source, confidence, domain: domains, emotion, importance, emotion_weight: emotionWeight, layers })
+          body: JSON.stringify({ title, content, owner, domain: domains, emotion, importance, tags, event_time: eventTime || null })
         });
-        if (!res.ok) { alert('保存失败，请确认已执行 setup_aevum.sql'); return; }
+        if (!res.ok) { alert('保存失败，请确认已执行 setup_aevum_v30.sql'); return; }
         aevumState.showForm = false;
         aevumState.editingId = null;
         aevumState.editingData = null;
@@ -2890,17 +2884,155 @@
       }
       window.aevumSave = aevumSave;
 
+      // ================== v3.0 记忆书 / 计划 / 我眼里的默 ==================
+      async function aevumGenerateBooks() {
+        if (!confirm('让 AI 把记忆海的事件单元串成故事线？')) return;
+        const btn = document.querySelector('[data-genbooks]');
+        const old = btn ? btn.textContent : '';
+        if (btn) btn.textContent = '⏳ 生成中…';
+        try {
+          const res = await fetch('/api/aevum/books/generate', { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '生成失败，请确认已执行 setup_aevum_v30.sql'); return; }
+          aevumState.topicCache = {};
+          if (data.message) alert(data.message);
+          else alert('✅ 已生成 ' + (data.created || 0) + ' 段故事线');
+          renderAevum();
+        } catch (e) { alert('生成失败，请稍后重试'); }
+        finally { if (btn) btn.textContent = old; }
+      }
+      window.aevumGenerateBooks = aevumGenerateBooks;
+
+      async function aevumRegenerateBooks() {
+        if (!confirm('会清掉现有记忆书并重新整理（手动改过的摘要会丢失），确定吗？')) return;
+        const btn = document.querySelector('[data-regen-books]');
+        const old = btn ? btn.textContent : '';
+        if (btn) btn.textContent = '⏳ 重新整理中…';
+        try {
+          const res = await fetch('/api/aevum/books/regenerate', { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '重新整理失败，请确认已执行 setup_aevum_v30.sql'); return; }
+          aevumState.topicCache = {};
+          if (data.message) alert(data.message);
+          else alert('✅ 已重新整理 ' + (data.created || 0) + ' 段故事线');
+          renderAevum();
+        } catch (e) { alert('重新整理失败，请稍后重试'); }
+        finally { if (btn) btn.textContent = old; }
+      }
+      window.aevumRegenerateBooks = aevumRegenerateBooks;
+
+      async function aevumToggleBook(id) {
+        const body = document.getElementById('aevumBookBody_' + id);
+        if (!body) return;
+        if (body.style.display !== 'none') { body.style.display = 'none'; return; }
+        if (!aevumState.topicCache['b' + id]) {
+          body.innerHTML = '<div style="font-size:12px;color:#b0a6c4;">加载中…</div>';
+          try {
+            const res = await fetch('/api/aevum/books/' + id);
+            const data = await res.json();
+            if (!res.ok) throw new Error('bad');
+            aevumState.topicCache['b' + id] = data;
+          } catch (e) { body.innerHTML = '<div style="font-size:12px;color:#e74c3c;">加载失败</div>'; return; }
+        }
+        const data = aevumState.topicCache['b' + id];
+        const units = data.units || [];
+        body.innerHTML = units.length
+          ? units.map(m => `
+              <div style="font-size:12px;color:#666;margin:4px 0;border-top:1px solid #f6f2f8;padding-top:6px;">
+                <span style="color:#8a5fb5;font-weight:600;">${escapeHtml2(m.title || '（无标题）')}</span> <span style="color:#b0a6c4;">${new Date(m.event_time || m.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                <div style="margin-top:2px;">${escapeHtml2(m.content)}</div>
+                <span style="cursor:pointer;color:#b0a6c4;font-size:11px;margin-top:2px;display:inline-block;" onclick="aevumToggleContext(${m.id})">📜 原文</span>
+                <div id="aevumCtx_${m.id}" style="display:none;max-height:160px;overflow:auto;background:#faf7fc;border-radius:8px;padding:6px;margin-top:4px;font-size:11px;"></div>
+              </div>`).join('')
+          : '<div style="font-size:12px;color:#b0a6c4;">这段故事还没有事件单元</div>';
+        body.style.display = 'block';
+      }
+      window.aevumToggleBook = aevumToggleBook;
+
+      function aevumRenameBook(id, el) {
+        const label = prompt('故事线标签（4-8 字，可留空）：', el ? el.dataset.label || '' : '');
+        if (label === null) return;
+        const summary = prompt('故事线摘要：', el ? el.dataset.summary || '' : '');
+        if (summary === null) return;
+        fetch('/api/aevum/books/' + id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: label.trim(), summary: summary.trim() })
+        }).then(() => renderAevum()).catch(() => alert('保存失败'));
+      }
+      window.aevumRenameBook = aevumRenameBook;
+
+      async function aevumAddPlan() {
+        const content = document.getElementById('planInput').value.trim();
+        const expiresAt = document.getElementById('planExpires').value;
+        if (!content) { alert('写点什么再记下吧~'); return; }
+        try {
+          const res = await fetch('/api/aevum/plans', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content, expires_at: expiresAt || null })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '保存失败，请确认已执行 setup_aevum_v30.sql'); return; }
+          alert('📌 计划已记下，默会记得提醒你');
+          renderAevum();
+        } catch (e) { alert('保存失败，请稍后重试'); }
+      }
+      window.aevumAddPlan = aevumAddPlan;
+
+      async function aevumDeletePlan(id) {
+        if (!confirm('确定移除这条计划吗？')) return;
+        await fetch('/api/aevum/plans/' + id, { method: 'DELETE' });
+        renderAevum();
+      }
+      window.aevumDeletePlan = aevumDeletePlan;
+
+      async function aevumMoGenerate() {
+        if (!confirm('AI 重新生成会覆盖当前内容，确定吗？')) return;
+        try {
+          const res = await fetch('/api/aevum/mo-view/generate', { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '生成失败，请确认已执行 setup_aevum_v30.sql'); return; }
+          alert('✅ 我眼里的默已更新');
+          renderAevum();
+        } catch (e) { alert('生成失败，请稍后重试'); }
+      }
+      window.aevumMoGenerate = aevumMoGenerate;
+
+      function aevumMoEdit() { aevumState.moEditing = true; renderAevum(); }
+      window.aevumMoEdit = aevumMoEdit;
+
+      function aevumMoCancelEdit() { aevumState.moEditing = false; renderAevum(); }
+      window.aevumMoCancelEdit = aevumMoCancelEdit;
+
+      async function aevumMoSave() {
+        const content = document.getElementById('aevumMoContent').value.trim();
+        if (!content) { alert('内容不能为空'); return; }
+        try {
+          const res = await fetch('/api/aevum/mo-view', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '保存失败，请确认已执行 setup_aevum_v30.sql'); return; }
+          aevumState.moEditing = false;
+          renderAevum();
+        } catch (e) { alert('保存失败，请稍后重试'); }
+      }
+      window.aevumMoSave = aevumMoSave;
+
       // 承诺区：新增 / 移除
       async function aevumAddPromise() {
         const input = document.getElementById('promiseInput');
         const content = input.value.trim();
-        const days = parseInt(document.getElementById('promiseDays').value, 10);
+        const expiresAt = document.getElementById('promiseExpires').value;
         if (!content) { alert('写点什么再记下吧~'); return; }
         try {
           const res = await fetch('/api/aevum/promises', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content, days })
+            body: JSON.stringify({ content, expires_at: expiresAt || null })
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) { alert(data.error || '保存失败，请确认已执行 setup_aevum_v16.sql'); return; }
@@ -4285,7 +4417,7 @@
           </div>
           <div style="font-size:12px;color:#8a83a8;margin-bottom:8px;">时间：${esc(data.time)} · 玩具说明书：${data.toyManual ? '已交给默 📖' : '未开启 📕'}</div>
           ${section('系统提示（时间 + 人设 + 搜索）', data.systemPrompt)}
-          ${section('注入的记忆（承诺/画像/召回/说明书）', data.memoryContext)}
+          ${section('注入的记忆（记忆海/记忆书/记忆心/计划/说明书）', data.memoryContext)}
           ${section('聊天记录（最近10轮）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
           ${section('动态', data.momentsContext)}
           ${section('天气', data.weatherContext)}`;
