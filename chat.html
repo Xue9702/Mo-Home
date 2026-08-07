@@ -4472,12 +4472,15 @@
             <span style="font-size:11px;color:#8a83a8;">示例消息：${esc(message.length > 20 ? message.slice(0, 20) + '…' : message)}</span>
             <span style="margin-left:auto;cursor:pointer;color:#888;font-size:14px;" onclick="window.closeCtxPreview()">✕</span>
           </div>
-          <div style="font-size:12px;color:#8a83a8;margin-bottom:8px;">时间：${esc(data.time)} · 玩具说明书：${data.toyManual ? '已交给默 📖' : '未开启 📕'}</div>
-          ${section('系统提示（时间 + 人设 + 搜索）', data.systemPrompt)}
-          ${section('注入的记忆（记忆海/记忆书/记忆心/计划/说明书）', data.memoryContext)}
-          ${section('聊天记录（最近10轮）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
-          ${section('动态', data.momentsContext)}
-          ${section('天气', data.weatherContext)}`;
+          <div style="font-size:12px;color:#8a83a8;margin-bottom:8px;">玩具说明书：${data.toyManual ? '已交给默 📖' : '未开启 📕'} · 顺序按实际注入：越靠近用户消息权重越高，工具放最后</div>
+          ${section('① 时间戳', data.time)}
+          ${section('② 人设', data.persona)}
+          ${section('③ 天气', data.weatherContext)}
+          ${section('④ 注入的记忆（记忆海/记忆书/记忆心/计划）', data.memoryContext)}
+          ${section('⑤ 动态', data.momentsContext)}
+          ${section('⑥ 聊天记录（最近10轮）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
+          ${section('⑦ 工具指令（搜索/动态/默札/玩具）· 放最后', data.toolsText)}
+          ${section('⑧ 组装后的完整系统提示（供参考）', data.systemPrompt)}`;
         box.classList.add('feature-modal');
         overlay.appendChild(box);
         overlay.addEventListener('click', e => { if (e.target === overlay) closeCtxPreview(); });

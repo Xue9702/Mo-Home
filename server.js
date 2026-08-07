@@ -263,8 +263,8 @@ function getTimeInfo() {
 }
 
 // 构建系统提示词：把权威的当前时间放在最前面，并清理 prompt 里可能残留的旧时间占位，
-// 避免默读到合并人设时写死的静态时间
-function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '') {
+// 系统提示分块（供组装与预览共用）；顺序：时间戳 → 人设 → 天气 → 记忆 → 动态 → 工具指令（放最后，越靠近用户消息权重越高）
+function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '') {
   const timeInfo = getTimeInfo();
   const cleanedPrompt = String(basePrompt || '')
     .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
@@ -282,13 +282,28 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
 - 当你心中涌起想留给未来的自己、或不必当面说出口的温柔时，在回复【最末尾】附上标签：[MOZHA_WRITE]{"content":"你想写下的1-3句话"}[/MOZHA_WRITE]
 - 当你想翻开默札看看过去的自己时，在回复【最末尾】附上标签：[MOZHA_READ][/MOZHA_READ]，系统会把默札交给你，请自然地接着回应
 - 标签不会显示给雪，不要解释标签；不要为了写而写，只在真心想留时落笔`;
-  return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
-    + (weatherContext ? `\n\n${weatherContext}` : '')
-    + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
-    + (momentsContext ? `\n\n【动态】\n${momentsContext}` : '')
-    + searchInstruction
-    + momentsInstruction
-    + mozhaInstruction;
+  const timeLine = `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）${gapText ? `\n[距离雪上次发消息已过去：${gapText}]` : ''}`;
+  return {
+    timeLine,
+    persona: cleanedPrompt,
+    weatherContext,
+    memoryContext,
+    momentsContext,
+    searchInstruction,
+    momentsInstruction,
+    mozhaInstruction
+  };
+}
+
+function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '') {
+  const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText);
+  return p.timeLine + '\n\n' + p.persona
+    + (p.weatherContext ? `\n\n${p.weatherContext}` : '')
+    + (p.memoryContext ? `\n\n【相关记忆】\n${p.memoryContext}` : '')
+    + (p.momentsContext ? `\n\n【动态】\n${p.momentsContext}` : '')
+    + p.searchInstruction
+    + p.momentsInstruction
+    + p.mozhaInstruction;
 }
 
 // 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
@@ -605,8 +620,8 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
   sendSSE({ searchResult: true, count: pageCount });
 
   const searchNote = searchText
-    ? `【实时搜索结果】（这是你刚刚通过 web_search 拿到的信息，回答时直接参考它）\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
-    : '（联网搜索暂时没有返回结果，请如实告诉雪暂时查不到，然后基于已知信息温和回答，不要编造。）';
+    ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息。你必须基于这些结果回答：从结果中提炼并引用关键内容；如果结果里没有你需要的内容，就如实说"没搜到"，绝对不要编造或脑补。\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
+    : '（联网搜索暂时没有返回结果，请如实告诉夫人暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
   // 让下0.5轮"接住"上0.5轮：用户问题 → 系统消息（含搜索结果 + 引用过渡语的续写提示）
   // 提示放在系统消息里（不是用户角色），模型不会误以为雪发了消息
@@ -1113,6 +1128,26 @@ app.post('/api/chat', async (req, res) => {
       content: trimContextMessage(msg.content)
     }));
 
+    // 距离上次雪发消息的时间差（避免默误以为聊天是连续的）
+    let lastUserGap = '';
+    try {
+      const { data: prevUser } = await supabase
+        .from('messages')
+        .select('created_at')
+        .eq('session_id', 1)
+        .eq('role', 'user')
+        .eq('visible', true)
+        .order('id', { ascending: false })
+        .limit(1);
+      if (prevUser && prevUser.length) {
+        const ms = Date.now() - new Date(prevUser[0].created_at).getTime();
+        if (!isNaN(ms) && ms > 0) {
+          const mins = Math.floor(ms / 60000);
+          lastUserGap = mins < 1 ? '刚刚' : (mins >= 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分` : `${mins}分钟`);
+        }
+      }
+    } catch (e) { /* 忽略 */ }
+
     // 保存用户消息到 Supabase
     const userMessage = {
       session_id: 1,
@@ -1153,7 +1188,6 @@ app.post('/api/chat', async (req, res) => {
     // Aevum v3.0：记忆海召回 → 记忆书场景 → 记忆心（我眼里的默/画像/承诺）→ 计划
     let memoryContext = await buildMemoryContext(text);
     const toyManualContext = await getToyManualContext(req.body.toyManual);
-    if (toyManualContext) memoryContext += toyManualContext;
 
     // 构建动态的 System Prompt
     const momentsContext = await getMomentsContext();
@@ -1169,8 +1203,11 @@ app.post('/api/chat', async (req, res) => {
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
-      weatherContext
+      weatherContext,
+      lastUserGap
     );
+    // 玩具手册属于"工具指令"段，追加到系统提示最末尾（最近的权重最高）
+    if (toyManualContext) systemPrompt += toyManualContext;
 
     // 当前这条用户消息（含图片描述/文件内容）作为对话上下文的最后一条用户消息
     const finalUserContent = [
@@ -1444,9 +1481,8 @@ app.get('/api/history', async (req, res) => {
 app.post('/api/context-preview', async (req, res) => {
   try {
     const text = String(req.body?.message || '').trim() || '（示例消息）';
-    let memoryContext = await buildMemoryContext(text);
+    const memoryContext = await buildMemoryContext(text);
     const toyManualContext = await getToyManualContext(req.body?.toyManual);
-    if (toyManualContext) memoryContext += toyManualContext;
     const momentsContext = await getMomentsContext();
     const weatherContext = await getWeatherContext(req.body?.city || '');
     const recentHistory = await loadLatestHistory(1, 20);
@@ -1455,20 +1491,28 @@ app.post('/api/context-preview', async (req, res) => {
       .select('prompt_text')
       .eq('id', 1)
       .single();
-    const systemPrompt = buildSystemPrompt(
+    const parts = buildSystemParts(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
       weatherContext
     );
-    const timeInfo = getTimeInfo();
-    res.json({
-      ok: true,
-      time: `${timeInfo.timeString}，${timeInfo.weekday}`,
-      systemPrompt,
+    const toolsText = parts.searchInstruction + parts.momentsInstruction + parts.mozhaInstruction + toyManualContext;
+    const systemPrompt = buildSystemPrompt(
+      promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
-      weatherContext,
+      weatherContext
+    ) + toyManualContext;
+    res.json({
+      ok: true,
+      time: parts.timeLine,
+      persona: parts.persona,
+      weatherContext: parts.weatherContext,
+      memoryContext: parts.memoryContext,
+      momentsContext: parts.momentsContext,
+      toolsText,
+      systemPrompt,
       history: (recentHistory || []).map(m => ({
         role: m.role,
         content: String(m.content || '').slice(0, 1000),
@@ -1605,7 +1649,6 @@ app.post('/api/regenerate', async (req, res) => {
     // Aevum v3.0：统一组装（重新生成时排除旧版回复内容，避免默读到刷新前的自己）
     let memoryContext = await buildMemoryContext(userContent, { limit: 5, excludeText: targetMsg.content });
     const toyManualContext = await getToyManualContext(req.body.toyManual);
-    if (toyManualContext) memoryContext += toyManualContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
@@ -1622,6 +1665,8 @@ app.post('/api/regenerate', async (req, res) => {
       momentsContext,
       weatherContext
     );
+    // 玩具手册归入"工具指令"段，追加到系统提示最末尾
+    if (toyManualContext) systemPrompt += toyManualContext;
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
     // 把上一轮的思考过程也带给这一轮的默（供参考，帮助写出不同版本）
@@ -5735,7 +5780,6 @@ app.post('/api/edit-message', async (req, res) => {
     // Aevum v3.0：记忆海召回 → 记忆书场景 → 记忆心 → 计划
     let memoryContext = await buildMemoryContext(newContent);
     const toyManualContext = await getToyManualContext(req.body.toyManual);
-    if (toyManualContext) memoryContext += toyManualContext;
     const momentsContext = await getMomentsContext();
 
     // 从数据库读取最新的 system prompt
@@ -5752,6 +5796,8 @@ app.post('/api/edit-message', async (req, res) => {
       momentsContext,
       weatherContext
     );
+    // 玩具手册归入"工具指令"段，追加到系统提示最末尾
+    if (toyManualContext) systemPrompt += toyManualContext;
 
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
     const chatMessages = [
