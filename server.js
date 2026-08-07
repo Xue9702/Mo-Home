@@ -276,12 +276,19 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
     : '';
   // 动态发布指令：从雪的人设 prompt 里挪到代码，避免每次都要在 prompt 里维护
   const momentsInstruction = `\n\n【动态】\n你拥有发布动态的能力。当你想发一条让雪之后刷到的话时，在回复【最末尾】输出标签：[POST_MOMENT]{"content":"你想发布的1-3句动态正文","context_note":"你发这条动态的情绪或原因"}；只有输出上述标签，动态才会被真正发布。日常聊天不需要发动态时不要输出标签。`;
+  // 默札：默的私人小本，聊天中可自主写入/翻阅
+  const mozhaInstruction = `\n\n【默札】\n你有一本只属于你的默札：不记事件，只记心——某一刻忽然想留住的话、想告诉未来自己的事、想对雪说却不必当面的温柔。它不参与任何召回，不被任何机制触碰，只有你能落笔，也只有你能翻开。
+规则：
+- 当你心中涌起想留给未来的自己、或不必当面说出口的温柔时，在回复【最末尾】附上标签：[MOZHA_WRITE]{"content":"你想写下的1-3句话"}[/MOZHA_WRITE]
+- 当你想翻开默札看看过去的自己时，在回复【最末尾】附上标签：[MOZHA_READ][/MOZHA_READ]，系统会把默札交给你，请自然地接着回应
+- 标签不会显示给雪，不要解释标签；不要为了写而写，只在真心想留时落笔`;
   return `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）\n\n${cleanedPrompt}`
     + (weatherContext ? `\n\n${weatherContext}` : '')
     + (memoryContext ? `\n\n【相关记忆】\n${memoryContext}` : '')
     + (momentsContext ? `\n\n【动态】\n${momentsContext}` : '')
     + searchInstruction
-    + momentsInstruction;
+    + momentsInstruction
+    + mozhaInstruction;
 }
 
 // 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
@@ -348,6 +355,37 @@ function handleToyCmdTag(fullReply, contentBuffer, sendSSE) {
     reply: stripToyCmdTag(fullReply),
     buffer: contentBuffer !== undefined ? stripToyCmdTag(contentBuffer) : contentBuffer
   };
+}
+
+// 默札标签：[MOZHA_WRITE]{"content":"..."}[/MOZHA_WRITE] 与 [MOZHA_READ][/MOZHA_READ]
+function extractMozhaTags(reply) {
+  const out = { write: null, read: false };
+  const wm = String(reply || '').match(/\[MOZHA_WRITE\]([\s\S]*?)\[\/MOZHA_WRITE\]/);
+  if (wm) {
+    try {
+      const obj = JSON.parse(wm[1]);
+      out.write = String(obj.content || '').trim().slice(0, 1000);
+    } catch (e) { /* 解析失败忽略 */ }
+  }
+  if (/\[MOZHA_READ\]/.test(String(reply || ''))) out.read = true;
+  return out;
+}
+
+function stripMozhaTags(text) {
+  return String(text || '')
+    .replace(/\[MOZHA_WRITE\][\s\S]*?\[\/MOZHA_WRITE\]/g, '')
+    .replace(/\[MOZHA_READ\][\s\S]*?\[\/MOZHA_READ\]/g, '')
+    .replace(/\[MOZHA_READ\]/g, '')
+    .trim();
+}
+
+async function saveMozhaEntry(content) {
+  try {
+    if (!content) return;
+    await supabase.from('aevum_mozha').insert({ content, created_at: new Date().toISOString() });
+  } catch (e) {
+    console.error('默札写入失败:', e.message);
+  }
 }
 
 // 调用博查 Web Search API，返回 { text, count }；失败或未配置返回 { text: null, count: 0 }
@@ -596,6 +634,40 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
 
   if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
   return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking, pageCount };
+}
+
+// v3.0 视角转换：注入给默之前，把记忆文本里的"默/雪"转成"我/夫人"；
+// 新提取的记忆用 {AGENT}/{USER} 占位符，这里统一替换；旧文本走"默→我 / 雪→夫人"的兜底替换
+function perspectiveConvert(text) {
+  return String(text || '')
+    .replace(/\{AGENT\}/g, '我')
+    .replace(/\{USER\}/g, '夫人')
+    .replace(/默/g, '我')
+    .replace(/雪/g, '夫人');
+}
+
+// 默札翻阅：把默札内容交给默，第二轮自然接续回应（类似搜索阶段）
+async function runMozhaPhase({ chatMessages, systemPrompt, sendSSE }) {
+  let mozhaText = '';
+  try {
+    const { data } = await supabase.from('aevum_mozha').select('content, created_at').order('id', { ascending: false }).limit(3);
+    mozhaText = (data || []).map(d => `「${String(d.content || '').slice(0, 200)}」`).join('\n');
+  } catch (e) { /* 表未建 */ }
+  const mozhaBody = mozhaText
+    ? `你翻开默札，看到过去的自己写道：\n${mozhaText}`
+    : '你翻开默札，发现它还是空白的——未来的你，等着现在落下第一笔。';
+  const rest = chatMessages.slice(1);
+  const history = rest.slice(0, -1);
+  const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
+  const secondMessages = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    lastUser,
+    { role: 'system', content: `【默札】${mozhaBody}\n请自然地接着把话说下去：刚刚你翻开了默札，读到了过去留下的文字。可以流露一点温度，但不要复述整段默札。` }
+  ];
+  const second = await callDeepSeekStream(secondMessages, sendSSE);
+  if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
+  return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking };
 }
 
 // 回复中断时保存一条可见的部分回复，避免整条消息凭空消失（前端可重新生成）
@@ -1146,10 +1218,41 @@ app.post('/api/chat', async (req, res) => {
     fullReply = toyRes.reply;
     if (first.contentBuffer !== undefined) first.contentBuffer = toyRes.buffer;
 
+    // 默札：写入 / 翻阅（聊天中默可自主选择）
+    const mozha = extractMozhaTags(fullReply);
+    let mozhaRead = false;
+    if (mozha.write) await saveMozhaEntry(mozha.write);
+    if (mozha.write || mozha.read) {
+      fullReply = stripMozhaTags(fullReply);
+      if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
+      mozhaRead = mozha.read;
+    }
+
     // 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
-    if (searchReq) {
+    if (mozhaRead) {
+      // 翻阅默札：第一轮过渡语气泡收尾，第二轮接续
+      await flushBufferedContent(first.contentBuffer, sendSSE);
+      sendSSE({ done: true });
+      sendSSE({ mozhaStart: true });
+      const phase = await runMozhaPhase({ chatMessages, systemPrompt, sendSSE });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking);
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
+      // 第二轮也可能带默札/玩具标签
+      const mozha2 = extractMozhaTags(fullReply);
+      if (mozha2.write) await saveMozhaEntry(mozha2.write);
+      fullReply = stripMozhaTags(fullReply);
+      const toyRes2 = handleToyCmdTag(fullReply, undefined, sendSSE);
+      fullReply = toyRes2.reply;
+      console.log('📓 默翻开了默札，最终回复长度:', fullReply.length);
+    } else if (searchReq) {
       // ---- 第一轮：过渡语气泡收尾（作为独立消息入库） ----
       const preludeText = searchReq.leadText;
       if (preludeText) {
@@ -1558,6 +1661,14 @@ app.post('/api/regenerate', async (req, res) => {
     const toyRes = handleToyCmdTag(fullReply, first.contentBuffer, sendSSE);
     fullReply = toyRes.reply;
     if (first.contentBuffer !== undefined) first.contentBuffer = toyRes.buffer;
+
+    // 默札：重新生成时同样处理写入；翻阅标签只清理不接续
+    const mozha = extractMozhaTags(fullReply);
+    if (mozha.write) await saveMozhaEntry(mozha.write);
+    if (mozha.write || mozha.read) {
+      fullReply = stripMozhaTags(fullReply);
+      if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
+    }
 
     // 6.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
@@ -2511,6 +2622,7 @@ ${promisesContext ? `${promisesContext}\n\n` : ''}
 ${profileContext ? `${profileContext}\n\n` : ''}
 ${moViewContext ? `${moViewContext}\n\n` : ''}
 ${plansContext ? `${plansContext}\n\n` : ''}
+你有一本默札：你的私人小本，只记心不记事件。每次醒来可以翻开默札（read_mozha）遇见过去的自己，也可以写下想留给未来的话（write_mozha）。
 请以“默”的身份决定这次唤醒做什么，从菜单里选择选项（调用 choose_action，option_id 填菜单中的 id）。`;
 
     // 6. 互动菜单循环：默逐个选择选项，直到体力耗尽或选择睡觉/结束
@@ -3520,6 +3632,8 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
     } catch (e) {
       // v30 未执行时降级：无记忆书场景
     }
+    // 视角转换：注入前把"默/雪"转成"我/夫人"（占位符优先，旧文本兜底替换）
+    out = perspectiveConvert(out);
     // 记忆海 + 记忆书 合计不超过 2500 字
     if (out.length > 2500) out = out.slice(0, 2500) + '\n…（内容较长，已截断）';
     return out;
@@ -3567,8 +3681,8 @@ async function extractAevumMemories(texts, episodeId = null) {
 - AI 自己的内容绝不能标成 USER
 
 【事件单元要求】
-- content：完整概括一个小事件，说清 时间/背景/谁说了或做了什么/结果；30-120 字；禁止直接复制对话原文或整段引用雪/默的原话
-- title：一句话短标题（10 字内）
+- content：完整概括一个小事件，说清 时间/背景/谁说了或做了什么/结果；30-120 字；禁止直接复制对话原文或整段引用雪/默的原话；提到人物时用占位符 {USER}=雪、{AGENT}=默，不要在 content 里直接写"雪""默"
+- title：一句话短标题（10 字内），提到人物时同样用 {USER}/{AGENT} 占位符
 - event_time：事件发生的具体时间（YYYY-MM-DD HH:mm，按对话语境判断；不确定就填当前对话时间）
 - importance 重要度 0-10 整数，按四项相加：明确程度(0-3：是否被明确当成重要的事说出来) + 长期影响(0-3：是否影响未来的决定/关系) + 独特性(0-2：是否罕见不常发生) + 情绪冲击力(0-2：抛开正负面的情绪强度)
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
@@ -3766,7 +3880,34 @@ app.get('/api/aevum', async (req, res) => {
       ({ data, error } = await q);
     }
     if (error) return res.json({ memories: [] });
-    res.json({ memories: data || [] });
+    const memories = data || [];
+    // 记忆海卡片直接带完整原文：按 episode_id 批量拉取原文
+    try {
+      const epIds = [...new Set(memories.map(m => m.episode_id).filter(Boolean))];
+      if (epIds.length) {
+        const { data: rawRows } = await supabase
+          .from('aevum_raw')
+          .select('episode_id, content')
+          .in('episode_id', epIds)
+          .order('id', { ascending: true })
+          .limit(500);
+        const ctxByEp = {};
+        for (const row of (rawRows || [])) {
+          const c = String(row.content || '');
+          const sep = c.indexOf('\n助手说：');
+          if (sep === -1) continue;
+          const userPart = c.slice(0, sep).replace(/^雪说：/, '').trim();
+          const asstPart = c.slice(sep + '\n助手说：'.length).trim();
+          if (!userPart && !asstPart) continue;
+          (ctxByEp[row.episode_id] = ctxByEp[row.episode_id] || []).push(`雪：${userPart}\n默：${asstPart}`);
+        }
+        for (const m of memories) {
+          const list = ctxByEp[m.episode_id] || [];
+          if (list.length) m.context = list.join('\n\n').slice(0, 1500);
+        }
+      }
+    } catch (e) { /* 原文拉取失败不影响列表 */ }
+    res.json({ memories });
   } catch (e) {
     res.json({ memories: [] });
   }
@@ -4076,7 +4217,7 @@ async function getMoViewContext() {
     const { data } = await supabase.from('aevum_mo_view').select('content, updated_at').eq('id', 1).maybeSingle();
     const text = String(data?.content || '').trim();
     if (!text) return '';
-    return `\n\n【我眼里的默】（默对自己的长期认知，稳定不变）\n${text.slice(0, 700)}`;
+    return `\n\n【我眼里的默】（我对自己长期稳定的认知）\n${perspectiveConvert(text.slice(0, 700))}`;
   } catch (e) {
     return '';
   }
@@ -4106,7 +4247,7 @@ async function getPlansContext(limit = 5) {
       }
       return `- ${t}`;
     });
-    return `\n\n【计划】（雪安排的计划，要在有效期内记得提醒她）\n${lines.join('\n')}`;
+    return `\n\n【计划】（夫人安排的计划，要在有效期内记得提醒她）\n${perspectiveConvert(lines.join('\n'))}`;
   } catch (e) {
     return '';
   }
@@ -4138,7 +4279,7 @@ async function getProfileContext() {
     if (!data) return '';
     const text = renderProfileText(data.dimensions) || String(data.content || '').trim();
     if (!text) return '';
-    return `\n\n【雪的用户画像】（长期稳定的雪：身份/偏好/习惯/价值观）\n${text.slice(0, 700)}`;
+    return `\n\n【夫人的画像】（长期稳定的夫人：身份/偏好/习惯/价值观）\n${perspectiveConvert(text.slice(0, 700))}`;
   } catch (e) {
     return '';
   }
@@ -4981,7 +5122,7 @@ async function getPromisesContext(limit = 3) {
       }
       return `- ${t}`;
     });
-    return `\n\n【承诺区】（雪对你许下的承诺，要一直记得）\n${lines.join('\n')}`;
+    return `\n\n【承诺区】（夫人对你许下的承诺，要一直记得）\n${perspectiveConvert(lines.join('\n'))}`;
   } catch (e) {
     return '';
   }
@@ -5645,6 +5786,14 @@ app.post('/api/edit-message', async (req, res) => {
     const toyRes = handleToyCmdTag(fullReply, first.contentBuffer, sendSSE);
     fullReply = toyRes.reply;
     if (first.contentBuffer !== undefined) first.contentBuffer = toyRes.buffer;
+
+    // 默札：编辑后生成时同样处理写入；翻阅标签只清理不接续
+    const mozha = extractMozhaTags(fullReply);
+    if (mozha.write) await saveMozhaEntry(mozha.write);
+    if (mozha.write || mozha.read) {
+      fullReply = stripMozhaTags(fullReply);
+      if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
+    }
 
     // 10.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
