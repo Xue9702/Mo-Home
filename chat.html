@@ -2806,15 +2806,17 @@
         const statusBg = m.status === 'active' ? '#e8f9f0' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6';
         const statusColor = m.status === 'active' ? '#2ecc71' : m.status === 'archived' ? '#aaa' : '#b8860b';
         const when = m.event_time || m.created_at;
+        const ev = (m.evidence && m.evidence.length) ? String(m.evidence[0] || '').trim() : '';
         return `
           <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
+            ${when ? `<div style="font-size:12px;color:#8a5fb5;font-weight:600;">🕐 ${new Date(when).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:14px;font-weight:600;color:#333;">${escapeHtml2(m.title || '（无标题）')}</span>
               ${m.occurrence > 1 ? `<span title="这件事反复出现过" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#fdf3e7;color:#c0846b;">x${m.occurrence}</span>` : ''}
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
-              <span style="margin-left:auto;font-size:11px;color:#b0a6c4;">${when ? new Date(when).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span>
             </div>
+            ${ev ? `<div style="font-size:12px;color:#666;background:#faf7fc;border:1px solid #f0e9f5;border-radius:10px;padding:8px;line-height:1.6;">📄 原文：${escapeHtml2(ev.length > 120 ? ev.slice(0, 120) + '…' : ev)}${ev.length > 120 ? ` <span style="cursor:pointer;color:#8a5fb5;" onclick="aevumToggleContext(${m.id})">展开</span>` : ''}</div>` : ''}
             <div style="font-size:14px;color:#444;line-height:1.6;white-space:pre-wrap;">${escapeHtml2(m.content)}</div>
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
             ${m.domain && m.domain.length ? `<div style="font-size:11px;color:#7f9fd9;">${m.domain.map(escapeHtml2).join(' · ')}</div>` : ''}
@@ -2824,6 +2826,7 @@
               ${m.status === 'archived' || m.status === 'rejected'
                 ? `<span style="cursor:pointer;color:#1e90ff;" onclick="aevumReview(${m.id},'approve')">↺ 恢复</span>`
                 : `<span style="cursor:pointer;color:#888;" onclick="aevumArchive(${m.id})">归档</span>`}
+              <span style="cursor:pointer;color:#c084fc;" onclick="aevumReanalyze(${m.id})">🔄 重新分析</span>
               <span style="cursor:pointer;color:#8a83a8;" onclick="aevumToggleContext(${m.id})">📜 原文</span>
               <span style="cursor:pointer;color:#888;" onclick="aevumEdit(${m.id})">✎ 修改</span>
             </div>
@@ -2895,6 +2898,19 @@
       }
       window.aevumSave = aevumSave;
 
+      // 重新分析：让 AI 根据原文重新生成事件单元
+      async function aevumReanalyze(id) {
+        if (!confirm('让 AI 根据原文重新分析这条事件单元（会覆盖标题/内容/标签/重要度等），确定吗？')) return;
+        try {
+          const res = await fetch('/api/aevum/' + id + '/reanalyze', { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '重新分析失败，请稍后重试'); return; }
+          alert('✅ 已重新分析');
+          renderAevum();
+        } catch (e) { alert('重新分析失败，请稍后重试'); }
+      }
+      window.aevumReanalyze = aevumReanalyze;
+
       // ================== v3.0 记忆书 / 计划 / 我眼里的默 ==================
       async function aevumGenerateBooks() {
         if (!confirm('让 AI 把记忆海的事件单元串成故事线？')) return;
@@ -2953,6 +2969,7 @@
                 <span style="color:#8a5fb5;font-weight:600;">${escapeHtml2(m.title || '（无标题）')}</span> <span style="color:#b0a6c4;">${new Date(m.event_time || m.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                 <div style="margin-top:2px;">${escapeHtml2(m.content)}</div>
                 <span style="cursor:pointer;color:#b0a6c4;font-size:11px;margin-top:2px;display:inline-block;" onclick="aevumToggleContext(${m.id})">📜 原文</span>
+                <span style="cursor:pointer;color:#888;font-size:11px;margin-left:8px;" onclick="aevumEdit(${m.id})">✎ 修改</span>
                 <div id="aevumCtx_${m.id}" style="display:none;max-height:160px;overflow:auto;background:#faf7fc;border-radius:8px;padding:6px;margin-top:4px;font-size:11px;"></div>
               </div>`).join('')
           : '<div style="font-size:12px;color:#b0a6c4;">这段故事还没有事件单元</div>';
