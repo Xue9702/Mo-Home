@@ -4100,15 +4100,6 @@
           bubble.className = 'bubble';
           bubble.textContent = content;
 
-          if (role === 'user' && msgId) {
-            let timer;
-            bubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
-            bubble.addEventListener('touchend', () => clearTimeout(timer));
-            bubble.addEventListener('touchmove', () => clearTimeout(timer));
-            bubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(msgId, content), 600); });
-            bubble.addEventListener('mouseup', () => clearTimeout(timer));
-            bubble.addEventListener('mouseleave', () => clearTimeout(timer));
-          }
           msgDiv.appendChild(bubble);
         }
 
@@ -4199,9 +4190,42 @@
         }
       }
 
-      async function handleEditMessage(msgId, oldContent) {
-        const newText = prompt('编辑消息：', oldContent);
-        if (!newText || newText.trim() === '' || newText === oldContent) return;
+      function handleEditMessage(msgId, oldContent) {
+        openEditModal(msgId, oldContent);
+      }
+      window.handleEditMessage = handleEditMessage;
+
+      // 自定义编辑弹窗（多行文本框，替代系统 prompt）
+      function openEditModal(msgId, oldContent) {
+        const overlay = document.createElement('div');
+        overlay.id = 'msgEditOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;';
+        overlay.innerHTML = `
+          <div style="width:min(92vw,600px);background:#fff;border-radius:16px;padding:18px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;">
+            <div style="font-size:15px;font-weight:600;color:#333;">编辑消息</div>
+            <textarea id="msgEditContent" placeholder="消息内容…" style="width:100%;min-height:140px;border:1px solid #eee;border-radius:12px;padding:10px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;">${escapeHtml2(oldContent || '')}</textarea>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button onclick="document.getElementById('msgEditOverlay').remove()" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#666;padding:8px 16px;font-size:13px;cursor:pointer;">取消</button>
+              <button onclick="aevumMsgEditSave(${msgId})" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;">保存</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+        const ta = document.getElementById('msgEditContent');
+        if (ta) { ta.focus(); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { /* 忽略 */ } }
+      }
+      window.openEditModal = openEditModal;
+
+      function aevumMsgEditSave(msgId) {
+        const ta = document.getElementById('msgEditContent');
+        const newText = ta ? ta.value.trim() : '';
+        const overlay = document.getElementById('msgEditOverlay');
+        if (overlay) overlay.remove();
+        if (!newText) { alert('内容不能为空'); return; }
+        doEditMessage(msgId, newText);
+      }
+      window.aevumMsgEditSave = aevumMsgEditSave;
+
+      async function doEditMessage(msgId, newText) {
         const originalUserMsg = messageList.querySelector(`.message.user[data-message-id="${msgId}"]`);
         let originalAssistantMsg = null;
         if (originalUserMsg) {
@@ -4293,12 +4317,6 @@
                   if (json.assistantMessageId) {
                     currentMsgDiv.dataset.groupId = groupId; currentMsgDiv.dataset.assistantVersion = currentVersion;
                     const newBub = tempUserMsg.querySelector('.bubble');
-                    if (newBub && userMessageId) {
-                      let t; newBub.addEventListener('touchstart', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
-                      newBub.addEventListener('touchend', () => clearTimeout(t)); newBub.addEventListener('touchmove', () => clearTimeout(t));
-                      newBub.addEventListener('mousedown', e => { t = setTimeout(() => handleEditMessage(userMessageId, newBub.textContent), 600); });
-                      newBub.addEventListener('mouseup', () => clearTimeout(t)); newBub.addEventListener('mouseleave', () => clearTimeout(t));
-                    }
                     addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
                   }
                 }
@@ -4530,6 +4548,101 @@
         }, { passive: true });
       }
 
+      // ---------- 长按气泡：复制 / 编辑 菜单 ----------
+      let bubblePressTimer = null, bubblePressEl = null, bubblePressX = 0, bubblePressY = 0;
+      function clearBubblePress() {
+        if (bubblePressTimer) { clearTimeout(bubblePressTimer); bubblePressTimer = null; }
+        bubblePressEl = null;
+      }
+      function bubblePressStart(e, pt) {
+        const b = e.target && e.target.closest ? e.target.closest('.bubble') : null;
+        if (!b) return;
+        bubblePressX = pt.clientX; bubblePressY = pt.clientY;
+        bubblePressEl = b;
+        bubblePressTimer = setTimeout(() => {
+          bubblePressTimer = null;
+          const el = bubblePressEl; bubblePressEl = null;
+          if (el) showBubbleMenu(el, bubblePressX, bubblePressY);
+        }, 500);
+      }
+      function bubblePressMove(pt) {
+        if (!bubblePressTimer) return;
+        if (Math.abs(pt.clientX - bubblePressX) > 12 || Math.abs(pt.clientY - bubblePressY) > 12) clearBubblePress();
+      }
+      if (messageList) {
+        messageList.addEventListener('touchstart', (e) => { bubblePressStart(e, e.touches[0]); }, { passive: true });
+        messageList.addEventListener('touchmove', (e) => { bubblePressMove(e.touches[0]); }, { passive: true });
+        messageList.addEventListener('touchend', clearBubblePress);
+        messageList.addEventListener('mousedown', (e) => { bubblePressStart(e, e); });
+        messageList.addEventListener('mousemove', (e) => { bubblePressMove(e); });
+        messageList.addEventListener('mouseup', clearBubblePress);
+        messageList.addEventListener('mouseleave', clearBubblePress);
+      }
+
+      const COPY_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+      const EDIT_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 21h8"/><path d="m15 5 4 4"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>';
+
+      function showBubbleMenu(bubble, x, y) {
+        const msg = bubble.closest('.message');
+        const msgId = msg ? (msg.dataset.messageId || null) : null;
+        const isUser = msg ? msg.classList.contains('user') : false;
+        const content = bubble.textContent || '';
+        const overlay = document.createElement('div');
+        overlay.id = 'bubbleMenu';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;';
+        const menu = document.createElement('div');
+        menu.style.cssText = 'position:fixed;left:' + Math.max(8, Math.min(x, window.innerWidth - 130)) + 'px;top:' + Math.max(8, Math.min(y, window.innerHeight - 90)) + 'px;background:#fff;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,0.15);padding:8px;display:flex;gap:6px;z-index:1001;';
+        const btnCopy = document.createElement('button');
+        btnCopy.style.cssText = 'display:flex;align-items:center;gap:6px;border:none;background:#f7f2fb;color:#8a5fb5;border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer;';
+        btnCopy.innerHTML = COPY_ICON + ' 复制';
+        btnCopy.addEventListener('click', () => copyBubbleText(content));
+        menu.appendChild(btnCopy);
+        if (isUser && msgId) {
+          const btnEdit = document.createElement('button');
+          btnEdit.style.cssText = 'display:flex;align-items:center;gap:6px;border:none;background:#fdf0f4;color:#e1789a;border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer;';
+          btnEdit.innerHTML = EDIT_ICON + ' 编辑';
+          btnEdit.addEventListener('click', () => { closeBubbleMenu(); handleEditMessage(msgId, content); });
+          menu.appendChild(btnEdit);
+        }
+        overlay.appendChild(menu);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeBubbleMenu(); });
+        document.body.appendChild(overlay);
+      }
+      window.showBubbleMenu = showBubbleMenu;
+
+      function closeBubbleMenu() {
+        const ov = document.getElementById('bubbleMenu');
+        if (ov) ov.remove();
+      }
+      window.closeBubbleMenu = closeBubbleMenu;
+
+      function copyBubbleText(text) {
+        closeBubbleMenu();
+        const done = () => showPullToast('✅ 已复制');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+        } else {
+          fallbackCopy(text, done);
+        }
+      }
+      window.copyBubbleText = copyBubbleText;
+
+      function fallbackCopy(text, done) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          done();
+        } catch (e) {
+          showPullToast('❌ 复制失败');
+        }
+      }
+
       async function sendMessage() {
         const text = userInput.value.trim(); if ((!text && !pendingImage && !pendingFile) || isLoading) return;
         userInput.value = ''; userInput.style.height = 'auto';
@@ -4679,16 +4792,6 @@
                   // 3. 为新发送的用户消息补上 msgId 和长按编辑事件
                   if (pendingUserMsg && json.userMessageId) {
                     pendingUserMsg.dataset.messageId = json.userMessageId;
-                    const userBubble = pendingUserMsg.querySelector('.bubble');
-                    if (userBubble) {
-                      let timer;
-                      userBubble.addEventListener('touchstart', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
-                      userBubble.addEventListener('touchend', () => clearTimeout(timer));
-                      userBubble.addEventListener('touchmove', () => clearTimeout(timer));
-                      userBubble.addEventListener('mousedown', e => { timer = setTimeout(() => handleEditMessage(json.userMessageId, userBubble.textContent), 600); });
-                      userBubble.addEventListener('mouseup', () => clearTimeout(timer));
-                      userBubble.addEventListener('mouseleave', () => clearTimeout(timer));
-                    }
                   }
 
                   // 4. 清理上一个助手消息的刷新按钮

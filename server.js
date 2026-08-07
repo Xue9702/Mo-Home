@@ -3646,9 +3646,11 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
       .map(x => x.m);
     const lines = items.map(m => {
       const when = formatMemoryTime(m.event_time || m.created_at);
-      const label = String(m.title || '').trim();
-      let line = `- [${label ? label + '｜' : ''}${AEVUM_TYPE_CN[m.type] || '事件'}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] ${m.content}`;
-      // 重要度 >7 的单元召回时附带原文段（单条原文摘要 ≤400 字）
+      const label = perspectiveConvert(String(m.title || '').trim());
+      // 视角转换只作用于 AI 压缩后的内容（标题/概述），原文保持原样
+      const contentConverted = perspectiveConvert(m.content);
+      let line = `- [${label ? label + '｜' : ''}${AEVUM_TYPE_CN[m.type] || '事件'}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] ${contentConverted}`;
+      // 重要度 >7 的单元召回时附带原文段（原文不做视角转换，≤400 字）
       if ((m.importance || 0) > 7) {
         const ev = Array.isArray(m.evidence) && m.evidence.length ? String(m.evidence[0] || '').trim() : '';
         if (ev) line += `（原文：${ev.slice(0, 400)}）`;
@@ -3671,14 +3673,12 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
       if (ids.length) {
         const { data: books } = await supabase.from('aevum_books').select('id, summary, updated_at').in('id', ids);
         const ordered = (books || []).sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime());
-        const scenes = ordered.slice(0, 2).map(b => `【记忆书】${String(b.summary || '').trim().slice(0, 160)}`).filter(Boolean);
+        const scenes = ordered.slice(0, 2).map(b => `【记忆书】${perspectiveConvert(String(b.summary || '').trim().slice(0, 160))}`).filter(Boolean);
         if (scenes.length) out += '\n\n' + scenes.join('\n');
       }
     } catch (e) {
       // v30 未执行时降级：无记忆书场景
     }
-    // 视角转换：注入前把"默/雪"转成"我/夫人"（占位符优先，旧文本兜底替换）
-    out = perspectiveConvert(out);
     // 记忆海 + 记忆书 合计不超过 2500 字
     if (out.length > 2500) out = out.slice(0, 2500) + '\n…（内容较长，已截断）';
     return out;
