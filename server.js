@@ -703,6 +703,24 @@ async function savePartialAssistant(content, thinking) {
   }
 }
 
+// 编辑/重新生成用的中断兜底：带分支组与版本号保存，参与版本角标，可重新生成
+async function savePartialAssistantGrouped(content, thinking, groupId, versionNumber, sessionId) {
+  try {
+    await supabase.from('messages').insert({
+      session_id: sessionId,
+      role: 'assistant',
+      content: String(content || '').trim() || '（这条回复生成到一半被中断了，点「重新生成」再试一次吧）',
+      reasoning_content: thinking || null,
+      group_id: groupId || null,
+      version_number: versionNumber || null,
+      visible: true,
+      created_at: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('保存中断回复失败:', e.message);
+  }
+}
+
 // ================== 天气感知（Open-Meteo，免注册） ==================
 const WEATHER_DEFAULT_CITY = '晋江';
 const WEATHER_CACHE_TTL = 30 * 60 * 1000; // 天气缓存 30 分钟
@@ -1684,12 +1702,24 @@ app.post('/api/regenerate', async (req, res) => {
     ];
 
     // 6. 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
-    const first = await callDeepSeekStream(chatMessages, sendSSE, {
+    let first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
       tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
     });
 
+    // 中断兜底：完全空中断重试一次；有部分内容则补发并抢救保存（不整条消失）
+    if (first.error && !first.fullReply && !first.fullThinking) {
+      first = await callDeepSeekStream(chatMessages, sendSSE, {
+        bufferContent: true,
+        tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+      });
+    }
+
     if (first.error) {
+      if (first.fullReply || first.fullThinking) {
+        await flushBufferedContent(first.contentBuffer || first.fullReply, sendSSE).catch(() => {});
+        await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, targetMsg.session_id);
+      }
       sendSSE({ error: first.error });
       res.end();
       return;
@@ -1699,6 +1729,7 @@ app.post('/api/regenerate', async (req, res) => {
     let fullThinking = first.fullThinking;
 
     if (!fullReply) {
+      if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, targetMsg.session_id);
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
@@ -1755,6 +1786,7 @@ app.post('/api/regenerate', async (req, res) => {
       });
 
       if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, targetMsg.session_id);
         sendSSE({ error: phase.error });
         res.end();
         return;
@@ -5811,12 +5843,24 @@ app.post('/api/edit-message', async (req, res) => {
     ];
 
     // 10. 调用 DeepSeek 流式生成新回复（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
-    const first = await callDeepSeekStream(chatMessages, sendSSE, {
+    let first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
       tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
     });
 
+    // 中断兜底：完全空中断重试一次；有部分内容则补发并抢救保存（不整条消失）
+    if (first.error && !first.fullReply && !first.fullThinking) {
+      first = await callDeepSeekStream(chatMessages, sendSSE, {
+        bufferContent: true,
+        tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+      });
+    }
+
     if (first.error) {
+      if (first.fullReply || first.fullThinking) {
+        await flushBufferedContent(first.contentBuffer || first.fullReply, sendSSE).catch(() => {});
+        await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, originalMsg.session_id);
+      }
       sendSSE({ error: first.error });
       res.end();
       return;
@@ -5826,6 +5870,7 @@ app.post('/api/edit-message', async (req, res) => {
     let fullThinking = first.fullThinking;
 
     if (!fullReply) {
+      if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, originalMsg.session_id);
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
@@ -5882,6 +5927,7 @@ app.post('/api/edit-message', async (req, res) => {
       });
 
       if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, originalMsg.session_id);
         sendSSE({ error: phase.error });
         res.end();
         return;
