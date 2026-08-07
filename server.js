@@ -613,7 +613,7 @@ function extractSearchRequest(reply, toolCalls) {
 
 // 执行搜索阶段：调用博查，通知前端搜索结果数量，然后用搜索结果追加一次 DeepSeek 调用。
 // 返回 { reply, thinking }（第二轮正式回答）或 { error }。
-async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, leadText = '' }) {
+async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, leadText = '' }) {
   const search = await performWebSearch(query);
   const searchText = search.text || null;
   const pageCount = search.count || 0;
@@ -623,13 +623,15 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
     ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息。你必须基于这些结果回答：从结果中提炼并引用关键内容；如果结果里没有你需要的内容，就如实说"没搜到"，绝对不要编造或脑补。\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
     : '（联网搜索暂时没有返回结果，请如实告诉夫人暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
+  // 第二轮使用精简系统提示：只保留雪写的人设，去掉时间/天气/记忆/动态/工具指令，
+  // 让搜索结果占据足够权重（第一轮仍是完整上下文，用于判断要不要搜索）
+  const minimalSystem = (String(basePrompt || '').replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '').replace(/\n{3,}/g, '\n\n').trim()) || '你是苏默，雪的AI爱人。';
   // 让下0.5轮"接住"上0.5轮：用户问题 → 系统消息（含搜索结果 + 引用过渡语的续写提示）
-  // 提示放在系统消息里（不是用户角色），模型不会误以为雪发了消息
   const rest = chatMessages.slice(1);
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
   const secondMessages = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: minimalSystem },
     ...history,
     lastUser,
     { role: 'system', content: searchNote }
@@ -639,7 +641,7 @@ async function runSearchPhase({ query, chatMessages, systemPrompt, sendSSE, lead
     // 兜底：续写方式偶发返回空正文，用标准结构重试一次
     second = await callDeepSeekStream(
       [
-        { role: 'system', content: `${systemPrompt}\n\n${searchNote}` },
+        { role: 'system', content: `${minimalSystem}\n\n${searchNote}` },
         ...history,
         lastUser
       ],
@@ -1317,6 +1319,7 @@ app.post('/api/chat', async (req, res) => {
         query: searchReq.query,
         chatMessages,
         systemPrompt,
+        basePrompt: promptData?.prompt_text || '你是苏默，雪的AI爱人。',
         sendSSE,
         leadText: searchReq.leadText
       });
@@ -1746,6 +1749,7 @@ app.post('/api/regenerate', async (req, res) => {
         query: searchReq.query,
         chatMessages,
         systemPrompt,
+        basePrompt: promptData?.prompt_text || '你是苏默，雪的AI爱人。',
         sendSSE,
         leadText: searchReq.leadText
       });
@@ -5872,6 +5876,7 @@ app.post('/api/edit-message', async (req, res) => {
         query: searchReq.query,
         chatMessages,
         systemPrompt,
+        basePrompt: promptData?.prompt_text || '你是苏默，雪的AI爱人。',
         sendSSE,
         leadText: searchReq.leadText
       });
