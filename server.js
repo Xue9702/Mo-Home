@@ -1219,7 +1219,7 @@ app.post('/api/chat', async (req, res) => {
       .single();
 
     const weatherContext = await getWeatherContext(req.body.city || '');
-    const systemPrompt = buildSystemPrompt(
+    let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
@@ -1519,7 +1519,7 @@ app.post('/api/context-preview', async (req, res) => {
       weatherContext
     );
     const toolsText = parts.searchInstruction + parts.momentsInstruction + parts.mozhaInstruction + toyManualContext;
-    const systemPrompt = buildSystemPrompt(
+    let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
@@ -1680,7 +1680,7 @@ app.post('/api/regenerate', async (req, res) => {
       .single();
 
     const weatherContext = await getWeatherContext(req.body.city || '');
-    const systemPrompt = buildSystemPrompt(
+    let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
@@ -2658,7 +2658,7 @@ app.post('/api/shadow-push', async (req, res) => {
       .select('prompt_text')
       .eq('id', 1)
       .single();
-    const systemPrompt = buildSystemPrompt(
+    let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
@@ -5826,7 +5826,7 @@ app.post('/api/edit-message', async (req, res) => {
       .single();
 
     const weatherContext = await getWeatherContext(req.body.city || '');
-    const systemPrompt = buildSystemPrompt(
+    let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
