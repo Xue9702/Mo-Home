@@ -1371,6 +1371,8 @@
           setTimeout(() => { if (messageList) messageList.scrollTop = messageList.scrollHeight; }, 60);
         }
       }
+      // 供内联按钮（玩具页/星露谷页）直接调用
+      window.switchPage = switchPage;
 
       function renderTabIcons(activePage) {
         moHomeIcon.innerHTML = '';
