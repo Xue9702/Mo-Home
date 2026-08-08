@@ -2518,7 +2518,11 @@
           const opts = { method, headers: { 'Content-Type': 'application/json' } };
           if (body !== null) opts.body = JSON.stringify(body);
           const r = await fetch(`http://localhost:${port}${path}`, opts);
-          if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+          if (!r.ok) {
+            let bodyText = '';
+            try { bodyText = String(await r.text()).slice(0, 150); } catch (e) { /* 忽略 */ }
+            return { ok: false, error: `HTTP ${r.status}${bodyText ? '：' + bodyText : ''}` };
+          }
           const data = await r.json().catch(() => null);
           return { ok: true, data };
         } catch (e) {
@@ -2631,7 +2635,20 @@
           };
           const path = pathMap[action];
           if (!path) return { ok: false, error: `未知动作：${action}` };
-          const r = await farmFetchLocal(port, path, 'POST', params);
+          let r = await farmFetchLocal(port, path, 'POST', params);
+          // 兜底：预检（OPTIONS）被拦导致请求失败时，改用"免预检"模式重发一次（text/plain），
+          // 让动作仍能真实发到游戏里（虽然读不到返回值）
+          if (!r.ok && /fetch|Failed|TypeError|CORS|预检/i.test(r.error || '')) {
+            try {
+              await fetch(`http://localhost:${port}${path}`, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify(params)
+              });
+              r = { ok: true, result: '已用免预检模式发出（无法确认结果，请看游戏里有没有动）' };
+            } catch (e2) { /* 保留原错误 */ }
+          }
           if (!r.ok) return { ok: false, error: r.error || '请求失败' };
           const d = r.data || {};
           const text = JSON.stringify(d);
