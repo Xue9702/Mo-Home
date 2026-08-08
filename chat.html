@@ -2495,6 +2495,7 @@
         lastDay: '',
         lastLocation: '',
         stateBrief: '',
+        lastTestMsg: '',
         log: []
       }, farmLoadState());
       if (!Array.isArray(farmState.log)) farmState.log = [];
@@ -2552,11 +2553,12 @@
         } else {
           msg = '连不上：' + (r.error || '游戏没开？');
         }
+        farmState.lastTestMsg = msg;
         farmSaveState();
+        // 先重渲染，再写结果，避免结果被刷新瞬间盖掉
+        renderFarmLab();
         const st = document.getElementById('farmConnStatus');
         if (st) st.textContent = msg;
-        if (btn) { btn.disabled = false; btn.textContent = '测试连接'; }
-        renderFarmLab();
       }
       window.farmTestConnect = farmTestConnect;
 
@@ -2841,6 +2843,9 @@
         const box = document.getElementById('farmContent');
         if (!box) return;
         const connected = !!farmState.lastWorldReady;
+        const testMsg = String(farmState.lastTestMsg || '');
+        const statusText = testMsg || (connected ? `已连接（端口 ${farmState.port}）` : '未连接（先点「测试连接」，游戏要用 SMAPI 启动）');
+        const statusColor = testMsg.indexOf('连不上') !== -1 ? '#e74c3c' : (testMsg.indexOf('已连接') !== -1 ? '#5f9e77' : '#8a83a8');
         box.innerHTML = `
           <div class="feature-card" style="align-items:stretch;gap:10px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -2853,7 +2858,7 @@
               <button onclick="farmSetPort()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">设端口</button>
               <button id="farmTestBtn" onclick="farmTestConnect()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">测试连接</button>
               <button onclick="farmToggleMonitor()" style="border:none;border-radius:12px;padding:9px 16px;font-size:13px;cursor:pointer;${farmState.monitor ? 'background:#9ad2a9;color:#fff;' : 'border:1px solid #cfe8d8;background:#fff;color:#5f9e77;'}">${farmState.monitor ? '⏸ 正在监控（点击关闭）' : '▶ 开始监控'}</button>
-              <span id="farmConnStatus" style="font-size:12px;color:#8a83a8;">${connected ? '已连接（端口 ' + farmState.port + '）' : '未连接（先点「测试连接」，游戏要用 SMAPI 启动）'}</span>
+              <span id="farmConnStatus" style="font-size:12px;color:${statusColor};">${statusText}</span>
             </div>
             <div style="font-size:12px;color:#8a83a8;line-height:1.7;">端口：主机角色通常是 7842，默作为 2P（farmhand）通常是 7843；两台游戏实例时后开的那台会自动往后移。不知道哪个就挨个试，「测试连接」会告诉你 worldReady 是不是 true。</div>
           </div>
@@ -2884,7 +2889,7 @@
           </div>
           <div class="feature-card" style="align-items:stretch;gap:6px;text-align:left;">
             <div style="font-size:13px;font-weight:600;color:#e1789a;">说明</div>
-            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">· 游戏需用 SMAPI 启动（StardewModdingAPI.exe），并装好 NagiBridge mod<br>· 开启监控后，浏览器每 10 秒悄悄看一眼游戏（本地直连，不耗 tokens）；只有"大变化"（新一天/进出游戏/换地图）才会让默感知，且 5 分钟现实冷却<br>· 默的农场行动通过工具调用（stardew_state / stardew_action）发生：命令 → 浏览器 → 本地游戏 → 结果回传<br>· 农场动态会按重要度筛选后进记忆海（回忆纪念/游戏），聊天与下次唤醒都能想起</div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">· 游戏需用 SMAPI 启动（StardewModdingAPI.exe），并装好 NagiBridge mod<br>· 开启监控后，浏览器每 10 秒悄悄看一眼游戏（本地直连，不耗 tokens）；只有"大变化"（新一天/进出游戏/换地图）才会让默感知，且 5 分钟现实冷却<br>· 默的农场行动通过工具调用（stardew_state / stardew_action）发生：命令 → 浏览器 → 本地游戏 → 结果回传<br>· 农场动态会按重要度筛选后进记忆海（回忆纪念/游戏），聊天与下次唤醒都能想起<br>· ⚠️ 如果一直"连不上"：这是 Chrome 新安全规则拦了 https 网页连本机。点地址栏左侧的锁图标 → 「本地网络访问」→ 选「允许」，或去 chrome://settings/content/localNetworkAccess 把 mo-home.onrender.com 加入允许，再点测试连接</div>
           </div>`;
         renderFarmLog();
       }
