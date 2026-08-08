@@ -2534,7 +2534,7 @@
         const menu = d.activeMenu ? `菜单:${d.activeMenu.type}` : '';
         const stamina = Math.round(Number(p.stamina) || 0);
         const maxStamina = Math.round(Number(p.maxStamina) || 0);
-        return `第${t.year || '?'}年${t.season || '?'}季第${t.dayOfMonth || '?'}天 ${t.timeOfDay || '?'} · ${loc.name || '?'}(${p.x},${p.y}) · 体力${stamina}/${maxStamina} · 健康${Number(p.health) || 0}/${Number(p.maxHealth) || 0} · 钱${Number(p.money) || 0}g · 手持${p.currentTool || '无'}${menu ? ' · ' + menu : ''}`;
+        return `角色${p.name || '?'} · 第${t.year || '?'}年${t.season || '?'}季第${t.dayOfMonth || '?'}天 ${t.timeOfDay || '?'} · ${loc.name || '?'}(${p.x},${p.y}) · 体力${stamina}/${maxStamina} · 健康${Number(p.health) || 0}/${Number(p.maxHealth) || 0} · 钱${Number(p.money) || 0}g · 手持${p.currentTool || '无'}${menu ? ' · ' + menu : ''}`;
       }
 
       async function farmTestConnect() {
@@ -2606,8 +2606,9 @@
 
       async function farmRunAction(action, params) {
         const r = await farmExecCmd({ action, params });
-        const st = document.getElementById('farmConnStatus');
-        if (st) st.textContent = r.ok ? '动作完成：' + r.result.slice(0, 120) : '动作失败：' + r.error;
+        farmState.lastTestMsg = r.ok ? '动作完成：' + String(r.result || '').slice(0, 160) : '动作失败：' + String(r.error || '');
+        farmSaveState();
+        renderFarmLab();
         return r;
       }
       window.farmRunAction = farmRunAction;
@@ -2885,6 +2886,7 @@
       window.farmCommitDay = farmCommitDay;
 
       function renderFarmStatus() {
+        if (farmState.lastTestMsg) return; // 手动测试结果常驻，不被轮询刷掉
         const st = document.getElementById('farmConnStatus');
         if (st && farmState.lastWorldReady) {
           st.textContent = `已连接（端口 ${farmState.port}）${farmState.stateBrief ? ' · ' + farmState.stateBrief : ''}`;
