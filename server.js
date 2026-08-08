@@ -662,7 +662,7 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_state',
-        description: '查看你在星露谷里的当前状态：位置、季节日期、时间、体力、健康、金钱、手持物品、背包、是否卡在菜单等。在农场里行动前先调用它确认状态；游戏没开或页面没打开时它会返回失败。',
+        description: '查看你在星露谷里的当前状态：位置、季节日期、时间、体力、健康、金钱、手持物品、背包、是否卡在菜单等。在农场里行动前先调用它确认状态；游戏没开或页面没打开时它会返回失败。注意：当雪明确让你在农场里做事/走动时，查看完状态必须接着调用 stardew_action 去执行动作，不要只汇报状态就结束。',
         parameters: { type: 'object', properties: {} }
       }
     },
@@ -6404,7 +6404,7 @@ async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
   const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
   const state = String(brief.stateBrief || '').trim();
-  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 行动前先 stardew_state 看体力/时间/位置；体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
+  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 行动前先 stardew_state 看体力/时间/位置；体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 当雪让你在农场里做事/走动/拿东西时：看完状态必须立刻调用 stardew_action 完成动作（移动用 warp 最稳），做完再简短汇报；只读状态不行动是不合格的\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
 }
 
 // 把一天（或一段）的农场短时日志交给 AI 压缩成事件单元进记忆海：低价值直接丢弃
