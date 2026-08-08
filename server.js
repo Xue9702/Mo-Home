@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const { PDFParse } = require('pdf-parse');
@@ -6073,7 +6073,7 @@ app.post('/api/edit-message', async (req, res) => {
     if (first.error) {
       if (first.fullReply || first.fullThinking) {
         await flushBufferedContent(first.contentBuffer || first.fullReply, sendSSE).catch(() => {});
-        await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, originalMsg.session_id);
+        await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, newVersion, originalMsg.session_id);
       }
       sendSSE({ error: first.error });
       res.end();
@@ -6084,7 +6084,7 @@ app.post('/api/edit-message', async (req, res) => {
     let fullThinking = first.fullThinking;
 
     if (!fullReply) {
-      if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, originalMsg.session_id);
+      if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, newVersion, originalMsg.session_id);
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
@@ -6113,7 +6113,7 @@ app.post('/api/edit-message', async (req, res) => {
       sendSSE({ stardewStart: true });
       const phase = await runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls: first.toolCalls, initialReply: fullReply });
       if (phase.error) {
-        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, originalMsg.session_id).catch(() => {});
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, newVersion, originalMsg.session_id).catch(() => {});
         sendSSE({ error: phase.error });
         res.end();
         return;
@@ -6160,7 +6160,7 @@ app.post('/api/edit-message', async (req, res) => {
       });
 
       if (phase.error) {
-        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, originalMsg.session_id);
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, newVersion, originalMsg.session_id);
         sendSSE({ error: phase.error });
         res.end();
         return;
@@ -6353,8 +6353,17 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
     const sideCalls = toolCalls.filter(tc => !isStardewToolName(tc.function?.name));
     if (sideCalls.length) await executeSideEffectTools(sideCalls, sendSSE);
     if (!stardewCalls.length) break;
-    chatMessages.push({ role: 'assistant', content: reply || null, tool_calls: toolCalls });
-    for (const tc of stardewCalls) {
+    // 给每个工具调用补上稳定 id（模型偶发漏 id，避免第二轮 API 因 id 不匹配报错）
+    const calls = toolCalls.map((tc, i) => ({
+      id: tc.id || `call_${round}_${i}_${Math.random().toString(36).slice(2, 8)}`,
+      type: tc.type || 'function',
+      function: tc.function || { name: '', arguments: '' }
+    }));
+    chatMessages.push({ role: 'assistant', content: reply || null, tool_calls: calls });
+    const stardewIndexes = [];
+    toolCalls.forEach((tc, i) => { if (isStardewToolName(tc.function?.name)) stardewIndexes.push(i); });
+    for (const idx of stardewIndexes) {
+      const tc = toolCalls[idx];
       const args = parseToolArgs(tc.function?.arguments);
       // 容错：模型偶尔会把参数格式传歪（params 不是对象、动作名塞进 params 里）
       const rawParams = args.params;
@@ -6363,12 +6372,20 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
       const r = await execStardewViaBrowser({ action, params, port: args.port }, sendSSE);
       chatMessages.push({
         role: 'tool',
-        tool_call_id: tc.id || `stardew_${round}_${Math.random().toString(36).slice(2, 6)}`,
+        tool_call_id: calls[idx].id,
         content: r.ok ? `动作成功：${r.result}` : `动作失败：${r.error}`
       });
     }
-    const call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });
-    if (call.error) return { error: call.error, reply: call.fullReply || '', thinking: call.fullThinking || '' };
+    let call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });
+    if (call.error) {
+      // 偶发抽风：重试一次
+      call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });
+    }
+    if (call.error) {
+      // 仍失败：有正文就用正文收尾（避免白屏）；没正文才报错
+      if (String(reply || '').trim()) return { reply, thinking };
+      return { error: call.error, reply: call.fullReply || '', thinking: call.fullThinking || '' };
+    }
     reply = call.fullReply || '';
     thinking = call.fullThinking || '';
     toolCalls = call.toolCalls || null;
