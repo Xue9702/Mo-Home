@@ -670,7 +670,7 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_action',
-        description: '在星露谷里执行一个动作（通过浏览器连接本地游戏，动作结果会真实发生在游戏里）。常用动作：move=走到坐标{x,y}；warp=传送到地点{location:"Farm",x,y}；tool=使用工具{name:"Axe"}；use=使用手中物品；select=选择背包物品{name:"Parsnip Seeds"}；interact=与面前格子交互；face=朝向{direction:0-3}；emote=表情{id:24}=爱心；chat=在游戏内聊天框发消息{message}；key=按键{key:"confirm"}；sleep=睡觉过天；fishbot=自动钓鱼开关{action:"on"/"off"/"toggle"}；craft=制作{name,count}；harvest=收割；store=存物品到箱子{x,y,name}；pause=暂停/resume=恢复。行动前先 stardew_state 看体力与时间（凌晨 2 点前要睡觉），体力低就提醒雪或休息。',
+        description: '在星露谷里执行一个动作（通过浏览器连接本地游戏，动作结果会真实发生在游戏里）。移动首选 warp=传送{location:"Farm",x,y}（多人模式最可靠）；move=走路到坐标{x,y}（目标格必须与当前位置不同！）也可用。其他：tool=使用工具{name:"Axe"}；use=使用手中物品；select=选择背包物品{name:"Parsnip Seeds"}；interact=与面前格子交互；face=朝向{direction:0-3}；emote=表情{id:24}=爱心；chat=在游戏内聊天框发消息{message}；key=按键{key:"confirm"}；sleep=睡觉过天；fishbot=自动钓鱼开关{action:"on"/"off"/"toggle"}；craft=制作{name,count}；harvest=收割；store=存物品到箱子{x,y,name}；pause=暂停/resume=恢复。行动前先 stardew_state 看体力与时间（凌晨 2 点前要睡觉），体力低就提醒雪或休息。',
         parameters: {
           type: 'object',
           properties: {
