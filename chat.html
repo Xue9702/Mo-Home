@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -2677,6 +2677,22 @@
       }
       window.postFarmResult = postFarmResult;
 
+      // 默的指令监听：记录他尝试了什么、结果如何（写入星露谷页的农场动态日志）
+      async function farmHandleCmd(cmd) {
+        const action = (cmd && cmd.action) || 'state';
+        const params = (cmd && cmd.params) || {};
+        let paramsText = '';
+        try { paramsText = JSON.stringify(params); } catch (e) { paramsText = String(params); }
+        farmLogAdd(`默指令 → ${action} ${paramsText.slice(0, 100)}`);
+        const r = await farmExecCmd(cmd);
+        farmLogAdd(r.ok
+          ? `结果 → ${String(r.result || '').slice(0, 140)}`
+          : `结果 → 失败：${String(r.error || '').slice(0, 140)}`);
+        postFarmResult(cmd.requestId, r);
+        return r;
+      }
+      window.farmHandleCmd = farmHandleCmd;
+
       function farmBrief() {
         return {
           connected: !!farmState.lastWorldReady,
@@ -2755,7 +2771,7 @@
               messageList.scrollTop = messageList.scrollHeight;
             }
             if (json.stardewCmd) {
-              farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+              farmHandleCmd(json.stardewCmd);
             }
             if (json.content) {
               ensureMsg();
@@ -4830,7 +4846,7 @@
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
                 if (json.stardewCmd) {
-                  farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+                  farmHandleCmd(json.stardewCmd);
                 }
                 if (json.stardewStart) {
                   const m2 = createAssistantStreamMessage();
@@ -5299,7 +5315,7 @@
                   toyExecuteCmd(json.toyCmd);
                 }
                 if (json.stardewCmd) {
-                  farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+                  farmHandleCmd(json.stardewCmd);
                 }
                 if (json.stardewStart) {
                   const m2 = createAssistantStreamMessage();
@@ -5442,7 +5458,7 @@
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
                 if (json.stardewCmd) {
-                  farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+                  farmHandleCmd(json.stardewCmd);
                 }
                 if (json.stardewStart) {
                   const m2 = createAssistantStreamMessage();

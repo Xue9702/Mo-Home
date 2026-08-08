@@ -6356,7 +6356,11 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
     chatMessages.push({ role: 'assistant', content: reply || null, tool_calls: toolCalls });
     for (const tc of stardewCalls) {
       const args = parseToolArgs(tc.function?.arguments);
-      const r = await execStardewViaBrowser({ action: args.action, params: args.params, port: args.port }, sendSSE);
+      // 容错：模型偶尔会把参数格式传歪（params 不是对象、动作名塞进 params 里）
+      const rawParams = args.params;
+      const params = (rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)) ? rawParams : {};
+      const action = String(args.action || params.action || 'state').trim();
+      const r = await execStardewViaBrowser({ action, params, port: args.port }, sendSSE);
       chatMessages.push({
         role: 'tool',
         tool_call_id: tc.id || `stardew_${round}_${Math.random().toString(36).slice(2, 6)}`,
