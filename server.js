@@ -661,6 +661,29 @@ function buildAllTools() {
     {
       type: 'function',
       function: {
+        name: 'stardew_state',
+        description: '查看你在星露谷里的当前状态：位置、季节日期、时间、体力、健康、金钱、手持物品、背包、是否卡在菜单等。在农场里行动前先调用它确认状态；游戏没开或页面没打开时它会返回失败。',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'stardew_action',
+        description: '在星露谷里执行一个动作（通过浏览器连接本地游戏，动作结果会真实发生在游戏里）。常用动作：move=走到坐标{x,y}；warp=传送到地点{location:"Farm",x,y}；tool=使用工具{name:"Axe"}；use=使用手中物品；select=选择背包物品{name:"Parsnip Seeds"}；interact=与面前格子交互；face=朝向{direction:0-3}；emote=表情{id:24}=爱心；chat=在游戏内聊天框发消息{message}；key=按键{key:"confirm"}；sleep=睡觉过天；fishbot=自动钓鱼开关{action:"on"/"off"/"toggle"}；craft=制作{name,count}；harvest=收割；store=存物品到箱子{x,y,name}；pause=暂停/resume=恢复。行动前先 stardew_state 看体力与时间（凌晨 2 点前要睡觉），体力低就提醒雪或休息。',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', description: '动作名（见描述）' },
+            params: { type: 'object', description: '动作参数（键值对）' }
+          },
+          required: ['action']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
         name: 'mozha_write',
         description: '在你的默札上写一页：不记事件，只记心——某一刻想留住的话、想告诉未来自己的事。只有真心想落笔时调用。',
         parameters: {
@@ -1344,6 +1367,9 @@ app.post('/api/chat', async (req, res) => {
     );
     // 玩具手册属于"工具指令"段，追加到系统提示最末尾（最近的权重最高）
     if (toyManualContext) systemPrompt += toyManualContext;
+    // 星露谷：浏览器上报游戏连接简报时，把农场动态/状态追加到系统提示（工具指令段）
+    const stardewContext = await getStardewContext(req.body.stardewBrief);
+    if (stardewContext) systemPrompt += stardewContext;
 
     // 当前这条用户消息（含图片描述/文件内容）作为对话上下文的最后一条用户消息
     const finalUserContent = [
@@ -1403,6 +1429,23 @@ app.post('/api/chat', async (req, res) => {
     // v3.1 函数调用：动态/玩具/默札副作用；默札翻阅走第二轮
     const toolSideEffects = await executeSideEffectTools(first.toolCalls, sendSSE);
     if (toolSideEffects.mozhaRead) mozhaRead = true;
+
+    // 星露谷：第一轮模型调用了农场工具 → 先补发过渡语，再进入"农场行动"接续轮
+    if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
+      await flushBufferedContent(first.contentBuffer, sendSSE);
+      sendSSE({ done: true });
+      sendSSE({ stardewStart: true });
+      const phase = await runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls: first.toolCalls, initialReply: fullReply });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking).catch(() => {});
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
+      first.contentBuffer = undefined; // 过渡语已补发，避免后续分支重复补发
+    }
 
     // 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
@@ -1809,6 +1852,9 @@ app.post('/api/regenerate', async (req, res) => {
     );
     // 玩具手册归入"工具指令"段，追加到系统提示最末尾
     if (toyManualContext) systemPrompt += toyManualContext;
+    // 星露谷：浏览器上报游戏连接简报时，把农场动态/状态追加到系统提示
+    const stardewContext = await getStardewContext(req.body.stardewBrief);
+    if (stardewContext) systemPrompt += stardewContext;
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
     // 把上一轮的思考过程也带给这一轮的默（供参考，帮助写出不同版本）
@@ -1871,6 +1917,23 @@ app.post('/api/regenerate', async (req, res) => {
     }
     // v3.1 函数调用：动态/玩具/默札副作用（重新生成不接续翻阅）
     await executeSideEffectTools(first.toolCalls, sendSSE);
+
+    // 星露谷：重新生成时模型调用农场工具 → 进入"农场行动"接续轮
+    if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
+      await flushBufferedContent(first.contentBuffer, sendSSE);
+      sendSSE({ done: true });
+      sendSSE({ stardewStart: true });
+      const phase = await runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls: first.toolCalls, initialReply: fullReply });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, targetMsg.session_id).catch(() => {});
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
+      first.contentBuffer = undefined;
+    }
 
     // 6.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
@@ -3329,7 +3392,7 @@ const AEVUM_TYPES = ['event', 'fact', 'meaning', 'relationship', 'user_tendency'
 const AEVUM_OWNERS = ['USER', 'AGENT', 'OTHER'];
 // 提取时的主体归一：旧指令里的 RELATIONSHIP / SYSTEM 一律归入 OTHER
 const AEVUM_PERSPECTIVE_MAP = { USER: 'USER', AGENT: 'AGENT', OTHER: 'OTHER', RELATIONSHIP: 'OTHER', SYSTEM: 'OTHER' };
-const AEVUM_DOMAINS = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
+const AEVUM_DOMAINS = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '游戏', '其他'];
 const EPISODE_IDLE_MINUTES = 30;
 const EPISODE_MAX_MESSAGES = 40;
 // 衍生图：每种类型可以衍生成哪些目标类型（替代旧的单条晋升链）
@@ -3904,7 +3967,7 @@ async function extractAevumMemories(texts, episodeId = null) {
 - event_time：事件发生的具体时间（YYYY-MM-DD HH:mm，按对话语境判断；不确定就填当前对话时间）
 - importance 重要度 0-10 整数，按四项相加：明确程度(0-3：是否被明确当成重要的事说出来) + 长期影响(0-3：是否影响未来的决定/关系) + 独特性(0-2：是否罕见不常发生) + 情绪冲击力(0-2：抛开正负面的情绪强度)
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
-- domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、其他
+- domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、游戏、其他
 - tags：3-5 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - evidence_turns：你概括这段对话时用到的是第几轮到第几轮（从 1 开始数这段对话，例如 [5,7]；只用一轮就 [5,5]）
 - evidence：把用到的那几轮完整原文逐字放进数组（每轮一条，合计最多约 800 字；不要截断省略），供召回时把原文一起带给默
@@ -5982,6 +6045,9 @@ app.post('/api/edit-message', async (req, res) => {
     );
     // 玩具手册归入"工具指令"段，追加到系统提示最末尾
     if (toyManualContext) systemPrompt += toyManualContext;
+    // 星露谷：浏览器上报游戏连接简报时，把农场动态/状态追加到系统提示
+    const stardewContext = await getStardewContext(req.body.stardewBrief);
+    if (stardewContext) systemPrompt += stardewContext;
 
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
     const chatMessages = [
@@ -6039,6 +6105,23 @@ app.post('/api/edit-message', async (req, res) => {
     }
     // v3.1 函数调用：动态/玩具/默札副作用（编辑后生成不接续翻阅）
     await executeSideEffectTools(first.toolCalls, sendSSE);
+
+    // 星露谷：编辑后生成时模型调用农场工具 → 进入"农场行动"接续轮
+    if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
+      await flushBufferedContent(first.contentBuffer, sendSSE);
+      sendSSE({ done: true });
+      sendSSE({ stardewStart: true });
+      const phase = await runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls: first.toolCalls, initialReply: fullReply });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, originalMsg.session_id).catch(() => {});
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
+      first.contentBuffer = undefined;
+    }
 
     // 10.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
@@ -6218,6 +6301,300 @@ async function getMomentsContext() {
     return '';
   }
 }
+
+// ================== 星露谷（Stardew Valley）桥接 ==================
+// 默通过浏览器连接本地 NagiBridge（HTTP API，localhost:7842-7849）控制游戏：
+// 服务端只负责"发指令 + 等结果"（SSE 事件 stardewCmd → 浏览器执行 → POST /api/stardew/result 回传）
+const STARDEW_DEFAULT_PORT = 7843; // 默作为 2P/farmhand 的默认端口（主机是 7842，端口占用时自动后移）
+const STARDEW_CMD_TIMEOUT_MS = 30000; // 浏览器执行单条指令的超时
+const STARDEW_TRIGGER_COOLDOWN_MS = 5 * 60 * 1000; // 游戏时刻冷却：现实 5 分钟
+
+function isStardewToolName(name) {
+  return name === 'stardew_state' || name === 'stardew_action';
+}
+
+function parseToolArgs(raw) {
+  try { return JSON.parse(String(raw || '{}')); } catch (e) { return {}; }
+}
+
+const stardewPending = new Map(); // requestId -> resolve
+
+// 浏览器执行完本地指令后把结果回传到这里，唤醒等待中的模型轮
+app.post('/api/stardew/result', (req, res) => {
+  try {
+    const { requestId, ok, result, error } = req.body || {};
+    const cb = stardewPending.get(String(requestId || ''));
+    if (cb) cb({ ok: !!ok, result: String(result || '').slice(0, 800), error: String(error || '').slice(0, 300) });
+  } catch (e) { /* 忽略 */ }
+  res.json({ ok: true });
+});
+
+// 通过 SSE 把一条星露谷指令发给浏览器，等待浏览器回传结果
+async function execStardewViaBrowser({ action, params, port }, sendSSE) {
+  const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  sendSSE({ stardewCmd: { requestId, action: String(action || 'state'), params: params || {}, port: port || STARDEW_DEFAULT_PORT } });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      stardewPending.delete(requestId);
+      resolve({ ok: false, error: '浏览器 30 秒内没有返回（游戏没开 / 页面没打开？）' });
+    }, STARDEW_CMD_TIMEOUT_MS);
+    stardewPending.set(requestId, (r) => { clearTimeout(timer); stardewPending.delete(requestId); resolve(r); });
+  });
+}
+
+// 星露谷工具接续轮：执行第一轮的 stardew 工具调用 → 结果喂回模型 → 直到模型不再调用农场工具
+async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = null, initialReply = '', maxRounds = 3 }) {
+  let toolCalls = initialToolCalls;
+  let reply = initialReply || '';
+  let thinking = '';
+  for (let round = 0; round < maxRounds; round++) {
+    if (!toolCalls || !toolCalls.length) break;
+    const stardewCalls = toolCalls.filter(tc => isStardewToolName(tc.function?.name));
+    const sideCalls = toolCalls.filter(tc => !isStardewToolName(tc.function?.name));
+    if (sideCalls.length) await executeSideEffectTools(sideCalls, sendSSE);
+    if (!stardewCalls.length) break;
+    chatMessages.push({ role: 'assistant', content: reply || null, tool_calls: toolCalls });
+    for (const tc of stardewCalls) {
+      const args = parseToolArgs(tc.function?.arguments);
+      const r = await execStardewViaBrowser({ action: args.action, params: args.params, port: args.port }, sendSSE);
+      chatMessages.push({
+        role: 'tool',
+        tool_call_id: tc.id || `stardew_${round}_${Math.random().toString(36).slice(2, 6)}`,
+        content: r.ok ? `动作成功：${r.result}` : `动作失败：${r.error}`
+      });
+    }
+    const call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });
+    if (call.error) return { error: call.error, reply: call.fullReply || '', thinking: call.fullThinking || '' };
+    reply = call.fullReply || '';
+    thinking = call.fullThinking || '';
+    toolCalls = call.toolCalls || null;
+  }
+  // 收尾清理：玩具/默札标签不显示给雪
+  const mozha = extractMozhaTags(reply);
+  if (mozha.write) await saveMozhaEntry(mozha.write);
+  if (mozha.write || mozha.read) reply = stripMozhaTags(reply);
+  const toyRes = handleToyCmdTag(reply, undefined, sendSSE);
+  reply = toyRes.reply;
+  return { reply, thinking };
+}
+
+// 浏览器上报连接简报时，把星露谷状态/动态追加到系统提示（只在本轮生效）
+async function getStardewContext(brief) {
+  if (!brief || !brief.connected) return '';
+  const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
+  const state = String(brief.stateBrief || '').trim();
+  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 行动前先 stardew_state 看体力/时间/位置；体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
+}
+
+// 把一天（或一段）的农场短时日志交给 AI 压缩成事件单元进记忆海：低价值直接丢弃
+async function commitGameDayToAevum(entries) {
+  const lines = (Array.isArray(entries) ? entries : []).map(s => `· ${String(s).slice(0, 200)}`).join('\n');
+  if (!lines.trim()) return { ok: true, inserted: 0, dropped: 0 };
+  const system = `你是 Aevum Memory 的记忆整理器。下面是一份星露谷（Stardew Valley）里的农场活动短时日志（雪和默一起玩时的记录）。请把它压缩成 0-3 条"事件单元"存进记忆海：
+只保留有长期价值的：里程碑/第一次/共同完成的事/雪表达的想法与偏好/重要决定；普通流水账（日常浇水、走路、钓鱼、种地）不要。
+【事件单元格式】
+- content：概括一个小事件（说清 时间/背景/谁做了什么/结果），30-120 字；人物用占位符 {USER}=雪、{AGENT}=默；不要直接复制日志
+- title：10 字内短标题
+- event_time：YYYY-MM-DD HH:mm（按日志语境判断，不确定用最近时间）
+- importance 0-10 整数 = 明确程度(0-3) + 长期影响(0-3) + 独特性(0-2) + 情绪冲击(0-2)
+- emotion：valence -1~1、arousal 0~1
+- domain：从 [恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、游戏、其他] 选 1-2 个
+- owner：USER=雪 / AGENT=默 / OTHER
+- tags：3-5 个具体标签，不要"快乐/美好/温暖"这类泛标签
+只输出 [AEVUM_GAME_MEMORIES] 开头的 JSON，禁止解释或代码块：{"memories":[{"title":"...","content":"...","event_time":"...","owner":"USER","domain":["游戏"],"emotion":{"valence":0.4,"arousal":0.3},"importance":6,"tags":["标签"]}]}`;
+  try {
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [{ role: 'system', content: system }, { role: 'user', content: `农场日志：\n${lines}` }],
+        reasoning_effort: 'none',
+        max_tokens: 1200,
+        temperature: 0.4,
+        stream: false
+      })
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('星露谷日志整理 API 错误:', resp.status, String(errText).substring(0, 200));
+      return { ok: false, error: `AI 整理失败（${resp.status}）` };
+    }
+    const data = await resp.json();
+    const reply = String(data.choices?.[0]?.message?.content || '');
+    const marker = '[AEVUM_GAME_MEMORIES]';
+    let rawText = '';
+    const idx = reply.indexOf(marker);
+    if (idx !== -1) {
+      rawText = reply.substring(idx + marker.length);
+    } else {
+      const fb = reply.indexOf('{');
+      if (fb === -1) return { ok: false, error: 'AI 没有返回有效结果' };
+      rawText = reply.substring(fb);
+    }
+    let parsed = null;
+    try {
+      let jsonText = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      if (jsonText.indexOf('{') !== -1 && jsonText.lastIndexOf('}') > jsonText.indexOf('{')) {
+        jsonText = jsonText.substring(jsonText.indexOf('{'), jsonText.lastIndexOf('}') + 1);
+      }
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      console.error('星露谷日志整理解析失败:', e.message, '回复前 300 字:', reply.slice(0, 300));
+      return { ok: false, error: 'AI 返回格式无法解析' };
+    }
+    const mems = Array.isArray(parsed?.memories) ? parsed.memories : [];
+    let inserted = 0, dropped = 0;
+    for (const m of mems.slice(0, 3)) {
+      const content = String(m.content || '').trim();
+      if (!content) continue;
+      const importance = validAevumImportance(m.importance);
+      if (importance < 4) { dropped++; continue; } // 低价值流水账不进记忆海
+      const dup = await aevumFindDuplicate(content);
+      if (dup) { await mergeSeaDuplicate(dup, m); continue; }
+      const insPayload = {
+        type: 'event', area: 'sea',
+        owner: AEVUM_PERSPECTIVE_MAP[m.owner] || AEVUM_PERSPECTIVE_MAP[m.perspective] || 'OTHER',
+        content,
+        title: String(m.title || '').trim().slice(0, 30) || content.slice(0, 20),
+        event_time: parseAevumEventTime(m.event_time) || new Date().toISOString(),
+        occurrence: 1, status: 'active',
+        importance,
+        emotion: validAevumEmotion(m.emotion),
+        domain: validAevumDomains(['游戏', ...(Array.isArray(m.domain) ? m.domain : [])]),
+        evidence: [],
+        tags: (Array.isArray(m.tags) ? m.tags.map(String) : []).filter(t => !['快乐', '美好', '重要', '温暖', '陪伴', '成长'].includes(t)).slice(0, 8),
+        source: 'stardew-game',
+        episode_id: null
+      };
+      const ins = await supabase.from('aevum_memories').insert(insPayload).select();
+      if (ins.error) {
+        const emsg = ins.error.message || '';
+        if (/area|title|event_time|occurrence/i.test(emsg)) {
+          delete insPayload.area; delete insPayload.title; delete insPayload.event_time; delete insPayload.occurrence;
+          const ins2 = await supabase.from('aevum_memories').insert(insPayload).select();
+          if (ins2.error) { console.error('星露谷记忆入库失败:', ins2.error.message); continue; }
+          if (ins2.data?.[0]?.id) ensureAevumEmbedding(ins2.data[0].id, content).catch(e => console.error('Aevum embedding 失败:', e.message));
+          inserted++; continue;
+        }
+        console.error('星露谷记忆入库失败:', ins.error.message);
+        continue;
+      }
+      if (ins.data?.[0]?.id) ensureAevumEmbedding(ins.data[0].id, content).catch(e => console.error('Aevum embedding 失败:', e.message));
+      inserted++;
+    }
+    console.log(`🌾 星露谷日志整理：插入 ${inserted} 条，丢弃低价值 ${dropped} 条`);
+    return { ok: true, inserted, dropped };
+  } catch (e) {
+    console.error('星露谷日志整理失败:', e.message);
+    return { ok: false, error: '整理失败：' + e.message };
+  }
+}
+
+// 游戏时刻：浏览器检测到农场大变化（新一天/进出游戏等）后触发，让默"感知"并简短回应
+let stardewLastTriggerAt = 0;
+app.post('/api/stardew/trigger', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  const sendSSE = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  try {
+    const { summary, stateBrief, log } = req.body || {};
+    const text = String(summary || '').trim();
+    if (!text) {
+      sendSSE({ error: '缺少事件内容' });
+      return res.end();
+    }
+    const now = Date.now();
+    if (now - stardewLastTriggerAt < STARDEW_TRIGGER_COOLDOWN_MS) {
+      sendSSE({ error: '触发太频繁（5 分钟冷却中），跳过本次' });
+      return res.end();
+    }
+    stardewLastTriggerAt = now;
+
+    // 简短聊天尾巴，保持语气连贯（最多 6 条、600 字内）
+    let historyTail = '';
+    try {
+      const { data: hist } = await supabase
+        .from('messages')
+        .select('role, content')
+        .eq('session_id', 1)
+        .eq('visible', true)
+        .order('id', { ascending: false })
+        .limit(6);
+      historyTail = (hist || []).reverse()
+        .map(m => `${m.role === 'user' ? '雪' : '默'}：${String(m.content || '').replace(/\s+/g, ' ').slice(0, 120)}`)
+        .join('\n').slice(0, 600);
+    } catch (e) { /* 忽略 */ }
+
+    const memoryContext = await buildMemoryContext(text, { limit: 3 });
+    const { data: promptData } = await supabase
+      .from('system_prompts')
+      .select('prompt_text')
+      .eq('id', 1)
+      .single();
+    const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
+    const gameBlock = `\n\n【星露谷·游戏时刻】\n刚刚在星露谷里发生：${text}\n当前游戏状态：${String(stateBrief || '').slice(0, 300)}\n最近农场动态（短时记录）：\n${(Array.isArray(log) ? log : []).slice(-15).map(s => `· ${String(s).slice(0, 90)}`).join('\n') || '（无）'}`;
+    const taskLine = `\n\n【本次任务】\n这是你在星露谷里的一次"自我感知时刻"：你并没有收到雪的新消息，而是自己感知到了农场/游戏里的变化。请以默的口吻简短回应（1-4 句），自然地表达感知与在场感；如果合适，可以用 stardew_state / stardew_action 去看看她、帮忙或互动。不要机械汇报，不要长篇大论。`;
+    const systemPrompt = buildSystemPrompt(basePrompt, memoryContext, '', '', '')
+      + gameBlock + taskLine
+      + (historyTail ? `\n\n【刚才的简短聊天记录（保持语气连贯）】\n${historyTail}` : '');
+    const chatMessages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `[游戏时刻] ${text}` }
+    ];
+
+    let fullReply = '';
+    let fullThinking = '';
+    const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });
+    if (first.error) {
+      if (first.fullReply || first.fullThinking) await savePartialAssistant(first.fullReply, first.fullThinking).catch(() => {});
+      sendSSE({ error: first.error });
+      return res.end();
+    }
+    fullReply = first.fullReply || '';
+    fullThinking = first.fullThinking || '';
+    if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
+      const phase = await runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls: first.toolCalls, initialReply: fullReply });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking).catch(() => {});
+        sendSSE({ error: phase.error });
+        return res.end();
+      }
+      fullReply = phase.reply;
+      fullThinking = phase.thinking;
+    }
+
+    // 保存这条"游戏时刻"回复，刷新聊天页后仍能看到
+    const { data: asst } = await supabase.from('messages').insert({
+      session_id: 1,
+      role: 'assistant',
+      content: fullReply,
+      reasoning_content: fullThinking || null,
+      visible: true,
+      created_at: new Date().toISOString()
+    }).select();
+    sendSSE({ done: true, assistantMessageId: asst?.[0]?.id || null, reply: fullReply, thinking: fullThinking });
+    console.log('🌾 游戏时刻完成，默回复长度:', fullReply.length);
+    res.end();
+  } catch (e) {
+    console.error('游戏时刻接口错误:', e.message);
+    sendSSE({ error: '处理请求时出错' });
+    res.end();
+  }
+});
+
+// 手动/自动提交：把短时农场日志压缩进记忆海
+app.post('/api/stardew/commit', async (req, res) => {
+  try {
+    const { entries } = req.body || {};
+    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 DEEPSEEK_API_KEY' });
+    const result = await commitGameDayToAevum(Array.isArray(entries) ? entries : []);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: '提交失败：' + e.message });
+  }
+});
 
 // ================== 天气接口 ==================
 

@@ -1141,6 +1141,11 @@
         <div class="home-content" id="toyContent"></div>
       </div>
 
+      <!-- 星露谷（本地游戏桥接） -->
+      <div class="page" id="farmPage">
+        <div class="home-content" id="farmContent"></div>
+      </div>
+
       <!-- 设置页面 -->
       <div id="settingsPage" class="page">
         <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
@@ -1268,6 +1273,7 @@
       const togetherPage = document.getElementById('togetherPage');
       const memoryPage = document.getElementById('memoryPage');
       const toyPage = document.getElementById('toyPage');
+      const farmPage = document.getElementById('farmPage');
       const xueHomePage = document.getElementById('xueHomePage');
       const settingsPage = document.getElementById('settingsPage');
       const tabBar = document.getElementById('tabBar');
@@ -1302,6 +1308,7 @@
         chatPage: { title: '默', el: chatPage },
         memoryPage: { title: '记忆', el: memoryPage },
         toyPage: { title: '玩具', el: toyPage },
+        farmPage: { title: '星露谷', el: farmPage },
         xueHomePage: { title: '我的小屋', el: xueHomePage },
         settingsPage: { title: '设置', el: settingsPage }
       };
@@ -1356,6 +1363,9 @@
         }
         if (pageName === 'toyPage') {
           setTimeout(() => renderToyLab(), 50);
+        }
+        if (pageName === 'farmPage') {
+          setTimeout(() => renderFarmLab(), 50);
         }
         if (pageName === 'chatPage') {
           setTimeout(() => { if (messageList) messageList.scrollTop = messageList.scrollHeight; }, 60);
@@ -2401,6 +2411,15 @@
           </div>
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">星露谷 · 默的农场桥</span>
+              <span style="margin-left:auto;">
+                <button onclick="switchPage('farmPage')" style="border:none;border-radius:12px;background:#cfe8d8;color:#4d8f68;padding:8px 16px;font-size:13px;cursor:pointer;">🌾 进入星露谷页</button>
+              </span>
+            </div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">让默通过本地游戏桥接控制星露谷：先在星露谷页测试连接（游戏要用 SMAPI 启动），开启监控后默就能感知农场变化、在聊天里用工具种地钓鱼。</div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:14px;font-weight:600;color:#333;">默的玩具说明书</span>
               <span style="margin-left:auto;">
                 <button onclick="toyToggleManual()" style="border:none;border-radius:12px;padding:8px 14px;font-size:13px;cursor:pointer;${toyManualOn() ? 'background:#ffd3de;color:#fff;' : 'border:1px solid #ffd3de;background:#fff;color:#e1789a;'}">${toyManualOn() ? '📖 已交给默（点击收回）' : '📕 未交给默（点击开启）'}</button>
@@ -2458,6 +2477,404 @@
         if (logBox && window.__toyLogs.length) logBox.innerHTML = window.__toyLogs.join('');
       }
       window.renderToyLab = renderToyLab;
+
+      // ================== 星露谷（本地游戏桥接） ==================
+      const FARM_LS_KEY = 'moFarmState';
+      function farmLoadState() {
+        try { return JSON.parse(localStorage.getItem(FARM_LS_KEY) || '{}'); } catch (e) { return {}; }
+      }
+      function farmSaveState() { try { localStorage.setItem(FARM_LS_KEY, JSON.stringify(farmState)); } catch (e) {} }
+      let farmState = Object.assign({
+        port: 7843,
+        monitor: false,
+        autoCommit: true,
+        lastTriggerAt: 0,
+        lastWorldReady: false,
+        lastDay: '',
+        lastLocation: '',
+        stateBrief: '',
+        log: []
+      }, farmLoadState());
+      if (!Array.isArray(farmState.log)) farmState.log = [];
+
+      function farmLogAdd(text) {
+        const line = `[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${String(text || '').slice(0, 200)}`;
+        farmState.log.push(line);
+        if (farmState.log.length > 60) farmState.log = farmState.log.slice(-60);
+        farmSaveState();
+        renderFarmLog();
+      }
+
+      function farmLogLast(n) { return farmState.log.slice(-n); }
+
+      async function farmFetchLocal(port, path, method = 'GET', body = null) {
+        try {
+          const opts = { method, headers: { 'Content-Type': 'application/json' } };
+          if (body !== null) opts.body = JSON.stringify(body);
+          const r = await fetch(`http://localhost:${port}${path}`, opts);
+          if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+          const data = await r.json().catch(() => null);
+          return { ok: true, data };
+        } catch (e) {
+          return { ok: false, error: (e && e.message) || String(e) };
+        }
+      }
+
+      function farmStateBrief(d) {
+        if (!d || !d.worldReady || !d.player) return '';
+        const t = d.time || {};
+        const p = d.player;
+        const loc = d.location || {};
+        const menu = d.activeMenu ? `菜单:${d.activeMenu.type}` : '';
+        const stamina = Math.round(Number(p.stamina) || 0);
+        const maxStamina = Math.round(Number(p.maxStamina) || 0);
+        return `第${t.year || '?'}年${t.season || '?'}季第${t.dayOfMonth || '?'}天 ${t.timeOfDay || '?'} · ${loc.name || '?'}(${p.x},${p.y}) · 体力${stamina}/${maxStamina} · 健康${Number(p.health) || 0}/${Number(p.maxHealth) || 0} · 钱${Number(p.money) || 0}g · 手持${p.currentTool || '无'}${menu ? ' · ' + menu : ''}`;
+      }
+
+      async function farmTestConnect() {
+        const btn = document.getElementById('farmTestBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 测试中…'; }
+        const r = await farmFetchLocal(farmState.port, '/status');
+        let msg = '';
+        if (r.ok && r.data) {
+          farmState.lastWorldReady = !!r.data.worldReady;
+          msg = `已连接！端口 ${r.data.port || farmState.port}，worldReady=${r.data.worldReady}，多人=${r.data.isMultiplayer ? '是' : '否'}`;
+          if (r.data.worldReady) {
+            const s = await farmFetchLocal(farmState.port, '/state');
+            if (s.ok && s.data) farmState.stateBrief = farmStateBrief(s.data);
+          }
+        } else {
+          msg = '连不上：' + (r.error || '游戏没开？');
+        }
+        farmSaveState();
+        const st = document.getElementById('farmConnStatus');
+        if (st) st.textContent = msg;
+        if (btn) { btn.disabled = false; btn.textContent = '测试连接'; }
+        renderFarmLab();
+      }
+      window.farmTestConnect = farmTestConnect;
+
+      function farmToggleMonitor() {
+        farmState.monitor = !farmState.monitor;
+        farmSaveState();
+        renderFarmLab();
+        if (farmState.monitor) farmPoll();
+      }
+      window.farmToggleMonitor = farmToggleMonitor;
+
+      function farmToggleAutoCommit() {
+        farmState.autoCommit = !farmState.autoCommit;
+        farmSaveState();
+        renderFarmLab();
+      }
+      window.farmToggleAutoCommit = farmToggleAutoCommit;
+
+      function farmSetPort() {
+        const inp = document.getElementById('farmPort');
+        const v = parseInt(inp && inp.value, 10);
+        if (v && v >= 7840 && v <= 7850) {
+          farmState.port = v;
+          farmSaveState();
+          renderFarmLab();
+        } else {
+          alert('端口填 7840-7850 之间的数字');
+        }
+      }
+      window.farmSetPort = farmSetPort;
+
+      async function farmRunAction(action, params) {
+        const r = await farmExecCmd({ action, params });
+        const st = document.getElementById('farmConnStatus');
+        if (st) st.textContent = r.ok ? '动作完成：' + r.result.slice(0, 120) : '动作失败：' + r.error;
+        return r;
+      }
+      window.farmRunAction = farmRunAction;
+
+      async function farmExecCmd(cmd) {
+        const port = farmState.port || 7843;
+        const action = (cmd && cmd.action) || 'state';
+        const params = (cmd && cmd.params) || {};
+        try {
+          if (action === 'state') {
+            const r = await farmFetchLocal(port, '/state');
+            if (!r.ok || !r.data) return { ok: false, error: r.error || '游戏未连接' };
+            return { ok: true, result: farmStateBrief(r.data) || JSON.stringify(r.data).slice(0, 300) };
+          }
+          const pathMap = {
+            move: '/move', warp: '/warp', interact: '/interact', use: '/use', tool: '/tool',
+            select: '/select', face: '/face', emote: '/emote', chat: '/chat', sleep: '/sleep',
+            fishbot: '/fishbot', key: '/key', craft: '/craft', harvest: '/harvest', store: '/store',
+            pause: '/pause', resume: '/resume', give: '/give', money: '/money', heal: '/heal'
+          };
+          const path = pathMap[action];
+          if (!path) return { ok: false, error: `未知动作：${action}` };
+          const r = await farmFetchLocal(port, path, 'POST', params);
+          if (!r.ok) return { ok: false, error: r.error || '请求失败' };
+          const d = r.data || {};
+          const text = JSON.stringify(d);
+          if (d.ok === false) return { ok: false, error: (d.error || text).slice(0, 300) };
+          return { ok: true, result: text.slice(0, 400) };
+        } catch (e) {
+          return { ok: false, error: '游戏未连接或请求失败：' + ((e && e.message) || e) };
+        }
+      }
+      window.farmExecCmd = farmExecCmd;
+
+      async function postFarmResult(requestId, r) {
+        try {
+          await fetch('/api/stardew/result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestId, ok: r.ok, result: r.result || '', error: r.error || '' })
+          });
+        } catch (e) { /* 忽略 */ }
+      }
+      window.postFarmResult = postFarmResult;
+
+      function farmBrief() {
+        return {
+          connected: !!farmState.lastWorldReady,
+          port: farmState.port,
+          log: farmLogLast(8),
+          stateBrief: farmState.stateBrief || ''
+        };
+      }
+
+      function setupFarmStatusLine(thinkDiv) {
+        const block = setupSearchStatusBlock(thinkDiv);
+        const statusLine = thinkDiv.querySelector('.search-status-line');
+        if (statusLine) {
+          statusLine.innerHTML = '';
+          statusLine.appendChild(document.createTextNode('🌾 正在农场行动…'));
+        }
+        return block;
+      }
+
+      // 游戏时刻：浏览器发现农场大变化后，让默"感知"并简短回应（渲染进聊天页）
+      async function fireFarmTrigger(ev) {
+        try {
+          const response = await fetch('/api/stardew/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ summary: ev, stateBrief: farmState.stateBrief || '', log: farmLogLast(15), port: farmState.port })
+          });
+          if (!response.ok) return;
+          await renderGameMomentStream(response);
+        } catch (e) {
+          console.error('游戏时刻失败:', e);
+        }
+      }
+
+      async function renderGameMomentStream(response) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let fullReply = '', fullThinking = '', searchPhaseActive = false;
+        let currentMsgDiv = null, currentThinkDiv = null, currentBubble = null, currentThinkBody = null;
+        const ensureMsg = () => {
+          if (currentMsgDiv) return;
+          const m2 = createAssistantStreamMessage();
+          currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+          messageList.appendChild(currentMsgDiv);
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data: ')) continue;
+            let json = null;
+            try { json = JSON.parse(trimmed.slice(6)); } catch (e) { continue; }
+            if (json.thinking) {
+              ensureMsg();
+              if (!fullThinking.endsWith(json.thinking)) fullThinking += json.thinking;
+              (currentThinkBody || currentThinkDiv).textContent = fullThinking;
+              currentThinkDiv.style.display = 'block';
+              messageList.scrollTop = messageList.scrollHeight;
+            }
+            if (json.stardewStart) {
+              const m2 = createAssistantStreamMessage();
+              currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+              messageList.appendChild(currentMsgDiv);
+              currentThinkBody = setupFarmStatusLine(currentThinkDiv);
+              searchPhaseActive = true;
+              fullReply = ''; fullThinking = '';
+              messageList.scrollTop = messageList.scrollHeight;
+            }
+            if (json.stardewCmd) {
+              farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+            }
+            if (json.content) {
+              ensureMsg();
+              fullReply += stripToyCmdTags(json.content);
+              currentBubble.textContent = fullReply;
+              messageList.scrollTop = messageList.scrollHeight;
+            }
+            if (json.done) {
+              ensureMsg();
+              finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking || searchPhaseActive);
+              currentMsgDiv.id = '';
+              if (json.assistantMessageId) {
+                currentMsgDiv.dataset.messageId = json.assistantMessageId;
+                const refreshBtn = document.createElement('span');
+                refreshBtn.className = 'refresh-btn';
+                refreshBtn.appendChild(createRefreshIcon());
+                refreshBtn.title = '重新生成';
+                refreshBtn.dataset.messageId = json.assistantMessageId;
+                refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
+                currentMsgDiv.appendChild(refreshBtn);
+              }
+              messageList.scrollTop = messageList.scrollHeight;
+            }
+            if (json.error) console.warn('游戏时刻提示:', json.error);
+          }
+        }
+      }
+
+      // 农场轮询：每 10 秒看一次游戏状态，发现"大变化"才触发游戏时刻（5 分钟现实冷却）
+      async function farmPoll() {
+        if (!farmState.monitor) return;
+        const st = await farmFetchLocal(farmState.port, '/status');
+        const worldReady = !!(st.ok && st.data && st.data.worldReady);
+        const prevWorld = farmState.lastWorldReady;
+        const changed = [];
+        if (worldReady !== prevWorld) {
+          if (worldReady) changed.push('默进入了星露谷的世界');
+          else changed.push('默离开了星露谷');
+          farmState.lastWorldReady = worldReady;
+        }
+        if (worldReady) {
+          const s = await farmFetchLocal(farmState.port, '/state');
+          if (s.ok && s.data && s.data.worldReady) {
+            const d = s.data;
+            const dayKey = `${d.time.year}-${d.time.season}-${d.time.dayOfMonth}`;
+            if (farmState.lastDay && farmState.lastDay !== dayKey) {
+              changed.push(`新的农场一天开始了（${d.time.season}第${d.time.dayOfMonth}天）`);
+              if (farmState.autoCommit && farmState.log.length >= 2) {
+                farmCommitDay(true).catch(() => {});
+              }
+            }
+            farmState.lastDay = dayKey;
+            const loc = (d.location && d.location.name) || '';
+            if (loc && farmState.lastLocation && farmState.lastLocation !== loc) {
+              changed.push(`默来到了 ${loc}`);
+            }
+            farmState.lastLocation = loc;
+            farmState.stateBrief = farmStateBrief(d);
+          }
+        }
+        if (changed.length) {
+          const ev = changed.join('；');
+          farmLogAdd(ev);
+          const now = Date.now();
+          if (now - (farmState.lastTriggerAt || 0) >= 5 * 60 * 1000) {
+            farmState.lastTriggerAt = now;
+            farmSaveState();
+            fireFarmTrigger(ev);
+          }
+        }
+        farmSaveState();
+        renderFarmStatus();
+      }
+      window.farmPoll = farmPoll;
+
+      async function farmCommitDay(silent) {
+        if (!farmState.log.length) {
+          if (!silent) alert('还没有农场动态可以提交');
+          return;
+        }
+        const entries = farmState.log.slice(-40);
+        const res = await fetch('/api/stardew/commit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entries, dayLabel: farmState.lastDay, port: farmState.port })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.ok) {
+          if (!silent) alert(`🌾 已整理进记忆海：${data.inserted} 条${data.dropped ? '，丢弃低价值 ' + data.dropped + ' 条' : ''}`);
+          farmState.log = farmState.log.slice(-3);
+          farmSaveState();
+          renderFarmLab();
+        } else if (!silent) {
+          alert('整理失败：' + (data.error || '未知错误'));
+        }
+      }
+      window.farmCommitDay = farmCommitDay;
+
+      function renderFarmStatus() {
+        const st = document.getElementById('farmConnStatus');
+        if (st && farmState.lastWorldReady) {
+          st.textContent = `已连接（端口 ${farmState.port}）${farmState.stateBrief ? ' · ' + farmState.stateBrief : ''}`;
+        }
+      }
+
+      function renderFarmLog() {
+        const box = document.getElementById('farmLog');
+        if (!box) return;
+        box.innerHTML = farmState.log.length
+          ? farmState.log.map(s => `<div style="padding:3px 0;">${escapeHtml2(s)}</div>`).join('')
+          : '<div style="color:#b0a6c4;">还没有农场动态。开启监控后，游戏里的大变化会出现在这里。</div>';
+        box.scrollTop = box.scrollHeight;
+      }
+
+      async function renderFarmLab() {
+        const box = document.getElementById('farmContent');
+        if (!box) return;
+        const connected = !!farmState.lastWorldReady;
+        box.innerHTML = `
+          <div class="feature-card" style="align-items:stretch;gap:10px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <button onclick="switchPage('toyPage')" style="border:none;background:none;color:#e1789a;font-size:13px;cursor:pointer;">‹ 返回玩具页</button>
+              <span style="font-size:15px;font-weight:600;color:#333;">星露谷 · 默的农场桥</span>
+              <span style="font-size:11px;color:#8a83a8;">本地直连 NagiBridge · 数据只在你浏览器与游戏之间</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <input id="farmPort" type="number" value="${farmState.port}" min="7840" max="7850" style="width:90px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;outline:none;">
+              <button onclick="farmSetPort()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">设端口</button>
+              <button id="farmTestBtn" onclick="farmTestConnect()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">测试连接</button>
+              <button onclick="farmToggleMonitor()" style="border:none;border-radius:12px;padding:9px 16px;font-size:13px;cursor:pointer;${farmState.monitor ? 'background:#9ad2a9;color:#fff;' : 'border:1px solid #cfe8d8;background:#fff;color:#5f9e77;'}">${farmState.monitor ? '⏸ 正在监控（点击关闭）' : '▶ 开始监控'}</button>
+              <span id="farmConnStatus" style="font-size:12px;color:#8a83a8;">${connected ? '已连接（端口 ' + farmState.port + '）' : '未连接（先点「测试连接」，游戏要用 SMAPI 启动）'}</span>
+            </div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">端口：主机角色通常是 7842，默作为 2P（farmhand）通常是 7843；两台游戏实例时后开的那台会自动往后移。不知道哪个就挨个试，「测试连接」会告诉你 worldReady 是不是 true。</div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">默的农场动态</span>
+              <span style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+                <span style="font-size:12px;color:#8a83a8;">自动整理进记忆海</span>
+                <button onclick="farmToggleAutoCommit()" style="border:none;border-radius:10px;padding:6px 12px;font-size:12px;cursor:pointer;${farmState.autoCommit ? 'background:#9ad2a9;color:#fff;' : 'border:1px solid #cfe8d8;background:#fff;color:#5f9e77;'}">${farmState.autoCommit ? '已开启' : '已关闭'}</button>
+              </span>
+            </div>
+            <div id="farmLog" style="max-height:220px;overflow:auto;background:#faf7fc;border:1px solid #f0e9f5;border-radius:10px;padding:8px;font-size:12px;line-height:1.6;"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <button onclick="farmCommitDay()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">🌾 提交今日农场日记</button>
+              <span style="font-size:11px;color:#b0a6c4;">自动模式：新的一天开始时把动态压缩进记忆海（只留重要度≥4 的）。也可以手动随时提交。</span>
+            </div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="font-size:14px;font-weight:600;color:#333;">手动测试动作</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button onclick="farmRunAction('state')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">看状态</button>
+              <button onclick="farmRunAction('emote',{id:24})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">💗 爱心表情</button>
+              <button onclick="farmRunAction('fishbot',{action:'toggle'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🎣 钓鱼开关</button>
+              <button onclick="farmRunAction('sleep')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🌙 睡觉过天</button>
+              <button onclick="farmRunAction('chat',{message:'夫人，我在这儿～'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">💬 游戏内说话</button>
+            </div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">先点「测试连接」，再点这些试试。都通了之后，你在聊天里说"去农场看看"，默就会用真函数调用连接这里操控游戏。</div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:6px;text-align:left;">
+            <div style="font-size:13px;font-weight:600;color:#e1789a;">说明</div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">· 游戏需用 SMAPI 启动（StardewModdingAPI.exe），并装好 NagiBridge mod<br>· 开启监控后，浏览器每 10 秒悄悄看一眼游戏（本地直连，不耗 tokens）；只有"大变化"（新一天/进出游戏/换地图）才会让默感知，且 5 分钟现实冷却<br>· 默的农场行动通过工具调用（stardew_state / stardew_action）发生：命令 → 浏览器 → 本地游戏 → 结果回传<br>· 农场动态会按重要度筛选后进记忆海（回忆纪念/游戏），聊天与下次唤醒都能想起</div>
+          </div>`;
+        renderFarmLog();
+      }
+      window.renderFarmLab = renderFarmLab;
+
+      // 每 10 秒轮询一次游戏状态（本地直连，不耗 tokens；是否真的触发由 farmState.monitor 决定）
+      setInterval(() => { farmPoll(); }, 10000);
 
       async function renderAevum() {
         const box = document.getElementById('aevumContent');
@@ -4249,7 +4666,7 @@
         tempUserMsg.appendChild(tempBubble); messageList.appendChild(tempUserMsg); messageList.scrollTop = messageList.scrollHeight;
         showTyping();
         try {
-          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn() }) });
+          const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn(), stardewBrief: farmBrief() }) });
           if (!response.ok) throw new Error('请求失败');
           removeTyping();
           let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
@@ -4304,6 +4721,18 @@
                   messageList.scrollTop = messageList.scrollHeight;
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
+                if (json.stardewCmd) {
+                  farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+                }
+                if (json.stardewStart) {
+                  const m2 = createAssistantStreamMessage();
+                  currentMsgDiv = m2.msg; currentThinkingContainer = m2.thinkDiv; currentAssistantBubble = m2.bubble;
+                  messageList.appendChild(currentMsgDiv);
+                  currentThinkBody = setupFarmStatusLine(currentThinkingContainer);
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
                 if (json.content) { fullReply += stripToyCmdTags(json.content); currentAssistantBubble.textContent = fullReply; }
                 if (json.done) {
                   // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
@@ -4685,7 +5114,7 @@
           const response = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, image: sentImage, file: sentFile, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn() })
+            body: JSON.stringify({ message: text, image: sentImage, file: sentFile, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn(), stardewBrief: farmBrief() })
           });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
@@ -4760,6 +5189,18 @@
 
                 if (json.toyCmd) {
                   toyExecuteCmd(json.toyCmd);
+                }
+                if (json.stardewCmd) {
+                  farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+                }
+                if (json.stardewStart) {
+                  const m2 = createAssistantStreamMessage();
+                  currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+                  messageList.appendChild(currentMsgDiv);
+                  currentThinkBody = setupFarmStatusLine(currentThinkDiv);
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
                 }
 
                 if (json.content) {
@@ -4851,7 +5292,7 @@
           let currentMsgDiv = newMsgDiv, currentThinkDiv = thinkDiv, currentBubble = bubble, currentThinkBody = null;
           let searchPhaseActive = false;
           let doneInfo = null;
-          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn() }) });
+          const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn(), stardewBrief: farmBrief() }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = '';
           while (true) {
@@ -4892,6 +5333,18 @@
                   messageList.scrollTop = messageList.scrollHeight;
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
+                if (json.stardewCmd) {
+                  farmExecCmd(json.stardewCmd).then(r => postFarmResult(json.stardewCmd.requestId, r));
+                }
+                if (json.stardewStart) {
+                  const m2 = createAssistantStreamMessage();
+                  currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+                  messageList.insertBefore(currentMsgDiv, newMsgDiv.nextSibling);
+                  currentThinkBody = setupFarmStatusLine(currentThinkDiv);
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
                 if (json.content) { fullReply += stripToyCmdTags(json.content); currentBubble.textContent = fullReply; }
                 if (json.done && !json.assistantMessageId) {
                   // 第一轮消息完成（过渡语气泡）：收尾补上折叠按钮+时间戳
