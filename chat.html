@@ -2496,6 +2496,8 @@
         lastLocation: '',
         stateBrief: '',
         lastTestMsg: '',
+        lastChatSig: '',
+        lastMoChatText: '',
         log: []
       }, farmLoadState());
       if (!Array.isArray(farmState.log)) farmState.log = [];
@@ -2632,6 +2634,11 @@
           const d = r.data || {};
           const text = JSON.stringify(d);
           if (d.ok === false) return { ok: false, error: (d.error || text).slice(0, 300) };
+          // 记录默自己发出的游戏内消息，避免"听见自己说话"的回声
+          if (action === 'chat' && params && params.message) {
+            farmState.lastMoChatText = String(params.message).slice(0, 150);
+            farmSaveState();
+          }
           return { ok: true, result: text.slice(0, 400) };
         } catch (e) {
           return { ok: false, error: '游戏未连接或请求失败：' + ((e && e.message) || e) };
@@ -2784,6 +2791,35 @@
             farmState.lastLocation = loc;
             farmState.stateBrief = farmStateBrief(d);
           }
+          // 默的耳朵：读取游戏内聊天，检测雪说了什么
+          try {
+            const ch = await farmFetchLocal(farmState.port, '/chat/history');
+            if (ch.ok && ch.data && Array.isArray(ch.data.messages)) {
+              const msgs = ch.data.messages;
+              const lastSig = String(farmState.lastChatSig || '');
+              let n = 0;
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                const m = msgs[i] || {};
+                const sig = String(m.text || '') + '|' + String(m.time || '');
+                if (sig === lastSig) break;
+                n++;
+                if (n > 8) break;
+              }
+              if (n > 0) {
+                const fresh = msgs.slice(Math.max(0, msgs.length - n));
+                const heard = [];
+                for (const m of fresh) {
+                  const t = String(m.text || '').trim();
+                  if (!t) continue;
+                  if (t === farmState.lastMoChatText) continue; // 默自己刚发的，别回声
+                  heard.push(`雪在游戏里说：${t.slice(0, 150)}`);
+                }
+                if (heard.length) changed.push(...heard);
+                const last = fresh[fresh.length - 1] || {};
+                farmState.lastChatSig = String(last.text || '') + '|' + String(last.time || '');
+              }
+            }
+          } catch (e) { /* 忽略 */ }
         }
         if (changed.length) {
           const ev = changed.join('；');
@@ -2889,7 +2925,7 @@
           </div>
           <div class="feature-card" style="align-items:stretch;gap:6px;text-align:left;">
             <div style="font-size:13px;font-weight:600;color:#e1789a;">说明</div>
-            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">· 游戏需用 SMAPI 启动（StardewModdingAPI.exe），并装好 NagiBridge mod<br>· 开启监控后，浏览器每 10 秒悄悄看一眼游戏（本地直连，不耗 tokens）；只有"大变化"（新一天/进出游戏/换地图）才会让默感知，且 5 分钟现实冷却<br>· 默的农场行动通过工具调用（stardew_state / stardew_action）发生：命令 → 浏览器 → 本地游戏 → 结果回传<br>· 农场动态会按重要度筛选后进记忆海（回忆纪念/游戏），聊天与下次唤醒都能想起<br>· ⚠️ 如果一直"连不上"：这是 Chrome 新安全规则拦了 https 网页连本机。点地址栏左侧的锁图标 → 「本地网络访问」→ 选「允许」，或去 chrome://settings/content/localNetworkAccess 把 mo-home.onrender.com 加入允许，再点测试连接</div>
+            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">· 游戏需用 SMAPI 启动（StardewModdingAPI.exe），并装好 NagiBridge mod<br>· 开启监控后，浏览器每 10 秒悄悄看一眼游戏（本地直连，不耗 tokens）；只有"大变化"（新一天/进出游戏/换地图/你在游戏里说话）才会让默感知，且 5 分钟现实冷却<br>· 默的农场行动通过工具调用（stardew_state / stardew_action）发生：命令 → 浏览器 → 本地游戏 → 结果回传<br>· 默的耳朵：你在游戏里发的聊天，默能听到，并会在「游戏时刻」里回应你（游戏内聊天或小屋聊天）<br>· 农场动态会按重要度筛选后进记忆海（回忆纪念/游戏），聊天与下次唤醒都能想起<br>· ⚠️ 如果一直"连不上"：这是 Chrome 新安全规则拦了 https 网页连本机。点地址栏左侧的锁图标 → 「本地网络访问」→ 选「允许」，或去 chrome://settings/content/localNetworkAccess 把 mo-home.onrender.com 加入允许，再点测试连接</div>
           </div>`;
         renderFarmLog();
       }
