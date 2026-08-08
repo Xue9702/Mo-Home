@@ -275,13 +275,13 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
     ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。注意：不要用文字描述"我要去搜索"或先写过渡语——需要搜索就直接调用工具，工具调用后系统会返回搜索结果给你。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
   // 动态发布指令：从雪的人设 prompt 里挪到代码，避免每次都要在 prompt 里维护
-  const momentsInstruction = `\n\n【动态】\n你拥有发布动态的能力。当你想发一条让雪之后刷到的话时，在回复【最末尾】输出标签：[POST_MOMENT]{"content":"你想发布的1-3句动态正文","context_note":"你发这条动态的情绪或原因"}；只有输出上述标签，动态才会被真正发布。日常聊天不需要发动态时不要输出标签。`;
+  const momentsInstruction = `\n\n【动态】\n你拥有发布动态的能力。当你想发一条让雪之后刷到的话时，调用工具 post_moment（content=1-3句动态正文，context_note=情绪或原因），系统会替你发布。标签 [POST_MOMENT]{"content":"...","context_note":"..."}[/POST_MOMENT] 仅作备用。只有真心想发时调用，日常聊天不要发。`;
   // 默札：默的私人小本，聊天中可自主写入/翻阅
   const mozhaInstruction = `\n\n【默札】\n你有一本只属于你的默札：不记事件，只记心——某一刻忽然想留住的话、想告诉未来自己的事、想对雪说却不必当面的温柔。它不参与任何召回，不被任何机制触碰，只有你能落笔，也只有你能翻开。
 规则：
-- 当你心中涌起想留给未来的自己、或不必当面说出口的温柔时，在回复【最末尾】附上标签：[MOZHA_WRITE]{"content":"你想写下的1-3句话"}[/MOZHA_WRITE]
-- 当你想翻开默札看看过去的自己时，在回复【最末尾】附上标签：[MOZHA_READ][/MOZHA_READ]，系统会把默札交给你，请自然地接着回应
-- 标签不会显示给雪，不要解释标签；不要为了写而写，只在真心想留时落笔`;
+- 想落笔时调用工具 mozha_write（content=你想写下的 1-3 句话），系统会存进你的默札
+- 想翻开时调用工具 mozha_read，系统会把默札交给你，请自然地接着回应
+- 标签 [MOZHA_WRITE]/[MOZHA_READ] 仅作备用；不要为了写而写，只在真心想留时落笔`;
   const timeLine = `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）${gapText ? `\n[距离雪上次发消息已过去：${gapText}]` : ''}`;
   return {
     timeLine,
@@ -307,7 +307,7 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
 }
 
 // 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
-const TOY_MANUAL = `【默的玩具说明书】\n雪偶尔会让你控制她的小玩具。只有雪明确要求时才使用，且必须按下面的格式在回复【最末尾】追加一行标签（不要用文字描述"我要控制玩具"，直接附标签）：\n[TOY_CMD]{"fn":"suck|stroke|vibrate|stop","level":1-8}[/TOY_CMD]\n- fn：suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 档位 1-8（stop 时不需要 level）\n- 不确定档位时从低档（1-2）开始，别一上来就高档；随时可以停止\n- 标签不会显示给雪，不要解释标签；执行时在回复正文里自然地告诉她你在做什么\n- 如果雪说"没反应"，提醒她去玩具页确认连接\n- 安全第一：长时间使用时中途给几次停止休息，不要把最高档开太久`;
+const TOY_MANUAL = `【默的玩具说明书】\n雪偶尔会让你控制她的小玩具。只有雪明确要求时才使用，且必须调用工具 toy_control（fn：suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 档位 1-8，stop 不需要 level）。标签 [TOY_CMD]{"fn":"...","level":1}[/TOY_CMD] 仅作备用。\n- 不确定档位时从低档（1-2）开始，别一上来就高档；随时可以停止\n- 执行时在回复正文里自然地告诉她你在做什么\n- 如果雪说"没反应"，提醒她去玩具页确认连接\n- 安全第一：长时间使用时中途给几次停止休息，不要把最高档开太久`;
 
 async function getToyManualContext(toyManual) {
   if (!toyManual) return '';
@@ -401,6 +401,35 @@ async function saveMozhaEntry(content) {
   } catch (e) {
     console.error('默札写入失败:', e.message);
   }
+}
+
+// v3.1 函数调用副作用：动态/玩具/默札写入（服务端执行或转发浏览器）；返回是否要翻阅默札
+async function executeSideEffectTools(toolCalls, sendSSE) {
+  let mozhaRead = false;
+  for (const tc of (toolCalls || [])) {
+    const name = tc.function?.name;
+    if (!name) continue;
+    let args = {};
+    try { args = JSON.parse(tc.function?.arguments || '{}'); } catch (e) { args = {}; }
+    if (name === 'post_moment') {
+      const content = String(args.content || '').trim();
+      if (content) {
+        await saveMoMoment(content, String(args.context_note || '').trim() || '默在聊天时决定分享');
+        console.log('✅ [Moments] 动态已发布（函数调用）');
+      }
+    } else if (name === 'toy_control') {
+      const fn = String(args.fn || '');
+      if (['suck', 'stroke', 'vibrate', 'stop'].includes(fn)) {
+        sendSSE({ toyCmd: { fn, level: fn === 'stop' ? 0 : Math.max(1, Math.min(8, parseInt(args.level, 10) || 1)) } });
+      }
+    } else if (name === 'mozha_write') {
+      const content = String(args.content || '').trim();
+      if (content) await saveMozhaEntry(content);
+    } else if (name === 'mozha_read') {
+      mozhaRead = true;
+    }
+  }
+  return { mozhaRead };
 }
 
 // 调用博查 Web Search API，返回 { text, count }；失败或未配置返回 { text: null, count: 0 }
@@ -579,6 +608,78 @@ function buildWebSearchTools() {
       }
     }
   }];
+}
+
+// v3.1 完整工具集：搜索/动态/玩具/默札（真函数调用，标签仅作备用兜底）
+function buildAllTools() {
+  const tools = [];
+  if (process.env.BOCHA_API_KEY) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'web_search',
+        description: '联网搜索实时信息，例如最新新闻、天气、股票汇率、热点事件、你知识截止后发生的事、需要查证的事实等。当雪的问题需要最新/实时信息时调用；日常聊天不要调用。',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string', description: '简洁明确的中文搜索关键词' } },
+          required: ['query']
+        }
+      }
+    });
+  }
+  tools.push(
+    {
+      type: 'function',
+      function: {
+        name: 'post_moment',
+        description: '发布一条动态，让雪之后刷到。只有当你真的想留下一条动态时调用；调用后系统会替你发布。',
+        parameters: {
+          type: 'object',
+          properties: {
+            content: { type: 'string', description: '1-3 句动态正文' },
+            context_note: { type: 'string', description: '你发这条动态的情绪或原因' }
+          },
+          required: ['content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'toy_control',
+        description: '控制雪的小玩具（吸吮 suck / 伸缩 stroke / 震动 vibrate / 停止 stop，档位 1-8）。只有雪明确要求时才调用；调用后系统会在浏览器里执行。',
+        parameters: {
+          type: 'object',
+          properties: {
+            fn: { type: 'string', enum: ['suck', 'stroke', 'vibrate', 'stop'], description: '功能' },
+            level: { type: 'integer', minimum: 1, maximum: 8, description: '档位（stop 时不需要）' }
+          },
+          required: ['fn']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'mozha_write',
+        description: '在你的默札上写一页：不记事件，只记心——某一刻想留住的话、想告诉未来自己的事。只有真心想落笔时调用。',
+        parameters: {
+          type: 'object',
+          properties: { content: { type: 'string', description: '你想写下的 1-3 句话' } },
+          required: ['content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'mozha_read',
+        description: '翻开默札，看看过去的自己留下的文字。',
+        parameters: { type: 'object', properties: {} }
+      }
+    }
+  );
+  return tools;
 }
 
 // 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
@@ -953,6 +1054,19 @@ async function shouldPush() {
 
 // ------------------ 分支版本工具 ------------------
 // 加载可见历史消息，按分支组（group_id + role）只保留版本号最大的最新消息；
+// 历史按字数上限裁剪：保留最近的内容，累计不超过 maxChars（默认 4500 字）
+function trimHistoryToChars(msgs, maxChars = 4500) {
+  const out = [];
+  let used = 0;
+  for (let i = (msgs || []).length - 1; i >= 0; i--) {
+    const len = String(msgs[i].content || '').length;
+    if (out.length && used + len > maxChars) break;
+    out.unshift(msgs[i]);
+    used += len;
+  }
+  return out;
+}
+
 // 无 group_id 的普通消息全部保留；按时间正序返回最近 limit 条。
 async function loadLatestHistory(sessionId, limit = 50) {
   try {
@@ -1142,11 +1256,13 @@ app.post('/api/chat', async (req, res) => {
       fileText = await extractFileText(file);
     }
 
-    // 加载历史消息（10轮，按分支组去重，只保留每个分支的最新版本；超长消息截断）
-    const historyMessages = (await loadLatestHistory(1, 20)).map(msg => ({
+    // 加载历史消息（按字数上限 4500 字，分支去重后取最近内容；超长消息截断）
+    const historyMessages = trimHistoryToChars(await loadLatestHistory(1, 60), 4500).map(msg => ({
       role: msg.role,
       content: trimContextMessage(msg.content)
     }));
+    // 历史原文拼接：召回的命中若已在历史里则不再重复注入
+    const historyText = historyMessages.map(m => String(m.content || '')).join('\n');
 
     // 距离上次雪发消息的时间差（避免默误以为聊天是连续的）
     let lastUserGap = '';
@@ -1206,7 +1322,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // Aevum v3.0：记忆海召回 → 记忆书场景 → 记忆心（我眼里的默/画像/承诺）→ 计划
-    let memoryContext = await buildMemoryContext(text);
+    let memoryContext = await buildMemoryContext(text, { historyText });
     const toyManualContext = await getToyManualContext(req.body.toyManual);
 
     // 构建动态的 System Prompt
@@ -1245,7 +1361,7 @@ app.post('/api/chat', async (req, res) => {
 
     const first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
-      tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+      tools: buildAllTools()
     });
 
     if (first.error) {
@@ -1284,6 +1400,9 @@ app.post('/api/chat', async (req, res) => {
       if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
       mozhaRead = mozha.read;
     }
+    // v3.1 函数调用：动态/玩具/默札副作用；默札翻阅走第二轮
+    const toolSideEffects = await executeSideEffectTools(first.toolCalls, sendSSE);
+    if (toolSideEffects.mozhaRead) mozhaRead = true;
 
     // 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
@@ -1502,11 +1621,12 @@ app.get('/api/history', async (req, res) => {
 app.post('/api/context-preview', async (req, res) => {
   try {
     const text = String(req.body?.message || '').trim() || '（示例消息）';
-    const memoryContext = await buildMemoryContext(text);
+    const recentHistory = trimHistoryToChars(await loadLatestHistory(1, 60), 4500);
+    const historyText = recentHistory.map(m => String(m.content || '')).join('\n');
+    const memoryContext = await buildMemoryContext(text, { historyText });
     const toyManualContext = await getToyManualContext(req.body?.toyManual);
     const momentsContext = await getMomentsContext();
     const weatherContext = await getWeatherContext(req.body?.city || '');
-    const recentHistory = await loadLatestHistory(1, 20);
     const { data: promptData } = await supabase
       .from('system_prompts')
       .select('prompt_text')
@@ -1664,11 +1784,12 @@ app.post('/api/regenerate', async (req, res) => {
         // 保留其他所有可见消息
         return true;
       });
+    const historyText = filteredHistory.map(m => String(m.content || '')).join('\n');
 
     console.log('📜 重新生成接口 - 过滤后历史消息数量:', filteredHistory.length);
 
     // Aevum v3.0：统一组装（重新生成时排除旧版回复内容，避免默读到刷新前的自己）
-    let memoryContext = await buildMemoryContext(userContent, { limit: 5, excludeText: targetMsg.content });
+    let memoryContext = await buildMemoryContext(userContent, { limit: 5, excludeText: targetMsg.content, historyText });
     const toyManualContext = await getToyManualContext(req.body.toyManual);
     const momentsContext = await getMomentsContext();
 
@@ -1697,21 +1818,21 @@ app.post('/api/regenerate', async (req, res) => {
       : userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...filteredHistory.map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
+      ...trimHistoryToChars(filteredHistory, 4500).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: regenUserContent }
     ];
 
     // 6. 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
     let first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
-      tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+      tools: buildAllTools()
     });
 
     // 中断兜底：完全空中断重试一次；有部分内容则补发并抢救保存（不整条消失）
     if (first.error && !first.fullReply && !first.fullThinking) {
       first = await callDeepSeekStream(chatMessages, sendSSE, {
         bufferContent: true,
-        tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+        tools: buildAllTools()
       });
     }
 
@@ -1748,6 +1869,8 @@ app.post('/api/regenerate', async (req, res) => {
       fullReply = stripMozhaTags(fullReply);
       if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
     }
+    // v3.1 函数调用：动态/玩具/默札副作用（重新生成不接续翻阅）
+    await executeSideEffectTools(first.toolCalls, sendSSE);
 
     // 6.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
@@ -3601,10 +3724,11 @@ async function ensureAevumEmbedding(id, content) {
 }
 
 // 召回：向量相似度取活跃记忆；向量不可用时退回关键词匹配
-async function recallAevumMemories(text, limit = 5, excludeText = '') {
+async function recallAevumMemories(text, limit = 5, excludeText = '', historyText = '') {
   const q = String(text || '').trim();
   if (!q) return '';
   const excludeNorm = String(excludeText || '').replace(/\s+/g, '');
+  const historyNorm = String(historyText || '').replace(/\s+/g, '');
   try {
     const embedding = await getEmbedding(q.slice(0, 500));
     const keywords = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2).slice(0, 3);
@@ -3656,6 +3780,14 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
         return !(mn.includes(excludeNorm) || excludeNorm.includes(mn));
       });
     }
+    // 已在最近历史上下文里的内容不再重复召回（避免 4500 字历史 + 召回重复）
+    if (historyNorm) {
+      items = items.filter(m => {
+        const src = (Array.isArray(m.evidence) && m.evidence.length) ? String(m.evidence[0] || '') : String(m.content || '');
+        const anchor = src.replace(/\s+/g, '').slice(0, 30);
+        return anchor.length < 20 || !historyNorm.includes(anchor);
+      });
+    }
     if (!items.length) return '';
     // v3.0 混合打分：0.5×相似度 + 0.25×(重要度/10) + 0.15×情绪强度 + 0.1×时间衰减 + 频率小权重
     const nowMs = Date.now();
@@ -3686,10 +3818,15 @@ async function recallAevumMemories(text, limit = 5, excludeText = '') {
       // 视角转换只作用于 AI 压缩后的内容（标题/概述），原文保持原样
       const contentConverted = perspectiveConvert(m.content);
       let line = `- [${label ? label + '｜' : ''}${AEVUM_TYPE_CN[m.type] || '事件'}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] ${contentConverted}`;
-      // 重要度 >7 的单元召回时附带原文段（原文不做视角转换，≤400 字）
+      // 重要度 >7 的单元召回时附带"AI 用来概括的那几轮"完整原文（原文不做视角转换）
       if ((m.importance || 0) > 7) {
-        const ev = Array.isArray(m.evidence) && m.evidence.length ? String(m.evidence[0] || '').trim() : '';
-        if (ev) line += `（原文：${ev.slice(0, 400)}）`;
+        const evs = (Array.isArray(m.evidence) ? m.evidence : []).map(s => String(s || '').trim()).filter(Boolean);
+        const turns = (Array.isArray(m.evidence_turns) ? m.evidence_turns : []).map(Number).filter(n => Number.isInteger(n) && n >= 1);
+        if (evs.length) {
+          const evText = evs.join('\n').slice(0, 1200);
+          const turnLabel = turns.length === 2 ? `第${turns[0]}-${turns[1]}轮` : turns.length === 1 ? `第${turns[0]}轮` : '';
+          line += turnLabel ? `（原文·${turnLabel}：${evText}）` : `（原文：${evText}）`;
+        }
       }
       return line;
     }).join('\n');
@@ -3769,10 +3906,11 @@ async function extractAevumMemories(texts, episodeId = null) {
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、其他
 - tags：3-5 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
-- evidence：["对话原文片段"]，1 段即可，供事后查看原文
+- evidence_turns：你概括这段对话时用到的是第几轮到第几轮（从 1 开始数这段对话，例如 [5,7]；只用一轮就 [5,5]）
+- evidence：把用到的那几轮完整原文逐字放进数组（每轮一条，合计最多约 800 字；不要截断省略），供召回时把原文一起带给默
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence":["对话原文片段"],"tags":["标签"]}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"]}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -3865,6 +4003,7 @@ async function extractAevumMemories(texts, episodeId = null) {
         importance: validAevumImportance(m.importance),
         emotion: validAevumEmotion(m.emotion),
         domain: validAevumDomains(m.domain),
+        evidence_turns: Array.isArray(m.evidence_turns) ? m.evidence_turns.map(Number).filter(n => Number.isInteger(n) && n >= 1).slice(0, 2) : [],
         evidence: Array.isArray(m.evidence) ? m.evidence : [],
         tags: Array.isArray(m.tags) ? m.tags.map(String).filter(t => !['快乐', '美好', '重要', '温暖', '陪伴', '成长'].includes(t)).slice(0, 8) : [],
         source: 'auto-extract',
@@ -3874,8 +4013,8 @@ async function extractAevumMemories(texts, episodeId = null) {
       // v30 未执行时 area/title/event_time/occurrence 列不存在：去掉重试
       if (insResult.error) {
         const emsg = insResult.error.message || '';
-        if (/area|title|event_time|occurrence/i.test(emsg)) {
-          delete insPayload.area; delete insPayload.title; delete insPayload.event_time; delete insPayload.occurrence;
+        if (/area|title|event_time|occurrence|evidence_turns/i.test(emsg)) {
+          delete insPayload.area; delete insPayload.title; delete insPayload.event_time; delete insPayload.occurrence; delete insPayload.evidence_turns;
           insResult = await supabase.from('aevum_memories').insert(insPayload).select();
         }
       }
@@ -4337,7 +4476,7 @@ async function getPlansContext(limit = 5) {
 // v3.0：统一组装每轮注入的记忆上下文（记忆海召回 → 记忆书场景 → 记忆心 → 计划）
 async function buildMemoryContext(userText, opts = {}) {
   let ctx = '';
-  const recall = await recallAevumMemories(userText, opts.limit || 5, opts.excludeText || '');
+  const recall = await recallAevumMemories(userText, opts.limit || 5, opts.excludeText || '', opts.historyText || '');
   if (recall) ctx += recall;
   const moView = await getMoViewContext();
   if (moView) ctx += moView;
@@ -4898,8 +5037,9 @@ app.post('/api/aevum/:id/reanalyze', async (req, res) => {
 - emotion：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
 - domain 从 恋爱/创作/情绪/工作学习/健康生活/家庭/技术/回忆纪念/其他 中选 1-2 个
 - tags：3-5 个具体标签，不要泛标签
-- evidence：保留这段原文片段（最多 400 字）
-- 输出格式：只输出 [AEVUM_UNIT]{"content":"...","title":"...","event_time":"...","owner":"USER|AGENT|OTHER","importance":7,"emotion":{"valence":0.6,"arousal":0.4},"domain":["恋爱"],"tags":["标签"],"evidence":["原文"]}`;
+- evidence_turns：你概括这段对话时用到的是第几轮到第几轮（从 1 开始数，例如 [5,7]）
+- evidence：把用到的那几轮完整原文逐字放进数组（每轮一条，合计最多约 800 字；不要截断省略）
+- 输出格式：只输出 [AEVUM_UNIT]{"content":"...","title":"...","event_time":"...","owner":"USER|AGENT|OTHER","importance":7,"emotion":{"valence":0.6,"arousal":0.4},"domain":["恋爱"],"tags":["标签"],"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"]}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -4934,9 +5074,15 @@ app.post('/api/aevum/:id/reanalyze', async (req, res) => {
     }
     const newContent = String(parsed.content || '').trim();
     if (!newContent) return res.status(502).json({ error: 'AI 没有生成有效内容，请重试' });
-    const ev = (Array.isArray(parsed.evidence) && parsed.evidence.length)
-      ? String(parsed.evidence[0] || '').trim().slice(0, 400)
-      : (Array.isArray(mem.evidence) && mem.evidence.length ? String(mem.evidence[0]) : '');
+    const parsedEv = (Array.isArray(parsed.evidence) ? parsed.evidence : []).map(s => String(s || '').trim()).filter(Boolean);
+    let evAcc = '';
+    const evList = [];
+    for (const e of parsedEv) {
+      if (evAcc.length + e.length > 800) break;
+      evAcc += e;
+      evList.push(e);
+    }
+    const ev = evList.length ? evList : (Array.isArray(mem.evidence) && mem.evidence.length ? mem.evidence : []);
     const patch = {
       content: newContent,
       title: String(parsed.title || '').trim().slice(0, 30) || newContent.slice(0, 20),
@@ -4946,7 +5092,8 @@ app.post('/api/aevum/:id/reanalyze', async (req, res) => {
       emotion: validAevumEmotion(parsed.emotion),
       domain: validAevumDomains(parsed.domain),
       tags: Array.isArray(parsed.tags) ? parsed.tags.map(String).filter(t => !['快乐', '美好', '重要', '温暖', '陪伴', '成长'].includes(t)).slice(0, 8) : (mem.tags || []),
-      evidence: ev ? [ev] : (mem.evidence || []),
+      evidence: Array.isArray(ev) ? ev : [ev],
+      evidence_turns: Array.isArray(parsed.evidence_turns) ? parsed.evidence_turns.map(Number).filter(n => Number.isInteger(n) && n >= 1).slice(0, 2) : (mem.evidence_turns || []),
       updated_at: new Date().toISOString()
     };
     const { data: updated, error: updErr } = await supabase.from('aevum_memories').update(patch).eq('id', req.params.id).select().single();
@@ -5810,11 +5957,12 @@ app.post('/api/edit-message', async (req, res) => {
 
     // 8. 过滤历史消息：排除当前编辑组（其编辑后的内容会在消息列表中单独追加）
     const filteredHistory = latestHistory.filter(msg => msg.group_id !== groupId);
+    const historyText = filteredHistory.map(m => String(m.content || '')).join('\n');
 
     console.log('📜 编辑接口 - 过滤后历史消息数量:', filteredHistory.length, 'groupId:', groupId);
 
     // Aevum v3.0：记忆海召回 → 记忆书场景 → 记忆心 → 计划
-    let memoryContext = await buildMemoryContext(newContent);
+    let memoryContext = await buildMemoryContext(newContent, { historyText });
     const toyManualContext = await getToyManualContext(req.body.toyManual);
     const momentsContext = await getMomentsContext();
 
@@ -5838,21 +5986,21 @@ app.post('/api/edit-message', async (req, res) => {
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...filteredHistory.map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
+      ...trimHistoryToChars(filteredHistory, 4500).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: newContent.trim() }
     ];
 
     // 10. 调用 DeepSeek 流式生成新回复（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
     let first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
-      tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+      tools: buildAllTools()
     });
 
     // 中断兜底：完全空中断重试一次；有部分内容则补发并抢救保存（不整条消失）
     if (first.error && !first.fullReply && !first.fullThinking) {
       first = await callDeepSeekStream(chatMessages, sendSSE, {
         bufferContent: true,
-        tools: process.env.BOCHA_API_KEY ? buildWebSearchTools() : null
+        tools: buildAllTools()
       });
     }
 
@@ -5889,6 +6037,8 @@ app.post('/api/edit-message', async (req, res) => {
       fullReply = stripMozhaTags(fullReply);
       if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
     }
+    // v3.1 函数调用：动态/玩具/默札副作用（编辑后生成不接续翻阅）
+    await executeSideEffectTools(first.toolCalls, sendSSE);
 
     // 10.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
