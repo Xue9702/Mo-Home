@@ -1603,7 +1603,7 @@ app.post('/api/chat', async (req, res) => {
     if (fullReply || fullThinking) {
       await savePartialAssistant(fullReply, fullThinking).catch(() => {});
     }
-    sendSSE({ error: '处理请求时出错' });
+    sendSSE({ error: '处理请求时出错：' + (err && err.message) });
     res.end();
   }
 });
@@ -2063,7 +2063,7 @@ app.post('/api/regenerate', async (req, res) => {
 
   } catch (err) {
     console.error('❌ 重新生成错误:', err.message);
-    sendSSE({ error: '处理请求时出错' });
+    sendSSE({ error: '处理请求时出错：' + (err && err.message) });
     res.end();
   }
 });
@@ -6240,7 +6240,7 @@ app.post('/api/edit-message', async (req, res) => {
 
   } catch (err) {
     console.error('编辑消息接口错误:', err.message);
-    sendSSE({ error: '处理请求时出错' });
+    sendSSE({ error: '处理请求时出错：' + (err && err.message) });
     res.end();
   }
 });
@@ -6586,7 +6586,7 @@ app.post('/api/stardew/trigger', async (req, res) => {
     res.end();
   } catch (e) {
     console.error('游戏时刻接口错误:', e.message);
-    sendSSE({ error: '处理请求时出错' });
+    sendSSE({ error: '处理请求时出错：' + (e && e.message) });
     res.end();
   }
 });

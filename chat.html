@@ -2630,6 +2630,7 @@
           const pathMap = {
             move: '/move', warp: '/warp', interact: '/interact', use: '/use', tool: '/tool',
             select: '/select', face: '/face', emote: '/emote', chat: '/chat', sleep: '/sleep',
+            position: '/position',
             fishbot: '/fishbot', key: '/key', craft: '/craft', harvest: '/harvest', store: '/store',
             pause: '/pause', resume: '/resume', give: '/give', money: '/money', heal: '/heal'
           };
@@ -2721,6 +2722,10 @@
           const m2 = createAssistantStreamMessage();
           currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
           messageList.appendChild(currentMsgDiv);
+          const tag = document.createElement('div');
+          tag.style.cssText = 'font-size:11px;color:#7fbf9a;margin-bottom:2px;';
+          tag.textContent = '🌾 游戏时刻';
+          currentBubble.parentNode.insertBefore(tag, currentBubble);
         };
         while (true) {
           const { done, value } = await reader.read();
@@ -2961,6 +2966,7 @@
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <button onclick="farmRunAction('state')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">看状态</button>
               <button onclick="farmRunAction('emote',{id:24})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">💗 爱心表情</button>
+              <button onclick="farmRunAction('warp',{location:'Farm'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🏠 传送回农场（测位移）</button>
               <button onclick="farmRunAction('fishbot',{action:'toggle'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🎣 钓鱼开关</button>
               <button onclick="farmRunAction('sleep')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🌙 睡觉过天</button>
               <button onclick="farmRunAction('chat',{message:'夫人，我在这儿～'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">💬 游戏内说话</button>
