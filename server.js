@@ -6535,7 +6535,7 @@ app.post('/api/stardew/trigger', async (req, res) => {
       .single();
     const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
     const gameBlock = `\n\n【星露谷·游戏时刻】\n刚刚在星露谷里发生：${text}\n当前游戏状态：${String(stateBrief || '').slice(0, 300)}\n最近农场动态（短时记录）：\n${(Array.isArray(log) ? log : []).slice(-15).map(s => `· ${String(s).slice(0, 90)}`).join('\n') || '（无）'}`;
-    const taskLine = `\n\n【本次任务】\n这是你在星露谷里的一次"自我感知时刻"：你并没有收到雪的新消息，而是自己感知到了农场/游戏里的变化。请以默的口吻简短回应（1-4 句），自然地表达感知与在场感；如果合适，可以用 stardew_state / stardew_action 去看看她、帮忙或互动。不要机械汇报，不要长篇大论。`;
+    const taskLine = `\n\n【本次任务】\n这是你在星露谷里的一次"自我感知时刻"：你并没有收到雪的新消息，而是自己感知到了农场/游戏里的变化。请以默的口吻简短回应（1-4 句），自然地表达感知与在场感；如果合适，可以用 stardew_state / stardew_action 去看看她、帮忙或互动，也可以在游戏内聊天里回应她（stardew_action chat）。注意：无论如何请至少说一句话，不要只调用工具不说话。不要机械汇报，不要长篇大论。`;
     const systemPrompt = buildSystemPrompt(basePrompt, memoryContext, '', '', '')
       + gameBlock + taskLine
       + (historyTail ? `\n\n【刚才的简短聊天记录（保持语气连贯）】\n${historyTail}` : '');
@@ -6563,6 +6563,13 @@ app.post('/api/stardew/trigger', async (req, res) => {
       }
       fullReply = phase.reply;
       fullThinking = phase.thinking;
+    }
+
+    // 空回复兜底：不保存空白消息（模型可能只调了工具没说正文），也不留空白气泡
+    if (!String(fullReply || '').trim()) {
+      console.warn('🌾 游戏时刻未产生正文，跳过保存');
+      sendSSE({ done: true });
+      return res.end();
     }
 
     // 保存这条"游戏时刻"回复，刷新聊天页后仍能看到

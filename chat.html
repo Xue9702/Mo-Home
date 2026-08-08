@@ -2498,6 +2498,7 @@
         lastTestMsg: '',
         lastChatSig: '',
         lastMoChatText: '',
+        pendingTrigger: '',
         log: []
       }, farmLoadState());
       if (!Array.isArray(farmState.log)) farmState.log = [];
@@ -2740,18 +2741,23 @@
               messageList.scrollTop = messageList.scrollHeight;
             }
             if (json.done) {
-              ensureMsg();
-              finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking || searchPhaseActive);
-              currentMsgDiv.id = '';
-              if (json.assistantMessageId) {
-                currentMsgDiv.dataset.messageId = json.assistantMessageId;
-                const refreshBtn = document.createElement('span');
-                refreshBtn.className = 'refresh-btn';
-                refreshBtn.appendChild(createRefreshIcon());
-                refreshBtn.title = '重新生成';
-                refreshBtn.dataset.messageId = json.assistantMessageId;
-                refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
-                currentMsgDiv.appendChild(refreshBtn);
+              if (!fullReply.trim() && !json.assistantMessageId && currentMsgDiv) {
+                // 空回复兜底：不留空白气泡
+                currentMsgDiv.remove();
+              } else {
+                ensureMsg();
+                finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking || searchPhaseActive);
+                currentMsgDiv.id = '';
+                if (json.assistantMessageId) {
+                  currentMsgDiv.dataset.messageId = json.assistantMessageId;
+                  const refreshBtn = document.createElement('span');
+                  refreshBtn.className = 'refresh-btn';
+                  refreshBtn.appendChild(createRefreshIcon());
+                  refreshBtn.title = '重新生成';
+                  refreshBtn.dataset.messageId = json.assistantMessageId;
+                  refreshBtn.addEventListener('click', e => { e.stopPropagation(); handleRegenerate(refreshBtn, currentMsgDiv); });
+                  currentMsgDiv.appendChild(refreshBtn);
+                }
               }
               messageList.scrollTop = messageList.scrollHeight;
             }
@@ -2760,9 +2766,25 @@
         }
       }
 
+      function maybeFireFarmTrigger(ev) {
+        const now = Date.now();
+        if (now - (farmState.lastTriggerAt || 0) >= 5 * 60 * 1000) {
+          farmState.lastTriggerAt = now;
+          farmSaveState();
+          fireFarmTrigger(ev);
+        }
+      }
+
       // 农场轮询：每 10 秒看一次游戏状态，发现"大变化"才触发游戏时刻（5 分钟现实冷却）
       async function farmPoll() {
         if (!farmState.monitor) return;
+        // 聊天进行中不抢话：先挂起，等聊完下一轮再触发
+        if (!isLoading && farmState.pendingTrigger) {
+          const ev = String(farmState.pendingTrigger || '');
+          farmState.pendingTrigger = '';
+          farmSaveState();
+          maybeFireFarmTrigger(ev);
+        }
         const st = await farmFetchLocal(farmState.port, '/status');
         const worldReady = !!(st.ok && st.data && st.data.worldReady);
         const prevWorld = farmState.lastWorldReady;
@@ -2824,11 +2846,14 @@
         if (changed.length) {
           const ev = changed.join('；');
           farmLogAdd(ev);
-          const now = Date.now();
-          if (now - (farmState.lastTriggerAt || 0) >= 5 * 60 * 1000) {
-            farmState.lastTriggerAt = now;
+          if (isLoading) {
+            // 正在聊天：把事件挂起，聊完再触发，避免两个回复打架
+            farmState.pendingTrigger = farmState.pendingTrigger
+              ? farmState.pendingTrigger + '；' + ev
+              : ev;
             farmSaveState();
-            fireFarmTrigger(ev);
+          } else {
+            maybeFireFarmTrigger(ev);
           }
         }
         farmSaveState();
