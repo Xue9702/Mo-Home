@@ -1404,8 +1404,11 @@ app.post('/api/chat', async (req, res) => {
     fullReply = first.fullReply;
     fullThinking = first.fullThinking;
 
+    // 纯工具调用轮（星露谷）没有正文是正常的：放行给后面的"农场行动"接续轮
+    const stardewFirst = first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name));
+
     // 检查是否收到了完整的回复
-    if (!fullReply) {
+    if (!fullReply && !stardewFirst) {
       console.error('未收到有效回复，完整响应体可能为空');
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
@@ -1895,7 +1898,10 @@ app.post('/api/regenerate', async (req, res) => {
     let fullReply = first.fullReply;
     let fullThinking = first.fullThinking;
 
-    if (!fullReply) {
+    // 纯工具调用轮（星露谷）没有正文是正常的：放行给后面的"农场行动"接续轮
+    const stardewFirst = first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name));
+
+    if (!fullReply && !stardewFirst) {
       if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, targetMsg.session_id);
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
@@ -6083,7 +6089,10 @@ app.post('/api/edit-message', async (req, res) => {
     let fullReply = first.fullReply;
     let fullThinking = first.fullThinking;
 
-    if (!fullReply) {
+    // 纯工具调用轮（星露谷）没有正文是正常的：放行给后面的"农场行动"接续轮
+    const stardewFirst = first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name));
+
+    if (!fullReply && !stardewFirst) {
       if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, newVersion, originalMsg.session_id);
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
@@ -6373,7 +6382,8 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
       chatMessages.push({
         role: 'tool',
         tool_call_id: calls[idx].id,
-        content: r.ok ? `动作成功：${r.result}` : `动作失败：${r.error}`
+        content: (r.ok ? `动作成功：${r.result}` : `动作失败：${r.error}`)
+          + '\n（如果雪要求你移动或做事，请继续调用 stardew_action 完成动作后再回复；如果任务已完成，直接简短回复即可。）'
       });
     }
     let call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });

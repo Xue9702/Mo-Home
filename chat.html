@@ -5391,6 +5391,9 @@
         const messageId = btn.dataset.messageId;
         if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }
         let newMsgDiv = null;
+        let fullReply = '', fullThinking = '', streamError = null;
+        let currentMsgDiv = null, currentThinkDiv = null, currentBubble = null, currentThinkBody = null;
+        let searchPhaseActive = false;
         try {
           // 隐藏旧回复（保留在 DOM 中供角标切换），创建新的助手消息元素
           msgDiv.style.display = 'none';
@@ -5411,10 +5414,10 @@
           msgDiv.parentNode.insertBefore(newMsgDiv, msgDiv.nextSibling);
           messageList.scrollTop = messageList.scrollHeight;
 
-          let fullReply = '', fullThinking = '', streamError = null;
+          fullReply = ''; fullThinking = ''; streamError = null;
           // 当前活跃的流式消息元素（联网搜索时会切到一条新消息）
-          let currentMsgDiv = newMsgDiv, currentThinkDiv = thinkDiv, currentBubble = bubble, currentThinkBody = null;
-          let searchPhaseActive = false;
+          currentMsgDiv = newMsgDiv; currentThinkDiv = thinkDiv; currentBubble = bubble; currentThinkBody = null;
+          searchPhaseActive = false;
           let doneInfo = null;
           const response = await fetch('/api/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn(), stardewBrief: farmBrief() }) });
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
