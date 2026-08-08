@@ -2534,6 +2534,10 @@
       }
 
       async function farmTestConnect() {
+        // 测试前先读输入框，避免用旧端口
+        const portInp = document.getElementById('farmPort');
+        const pv = parseInt(portInp && portInp.value, 10);
+        if (pv >= 7840 && pv <= 7850) farmState.port = pv;
         const btn = document.getElementById('farmTestBtn');
         if (btn) { btn.disabled = true; btn.textContent = '⏳ 测试中…'; }
         const r = await farmFetchLocal(farmState.port, '/status');
@@ -2583,6 +2587,17 @@
         }
       }
       window.farmSetPort = farmSetPort;
+
+      // 输入框一改动就同步端口（不用再点"设端口"）
+      function farmPortInput() {
+        const inp = document.getElementById('farmPort');
+        const v = parseInt(inp && inp.value, 10);
+        if (v >= 7840 && v <= 7850) {
+          farmState.port = v;
+          farmSaveState();
+        }
+      }
+      window.farmPortInput = farmPortInput;
 
       async function farmRunAction(action, params) {
         const r = await farmExecCmd({ action, params });
@@ -2834,7 +2849,7 @@
               <span style="font-size:11px;color:#8a83a8;">本地直连 NagiBridge · 数据只在你浏览器与游戏之间</span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <input id="farmPort" type="number" value="${farmState.port}" min="7840" max="7850" style="width:90px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;outline:none;">
+              <input id="farmPort" type="number" value="${farmState.port}" min="7840" max="7850" oninput="farmPortInput()" style="width:90px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;outline:none;">
               <button onclick="farmSetPort()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">设端口</button>
               <button id="farmTestBtn" onclick="farmTestConnect()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">测试连接</button>
               <button onclick="farmToggleMonitor()" style="border:none;border-radius:12px;padding:9px 16px;font-size:13px;cursor:pointer;${farmState.monitor ? 'background:#9ad2a9;color:#fff;' : 'border:1px solid #cfe8d8;background:#fff;color:#5f9e77;'}">${farmState.monitor ? '⏸ 正在监控（点击关闭）' : '▶ 开始监控'}</button>
