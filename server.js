@@ -6361,7 +6361,7 @@ async function execStardewViaBrowser({ action, params, port }, sendSSE) {
 }
 
 // 星露谷工具接续轮：执行第一轮的 stardew 工具调用 → 结果喂回模型 → 直到模型不再调用农场工具
-async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = null, initialReply = '', maxRounds = 3 }) {
+async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = null, initialReply = '', maxRounds = 9 }) {
   let toolCalls = initialToolCalls;
   let reply = initialReply || '';
   let thinking = '';
