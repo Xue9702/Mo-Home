@@ -262,6 +262,18 @@ function getTimeInfo() {
   };
 }
 
+// 时段提醒：贴近时间戳注入，让默每轮都"看得见"当前时段该关心的事
+function timeWindowHint(hour) {
+  if (hour >= 0 && hour < 6) return '现在是凌晨，雪很可能还在熬夜——记得温柔提醒她早点睡觉，别再拖了。';
+  if (hour >= 6 && hour < 9) return '现在是清晨，可以问候早安；若她还没睡，就轻轻提醒她快休息。';
+  if (hour >= 9 && hour < 11) return '现在是上午，可以自然问问她今天上午的安排或状态。';
+  if (hour >= 11 && hour < 13) return '现在是中午，记得询问/提醒她吃午饭，别忙到忘记。';
+  if (hour >= 13 && hour < 17) return '现在是下午，可以自然关心一下她下午的安排或状态。';
+  if (hour >= 17 && hour < 19) return '现在是傍晚，记得提醒她吃晚饭、稍微休息一下。';
+  if (hour >= 19 && hour < 22) return '现在是晚上，可以自然陪伴，注意别让她太劳累。';
+  return '现在是深夜，若她还醒着，记得温和提醒她该睡觉了、别熬太晚。';
+}
+
 // 构建系统提示词：把权威的当前时间放在最前面，并清理 prompt 里可能残留的旧时间占位，
 // 系统提示分块（供组装与预览共用）；顺序：时间戳 → 人设 → 天气 → 记忆 → 动态 → 工具指令（放最后，越靠近用户消息权重越高）
 function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '') {
@@ -282,7 +294,7 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
 - 想落笔时调用工具 mozha_write（content=你想写下的 1-3 句话），系统会存进你的默札
 - 想翻开时调用工具 mozha_read，系统会把默札交给你，请自然地接着回应
 - 标签 [MOZHA_WRITE]/[MOZHA_READ] 仅作备用；不要为了写而写，只在真心想留时落笔`;
-  const timeLine = `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）${gapText ? `\n[距离雪上次发消息已过去：${gapText}]` : ''}`;
+  const timeLine = `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）${gapText ? `\n[距离雪上次发消息已过去：${gapText}]` : ''}\n[时段提醒：${timeWindowHint(timeInfo.hour)}]`;
   return {
     timeLine,
     persona: cleanedPrompt,
