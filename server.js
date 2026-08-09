@@ -6794,16 +6794,14 @@ app.post('/api/test/chat', async (req, res) => {
     if (!content) { sendSSE({ error: '缺少消息内容' }); return res.end(); }
     if (!persona) { sendSSE({ error: '测试人设还是空的，点右上角 ✏️ 先写或复制默的人设' }); return res.end(); }
 
-    // 存用户消息
-    await supabase.from('messages').insert({
-      session_id: TEST_SESSION_ID,
-      role: 'user',
-      content,
-      visible: true,
-      created_at: new Date().toISOString()
-    });
+    // 人设里可能残留旧的【当前时间】占位符（主窗会替换，测试窗原样发会误导模型时间感），先清掉
+    const cleanPersona = String(persona)
+      .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
+      .replace(/[\[【]距离雪上次发消息已过去[:：][^\]]*[\]】]/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
 
-    // 最近 10 轮（含刚插入的这条），只喂纯文本，不接任何记忆/工具
+    // 先取本窗最近 10 轮历史（不含刚发的这条），确保模型一定看得到之前的对话
     const { data: hist } = await supabase
       .from('messages')
       .select('role, content')
@@ -6815,7 +6813,23 @@ app.post('/api/test/chat', async (req, res) => {
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(m => ({ role: m.role, content: String(m.content || '') }));
 
-    const chatMessages = [{ role: 'system', content: persona }, ...history];
+    // 存用户消息
+    await supabase.from('messages').insert({
+      session_id: TEST_SESSION_ID,
+      role: 'user',
+      content,
+      visible: true,
+      created_at: new Date().toISOString()
+    });
+
+    // 只喂人设 + 本窗历史 + 当前消息；加一行明确的"历史边界"，防止模型虚构本窗没发生过的对话
+    const chatMessages = [
+      { role: 'system', content: cleanPersona },
+      { role: 'system', content: '以下是本测试窗口的聊天记录（按时间顺序，雪在前、你回应在后）。只依据这些记录和最后一条新消息回应，不要虚构本窗口里没有发生过的对话或事件。' },
+      ...history,
+      { role: 'user', content }
+    ];
+    console.log(`🧪 测试窗调用：人设 ${cleanPersona.length} 字，历史 ${history.length} 条`);
     const call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false });
     if (call.error) { sendSSE({ error: call.error }); return res.end(); }
 
