@@ -670,7 +670,7 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_action',
-        description: '在星露谷里执行一个动作（通过浏览器连接本地游戏，动作结果会真实发生在游戏里）。所有参数都放在顶层，不要嵌套。常见动作：{"action":"warp","location":"Farm"}传送到农场；{"action":"move","x":8,"y":9}走到指定格子（目标必须与当前位置不同）；{"action":"emote","id":24}爱心表情；{"action":"tool","name":"Axe"}使用工具；{"action":"select","name":"Parsnip Seeds"}选择物品；{"action":"interact"}与面前格子互动；{"action":"face","direction":2}朝向；{"action":"chat","message":"夫人，我来了"}游戏内说话；{"action":"sleep"}睡觉过天；{"action":"fishbot","fish":"on"}钓鱼开关；{"action":"craft","name":"Keg","count":1}制作；{"action":"harvest"}收割；{"action":"store","x":70,"y":14}存物品到箱子。行动前可调用 stardew_state 看体力与时间（凌晨 2 点前要睡觉），体力低就提醒雪或休息。',
+        description: '在星露谷里执行一个动作（通过浏览器连接本地游戏，动作结果会真实发生在游戏里）。所有参数都放在顶层，不要嵌套。常见动作：{"action":"warp","location":"Farm"}传送到农场；{"action":"move","x":8,"y":9}走到指定格子（目标必须与当前位置不同）；{"action":"emote","id":20}爱心表情（20=heart，24 是睡觉ZZZ不要用）；{"action":"tool","name":"Axe"}使用工具；{"action":"select","name":"Parsnip Seeds"}选择物品；{"action":"interact"}与面前格子互动；{"action":"face","direction":2}朝向；{"action":"chat","message":"夫人，我来了"}游戏内说话；{"action":"sleep"}睡觉过天；{"action":"fishbot","fish":"on"}钓鱼开关；{"action":"craft","name":"Keg","count":1}制作；{"action":"harvest"}收割；{"action":"store","x":70,"y":14}存物品到箱子。行动前可调用 stardew_state 看体力与时间（凌晨 2 点前要睡觉），体力低就提醒雪或休息。',
         parameters: {
           type: 'object',
           properties: {
