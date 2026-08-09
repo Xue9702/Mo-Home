@@ -2637,6 +2637,18 @@
           };
           const path = pathMap[action];
           if (!path) return { ok: false, error: `未知动作：${action}` };
+          // 移动类动作：先记下移动前位置，稍后验证是否真的动了
+          let beforePos = null;
+          if (['move', 'warp', 'position'].includes(action)) {
+            const pre = await farmFetchLocal(port, '/state');
+            if (pre.ok && pre.data && pre.data.player) {
+              beforePos = {
+                x: pre.data.player.x,
+                y: pre.data.player.y,
+                loc: (pre.data.location || {}).name
+              };
+            }
+          }
           let r = await farmFetchLocal(port, path, 'POST', params);
           // 兜底：预检（OPTIONS）被拦导致请求失败时，改用"免预检"模式重发一次（text/plain），
           // 让动作仍能真实发到游戏里（虽然读不到返回值）
@@ -2660,7 +2672,21 @@
             farmState.lastMoChatText = String(params.message).slice(0, 150);
             farmSaveState();
           }
-          return { ok: true, result: text.slice(0, 400) };
+          let resultText = text.slice(0, 400);
+          // 移动验证：等 2.5 秒再看真实位置，结果里如实写明（让默知道走没走成）
+          if (['move', 'warp', 'position'].includes(action) && !(r.result && String(r.result).indexOf('免预检') !== -1)) {
+            await new Promise(res => setTimeout(res, 2500));
+            const st = await farmFetchLocal(port, '/state');
+            if (st.ok && st.data && st.data.player) {
+              const p = st.data.player;
+              const loc = (st.data.location || {}).name;
+              const before = beforePos ? `${beforePos.loc}(${beforePos.x},${beforePos.y})` : '未知';
+              const after = `${loc}(${p.x},${p.y})`;
+              const moved = !beforePos || beforePos.x !== p.x || beforePos.y !== p.y || beforePos.loc !== loc;
+              resultText += `；移动验证：${before} → ${after}${moved ? '，已移动' : '，未移动（可能目标不可达，建议改用 warp 传送）'}`;
+            }
+          }
+          return { ok: true, result: resultText };
         } catch (e) {
           return { ok: false, error: '游戏未连接或请求失败：' + ((e && e.message) || e) };
         }
