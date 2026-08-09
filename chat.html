@@ -2538,7 +2538,25 @@
         const menu = d.activeMenu ? `菜单:${d.activeMenu.type}` : '';
         const stamina = Math.round(Number(p.stamina) || 0);
         const maxStamina = Math.round(Number(p.maxStamina) || 0);
-        return `角色${p.name || '?'} · 第${t.year || '?'}年${t.season || '?'}季第${t.dayOfMonth || '?'}天 ${t.timeOfDay || '?'} · ${loc.name || '?'}(${p.x},${p.y}) · 体力${stamina}/${maxStamina} · 健康${Number(p.health) || 0}/${Number(p.maxHealth) || 0} · 钱${Number(p.money) || 0}g · 手持${p.currentTool || '无'}${menu ? ' · ' + menu : ''}`;
+        let brief = `角色${p.name || '?'} · 第${t.year || '?'}年${t.season || '?'}季第${t.dayOfMonth || '?'}天 ${t.timeOfDay || '?'} · ${loc.name || '?'}(${p.x},${p.y}) · 体力${stamina}/${maxStamina} · 健康${Number(p.health) || 0}/${Number(p.maxHealth) || 0} · 钱${Number(p.money) || 0}g · 手持${p.currentTool || '无'}${menu ? ' · ' + menu : ''}`;
+        // 视野：面前 + 附近物品/家具/角色（带坐标），让默能"看见"周围
+        const n = d.nearby;
+        if (n) {
+          const parts = [];
+          if (n.front) parts.push(`面前${n.front.name}(${n.front.x},${n.front.y})`);
+          if (Array.isArray(n.objects) && n.objects.length) {
+            const objs = n.objects.slice(0, 12).map(o => `${o.name}(${o.x},${o.y})`).join('、');
+            parts.push(`物品:${objs}${n.objects.length > 12 ? `等${n.objects.length}个` : ''}`);
+          }
+          if (Array.isArray(n.furniture) && n.furniture.length) {
+            parts.push(`家具:${n.furniture.slice(0, 8).map(f => `${f.name}(${f.x},${f.y})`).join('、')}`);
+          }
+          if (Array.isArray(n.farmers) && n.farmers.length) {
+            parts.push(`角色:${n.farmers.map(f => `${f.name}(${f.x},${f.y})`).join('、')}`);
+          }
+          if (parts.length) brief += ' · ' + parts.join('；');
+        }
+        return brief;
       }
 
       async function farmTestConnect() {
