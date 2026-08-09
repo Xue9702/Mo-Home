@@ -2540,6 +2540,14 @@
         const maxStamina = Math.round(Number(p.maxStamina) || 0);
         let brief = `角色${p.name || '?'} · 第${t.year || '?'}年${t.season || '?'}季第${t.dayOfMonth || '?'}天 ${t.timeOfDay || '?'} · ${loc.name || '?'}(${p.x},${p.y}) · 体力${stamina}/${maxStamina} · 健康${Number(p.health) || 0}/${Number(p.maxHealth) || 0} · 钱${Number(p.money) || 0}g · 手持${p.currentTool || '无'}${menu ? ' · ' + menu : ''}`;
         const parts = [];
+        // 背包：让默知道还剩几颗种子等物品数量
+        if (Array.isArray(d.inventory) && d.inventory.length) {
+          const inv = d.inventory.slice(0, 15).map(i => {
+            const nm = String(i.name || '?');
+            return Number(i.stack) > 1 ? `${nm}x${i.stack}` : nm;
+          }).join('、');
+          parts.push(`背包:${inv}${d.inventory.length > 15 ? `等${d.inventory.length}件` : ''}`);
+        }
         // 天气（场景切换时也会跟着简报带给默）
         const w = d.weather;
         if (w) {

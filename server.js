@@ -792,8 +792,13 @@ function perspectiveConvert(text) {
   return String(text || '')
     .replace(/\{AGENT\}/g, '我')
     .replace(/\{USER\}/g, '夫人')
+    // 专有名词先保护起来，避免"默札/苏默"被误替换成"我札/苏我"
+    .replace(/默札/g, '\u0000MOZHA\u0000')
+    .replace(/苏默/g, '\u0000SUMO\u0000')
     .replace(/默/g, '我')
-    .replace(/雪/g, '夫人');
+    .replace(/雪/g, '夫人')
+    .replace(/\u0000MOZHA\u0000/g, '默札')
+    .replace(/\u0000SUMO\u0000/g, '苏默');
 }
 
 // 默札翻阅：把默札内容交给默，第二轮自然接续回应（类似搜索阶段）
@@ -1086,8 +1091,8 @@ async function shouldPush() {
 
 // ------------------ 分支版本工具 ------------------
 // 加载可见历史消息，按分支组（group_id + role）只保留版本号最大的最新消息；
-// 历史按字数上限裁剪：保留最近的内容，累计不超过 maxChars（默认 4500 字）
-function trimHistoryToChars(msgs, maxChars = 4500) {
+// 历史按字数上限裁剪：保留最近的内容，累计不超过 maxChars（默认 4000 字）
+function trimHistoryToChars(msgs, maxChars = 4000) {
   const out = [];
   let used = 0;
   for (let i = (msgs || []).length - 1; i >= 0; i--) {
@@ -1288,8 +1293,8 @@ app.post('/api/chat', async (req, res) => {
       fileText = await extractFileText(file);
     }
 
-    // 加载历史消息（按字数上限 4500 字，分支去重后取最近内容；超长消息截断）
-    const historyMessages = trimHistoryToChars(await loadLatestHistory(1, 60), 4500).map(msg => ({
+    // 加载历史消息（按字数上限 4000 字，分支去重后取最近内容；超长消息截断）
+    const historyMessages = trimHistoryToChars(await loadLatestHistory(1, 60), 4000).map(msg => ({
       role: msg.role,
       content: trimContextMessage(msg.content)
     }));
@@ -1676,7 +1681,7 @@ app.get('/api/history', async (req, res) => {
 app.post('/api/context-preview', async (req, res) => {
   try {
     const text = String(req.body?.message || '').trim() || '（示例消息）';
-    const recentHistory = trimHistoryToChars(await loadLatestHistory(1, 60), 4500);
+    const recentHistory = trimHistoryToChars(await loadLatestHistory(1, 60), 4000);
     const historyText = recentHistory.map(m => String(m.content || '')).join('\n');
     const memoryContext = await buildMemoryContext(text, { historyText });
     const toyManualContext = await getToyManualContext(req.body?.toyManual);
@@ -1876,7 +1881,7 @@ app.post('/api/regenerate', async (req, res) => {
       : userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...trimHistoryToChars(filteredHistory, 4500).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
+      ...trimHistoryToChars(filteredHistory, 4000).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: regenUserContent }
     ];
 
@@ -3858,7 +3863,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
         return !(mn.includes(excludeNorm) || excludeNorm.includes(mn));
       });
     }
-    // 已在最近历史上下文里的内容不再重复召回（避免 4500 字历史 + 召回重复）
+    // 已在最近历史上下文里的内容不再重复召回（避免 4000 字历史 + 召回重复）
     if (historyNorm) {
       items = items.filter(m => {
         const src = (Array.isArray(m.evidence) && m.evidence.length) ? String(m.evidence[0] || '') : String(m.content || '');
@@ -3890,22 +3895,27 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     items = picked
       .sort((a, b) => b.score - a.score)
       .map(x => x.m);
-    const lines = items.map(m => {
+    // 重要度高的排前面：让"原文"优先占住预算，避免被后面的 2500 字总上限截掉
+    const ordered = [...items].sort((a, b) => (b.importance || 0) - (a.importance || 0));
+    const lines = ordered.map(m => {
       const when = formatMemoryTime(m.event_time || m.created_at);
       const label = perspectiveConvert(String(m.title || '').trim());
       // 视角转换只作用于 AI 压缩后的内容（标题/概述），原文保持原样
       const contentConverted = perspectiveConvert(m.content);
-      let line = `- [${label ? label + '｜' : ''}${AEVUM_TYPE_CN[m.type] || '事件'}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] ${contentConverted}`;
-      // 重要度 >7 的单元召回时附带"AI 用来概括的那几轮"完整原文（原文不做视角转换）
+      let line = `- [${label ? label + '｜' : ''}${AEVUM_TYPE_CN[m.type] || '事件'}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] `;
+      // 重要度 >7 的单元召回时附带"AI 用来概括的那几轮"完整原文（原文不做视角转换）；
+      // 原文放在内容前面，即使后面被总字数截断，重要原文也一定保留
       if ((m.importance || 0) > 7) {
         const evs = (Array.isArray(m.evidence) ? m.evidence : []).map(s => String(s || '').trim()).filter(Boolean);
         const turns = (Array.isArray(m.evidence_turns) ? m.evidence_turns : []).map(Number).filter(n => Number.isInteger(n) && n >= 1);
         if (evs.length) {
-          const evText = evs.join('\n').slice(0, 1200);
+          const evText = evs.join('\n').slice(0, 900);
           const turnLabel = turns.length === 2 ? `第${turns[0]}-${turns[1]}轮` : turns.length === 1 ? `第${turns[0]}轮` : '';
           line += turnLabel ? `（原文·${turnLabel}：${evText}）` : `（原文：${evText}）`;
+          line += '\n  ';
         }
       }
+      line += contentConverted;
       return line;
     }).join('\n');
     let out = `\n\n【记忆海】\n${lines}`;
@@ -6067,7 +6077,7 @@ app.post('/api/edit-message', async (req, res) => {
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...trimHistoryToChars(filteredHistory, 4500).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
+      ...trimHistoryToChars(filteredHistory, 4000).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: newContent.trim() }
     ];
 
