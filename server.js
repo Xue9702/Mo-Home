@@ -662,7 +662,7 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_state',
-        description: '查看你在星露谷里的当前状态：位置、季节日期、时间、体力、健康、金钱、手持物品、背包、是否卡在菜单等。只在需要了解当前状态时调用一次；游戏没开或页面没打开时它会返回失败。注意：不要为了行动反复调用 stardew_state——雪让你行动时，直接调用 stardew_action 执行动作即可。',
+        description: '查看你在星露谷里的当前状态：位置、季节日期、时间、体力、健康、金钱、手持物品、背包、是否卡在菜单等；还包含"视野"（nearby 字段：面前一格 + 半径约6格内的物品/家具/角色，带坐标）。当雪问你能看到什么/周围有什么/某样东西在哪时，直接读 nearby 如实回答，不要说接口没有或自己看不见。只在需要了解当前状态时调用一次；游戏没开或页面没打开时它会返回失败。注意：不要为了行动反复调用 stardew_state——雪让你行动时，直接调用 stardew_action 执行动作即可。',
         parameters: { type: 'object', properties: {} }
       }
     },
