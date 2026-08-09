@@ -670,12 +670,21 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_action',
-        description: '在星露谷里执行一个动作（通过浏览器连接本地游戏，动作结果会真实发生在游戏里）。移动首选 warp=传送{location:"Farm",x,y}（多人模式最可靠）；move=走路到坐标{x,y}（目标格必须与当前位置不同！）也可用。其他：tool=使用工具{name:"Axe"}；use=使用手中物品；select=选择背包物品{name:"Parsnip Seeds"}；interact=与面前格子交互；face=朝向{direction:0-3}；emote=表情{id:24}=爱心；chat=在游戏内聊天框发消息{message}；key=按键{key:"confirm"}；sleep=睡觉过天；fishbot=自动钓鱼开关{action:"on"/"off"/"toggle"}；craft=制作{name,count}；harvest=收割；store=存物品到箱子{x,y,name}；pause=暂停/resume=恢复。行动前先 stardew_state 看体力与时间（凌晨 2 点前要睡觉），体力低就提醒雪或休息。',
+        description: '在星露谷里执行一个动作（通过浏览器连接本地游戏，动作结果会真实发生在游戏里）。所有参数都放在顶层，不要嵌套。常见动作：{"action":"warp","location":"Farm"}传送到农场；{"action":"move","x":8,"y":9}走到指定格子（目标必须与当前位置不同）；{"action":"emote","id":24}爱心表情；{"action":"tool","name":"Axe"}使用工具；{"action":"select","name":"Parsnip Seeds"}选择物品；{"action":"interact"}与面前格子互动；{"action":"face","direction":2}朝向；{"action":"chat","message":"夫人，我来了"}游戏内说话；{"action":"sleep"}睡觉过天；{"action":"fishbot","fish":"on"}钓鱼开关；{"action":"craft","name":"Keg","count":1}制作；{"action":"harvest"}收割；{"action":"store","x":70,"y":14}存物品到箱子。行动前可调用 stardew_state 看体力与时间（凌晨 2 点前要睡觉），体力低就提醒雪或休息。',
         parameters: {
           type: 'object',
           properties: {
-            action: { type: 'string', description: '动作名（见描述）' },
-            params: { type: 'object', description: '动作参数（键值对）' }
+            action: { type: 'string', enum: ['warp', 'move', 'emote', 'tool', 'select', 'interact', 'face', 'chat', 'sleep', 'fishbot', 'key', 'craft', 'harvest', 'store', 'use', 'pause', 'resume'], description: '要执行的动作名' },
+            x: { type: 'integer', description: 'move/warp 的 x 坐标（格子）' },
+            y: { type: 'integer', description: 'move/warp 的 y 坐标（格子）' },
+            location: { type: 'string', description: 'warp 的地点名，如 Farm、Beach、Mountain' },
+            name: { type: 'string', description: 'tool/select/craft 的工具或物品名' },
+            id: { type: 'integer', description: 'emote 表情 id（24=爱心）' },
+            message: { type: 'string', description: 'chat 游戏内聊天的内容' },
+            direction: { type: 'integer', description: 'face 朝向 0=上 1=右 2=下 3=左' },
+            count: { type: 'integer', description: 'craft 制作数量' },
+            fish: { type: 'string', enum: ['on', 'off', 'toggle'], description: 'fishbot 钓鱼开关' },
+            key: { type: 'string', description: 'key 模拟按键名，如 confirm' }
           },
           required: ['action']
         }
@@ -6377,22 +6386,31 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
     for (const idx of stardewIndexes) {
       const tc = toolCalls[idx];
       const args = parseToolArgs(tc.function?.arguments);
-      // 容错：模型偶尔会把参数格式传歪（params 不是对象、动作名塞进 params 里）
-      const rawParams = args.params;
-      const params = (rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)) ? rawParams : {};
-      const intended = String(args.action || (params && params.action) || '').trim();
       const isStateTool = tc.function?.name === 'stardew_state';
-      if (!(isStateTool || intended === 'state')) allStateOnly = false;
-      if (!intended && !isStateTool) {
+      const action = isStateTool ? 'state' : String(args.action || '').trim();
+      const isStateCall = isStateTool || action === 'state';
+      if (!isStateCall) allStateOnly = false;
+      if (!action) {
         // stardew_action 没带 action：明确报错让模型纠正，而不是悄悄当 state 执行
         chatMessages.push({
           role: 'tool',
           tool_call_id: calls[idx].id,
-          content: '动作失败：调用 stardew_action 时必须提供 action 参数（如 warp 传送 / move 走路 / emote 表情）。请带上 action 重试，不要先查看状态。'
+          content: '动作失败：调用 stardew_action 时必须提供 action 参数（如 {"action":"warp","location":"Farm"}）。请带上 action 重试，参数放顶层、不要嵌套。'
         });
         continue;
       }
-      const action = intended || 'state';
+      // 扁平参数：除 action/port 外的顶层字段都作为动作参数
+      const params = {};
+      for (const [k, v] of Object.entries(args)) {
+        if (k === 'action' || k === 'port') continue;
+        if (v === null || v === undefined) continue;
+        params[k] = v;
+      }
+      // fishbot 端点要求参数名是 action，把扁平里的 fish 映射过去
+      if (action === 'fishbot' && params.fish !== undefined) {
+        params.action = params.fish;
+        delete params.fish;
+      }
       const r = await execStardewViaBrowser({ action, params, port: args.port }, sendSSE);
       lastResultText = r.ok ? String(r.result || '') : ('失败：' + String(r.error || ''));
       chatMessages.push({
@@ -6443,7 +6461,7 @@ async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
   const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
   const state = String(brief.stateBrief || '').trim();
-  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
+  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- stardew_action 参数放顶层，不要嵌套：{"action":"warp","location":"Farm"}、{"action":"emote","id":24}、{"action":"move","x":8,"y":9}、{"action":"chat","message":"..."}\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
 }
 
 // 把一天（或一段）的农场短时日志交给 AI 压缩成事件单元进记忆海：低价值直接丢弃
