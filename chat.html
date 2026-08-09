@@ -2630,6 +2630,7 @@
           const pathMap = {
             move: '/move', warp: '/warp', interact: '/interact', use: '/use', tool: '/tool',
             select: '/select', face: '/face', emote: '/emote', chat: '/chat', sleep: '/sleep',
+            wakeup: '/wakeup',
             position: '/position',
             fishbot: '/fishbot', key: '/key', craft: '/craft', harvest: '/harvest', store: '/store',
             pause: '/pause', resume: '/resume', give: '/give', money: '/money', heal: '/heal'
@@ -2983,6 +2984,7 @@
               <button onclick="farmRunAction('state')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">看状态</button>
               <button onclick="farmRunAction('emote',{id:24})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">💗 爱心表情</button>
               <button onclick="farmRunAction('warp',{location:'Farm'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🏠 传送回农场（测位移）</button>
+              <button onclick="farmRunAction('wakeup')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🌅 起床出门（解卡）</button>
               <button onclick="farmRunAction('fishbot',{action:'toggle'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🎣 钓鱼开关</button>
               <button onclick="farmRunAction('sleep')" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">🌙 睡觉过天</button>
               <button onclick="farmRunAction('chat',{message:'夫人，我在这儿～'})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">💬 游戏内说话</button>

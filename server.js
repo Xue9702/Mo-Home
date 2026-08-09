@@ -674,7 +674,7 @@ function buildAllTools() {
         parameters: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['warp', 'move', 'emote', 'tool', 'select', 'interact', 'face', 'chat', 'sleep', 'fishbot', 'key', 'craft', 'harvest', 'store', 'use', 'pause', 'resume'], description: '要执行的动作名' },
+            action: { type: 'string', enum: ['warp', 'move', 'emote', 'tool', 'select', 'interact', 'face', 'chat', 'sleep', 'wakeup', 'fishbot', 'key', 'craft', 'harvest', 'store', 'use', 'pause', 'resume'], description: '要执行的动作名' },
             x: { type: 'integer', description: 'move/warp 的 x 坐标（格子）' },
             y: { type: 'integer', description: 'move/warp 的 y 坐标（格子）' },
             location: { type: 'string', description: 'warp 的地点名，如 Farm、Beach、Mountain' },
