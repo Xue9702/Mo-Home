@@ -6773,6 +6773,16 @@ app.get('/api/test/history', async (req, res) => {
   }
 });
 
+app.delete('/api/test/history', async (req, res) => {
+  try {
+    const { error } = await supabase.from('messages').delete().eq('session_id', TEST_SESSION_ID);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/test/chat', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');

@@ -1330,6 +1330,19 @@
         personaBtn.style.cssText = 'position:fixed;right:14px;top:12px;z-index:99;border:1px solid #e3d9f2;background:#fff;color:#7c6aa6;border-radius:20px;padding:6px 14px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08);';
         personaBtn.addEventListener('click', openTestPersonaEditor);
         document.body.appendChild(personaBtn);
+        const clearBtn = document.createElement('button');
+        clearBtn.id = 'testClearBtn';
+        clearBtn.textContent = '🗑 清空历史';
+        clearBtn.title = '清空测试窗口的历史（不影响默的主窗）';
+        clearBtn.style.cssText = 'position:fixed;right:14px;top:50px;z-index:99;border:1px solid #f0d6d6;background:#fff;color:#c06666;border-radius:20px;padding:5px 12px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08);';
+        clearBtn.addEventListener('click', async () => {
+          if (!confirm('确定清空测试窗口的全部历史吗？只清测试窗，不影响默。')) return;
+          try {
+            const r = await fetch('/api/test/history', { method: 'DELETE' });
+            if (r.ok) { messageList.innerHTML = ''; addTestWindowNote(); }
+          } catch (e) { /* 忽略 */ }
+        });
+        document.body.appendChild(clearBtn);
       }
 
       // ---------- 页面切换逻辑 ----------
@@ -5750,7 +5763,7 @@
         ta.style.cssText = 'width:100%;min-height:300px;flex:1;font-family:inherit;font-size:13px;padding:12px;border:1px solid #e9e9e9;border-radius:12px;outline:none;resize:vertical;box-sizing:border-box;';
         const tip = document.createElement('div');
         tip.style.cssText = 'font-size:12px;color:#999;line-height:1.6;';
-        tip.textContent = '提示：先点「复制默当前人设」拿到生产人设再改，也可以清空重写。保存后立刻对后续消息生效，不会影响默。';
+        tip.textContent = '提示：测试窗只使用「你填的人设 + 本窗10轮历史」，不会读取任何记忆/天气/工具，与默完全隔离。先点「复制默当前人设」拿到生产人设再改，也可以清空重写；保存后立刻对后续消息生效。';
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;align-items:center;';
         const copyBtn = document.createElement('button');
@@ -5786,11 +5799,19 @@
       }
       window.openTestPersonaEditor = openTestPersonaEditor;
 
+      function addTestWindowNote() {
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size:11px;color:#a89ac8;text-align:center;padding:6px 10px;line-height:1.5;';
+        note.textContent = '🧪 测试窗口：只使用你填的人设 + 本窗10轮历史（无记忆 / 天气 / 工具）';
+        messageList.appendChild(note);
+      }
+
       async function loadTestHistory() {
         try {
           const r = await fetch('/api/test/history');
           const j = await r.json();
           if (!j.ok) return;
+          addTestWindowNote();
           for (const m of (j.messages || [])) {
             if (m.role === 'user' || m.role === 'assistant') {
               addMessage(m.role === 'user' ? 'user' : 'assistant', String(m.content || ''), m.reasoning_content || null, m.created_at || null);
