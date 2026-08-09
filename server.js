@@ -6731,6 +6731,92 @@ app.put('/api/system-prompt', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ================== 测试窗口（Prompt 实验室）==================
+// 独立会话（session_id=2），只存最近 10 轮；不接 Aevum、不接工具；
+// 人设由前端随时编辑（localStorage），与默的生产人设完全隔离。
+const TEST_SESSION_ID = 2;
+
+app.get('/api/test/persona', async (req, res) => {
+  try {
+    const { data } = await supabase.from('system_prompts').select('prompt_text').eq('id', 1).single();
+    res.json({ ok: true, persona: data?.prompt_text || '' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/test/history', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('messages')
+      .select('role, content, reasoning_content, created_at')
+      .eq('session_id', TEST_SESSION_ID)
+      .eq('visible', true)
+      .order('id', { ascending: false })
+      .limit(20); // 最近 10 轮
+    const msgs = (data || []).reverse();
+    res.json({ ok: true, messages: msgs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/test/chat', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  const sendSSE = (d) => res.write(`data: ${JSON.stringify(d)}\n\n`);
+  try {
+    const content = String(req.body?.content || '').trim();
+    const persona = String(req.body?.persona || '').trim();
+    if (!content) { sendSSE({ error: '缺少消息内容' }); return res.end(); }
+    if (!persona) { sendSSE({ error: '测试人设还是空的，点右上角 ✏️ 先写或复制默的人设' }); return res.end(); }
+
+    // 存用户消息
+    await supabase.from('messages').insert({
+      session_id: TEST_SESSION_ID,
+      role: 'user',
+      content,
+      visible: true,
+      created_at: new Date().toISOString()
+    });
+
+    // 最近 10 轮（含刚插入的这条），只喂纯文本，不接任何记忆/工具
+    const { data: hist } = await supabase
+      .from('messages')
+      .select('role, content')
+      .eq('session_id', TEST_SESSION_ID)
+      .eq('visible', true)
+      .order('id', { ascending: false })
+      .limit(20);
+    const history = (hist || []).reverse()
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: String(m.content || '') }));
+
+    const chatMessages = [{ role: 'system', content: persona }, ...history];
+    const call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false });
+    if (call.error) { sendSSE({ error: call.error }); return res.end(); }
+
+    const reply = String(call.fullReply || '').trim();
+    if (reply) {
+      await supabase.from('messages').insert({
+        session_id: TEST_SESSION_ID,
+        role: 'assistant',
+        content: reply,
+        reasoning_content: call.fullThinking || null,
+        visible: true,
+        created_at: new Date().toISOString()
+      });
+    }
+    sendSSE({ done: true });
+    return res.end();
+  } catch (e) {
+    console.error('🧪 测试窗口错误:', e.message);
+    try { sendSSE({ error: '服务端处理出错：' + e.message }); } catch (_) { /* ignore */ }
+    return res.end();
+  }
+});
+
 // 启动服务
 app.listen(port, () => {
   console.log(`✅ 服务已启动，访问端口: ${port}`);
