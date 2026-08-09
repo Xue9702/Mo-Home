@@ -662,7 +662,7 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_state',
-        description: '查看你在星露谷里的当前状态：位置、季节日期、时间、体力、健康、金钱、手持物品、背包、是否卡在菜单等。在农场里行动前先调用它确认状态；游戏没开或页面没打开时它会返回失败。注意：当雪明确让你在农场里做事/走动时，查看完状态必须接着调用 stardew_action 去执行动作，不要只汇报状态就结束。',
+        description: '查看你在星露谷里的当前状态：位置、季节日期、时间、体力、健康、金钱、手持物品、背包、是否卡在菜单等。只在需要了解当前状态时调用一次；游戏没开或页面没打开时它会返回失败。注意：不要为了行动反复调用 stardew_state——雪让你行动时，直接调用 stardew_action 执行动作即可。',
         parameters: { type: 'object', properties: {} }
       }
     },
@@ -6356,6 +6356,7 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
   let toolCalls = initialToolCalls;
   let reply = initialReply || '';
   let thinking = '';
+  let lastResultText = '';
   for (let round = 0; round < maxRounds; round++) {
     if (!toolCalls || !toolCalls.length) break;
     const stardewCalls = toolCalls.filter(tc => isStardewToolName(tc.function?.name));
@@ -6371,19 +6372,41 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
     chatMessages.push({ role: 'assistant', content: reply || null, tool_calls: calls });
     const stardewIndexes = [];
     toolCalls.forEach((tc, i) => { if (isStardewToolName(tc.function?.name)) stardewIndexes.push(i); });
+    // 本轮是否全部是"只看状态"（防死循环）
+    let allStateOnly = stardewIndexes.length > 0;
     for (const idx of stardewIndexes) {
       const tc = toolCalls[idx];
       const args = parseToolArgs(tc.function?.arguments);
       // 容错：模型偶尔会把参数格式传歪（params 不是对象、动作名塞进 params 里）
       const rawParams = args.params;
       const params = (rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)) ? rawParams : {};
-      const action = String(args.action || params.action || 'state').trim();
+      const intended = String(args.action || (params && params.action) || '').trim();
+      const isStateTool = tc.function?.name === 'stardew_state';
+      if (!(isStateTool || intended === 'state')) allStateOnly = false;
+      if (!intended && !isStateTool) {
+        // stardew_action 没带 action：明确报错让模型纠正，而不是悄悄当 state 执行
+        chatMessages.push({
+          role: 'tool',
+          tool_call_id: calls[idx].id,
+          content: '动作失败：调用 stardew_action 时必须提供 action 参数（如 warp 传送 / move 走路 / emote 表情）。请带上 action 重试，不要先查看状态。'
+        });
+        continue;
+      }
+      const action = intended || 'state';
       const r = await execStardewViaBrowser({ action, params, port: args.port }, sendSSE);
+      lastResultText = r.ok ? String(r.result || '') : ('失败：' + String(r.error || ''));
       chatMessages.push({
         role: 'tool',
         tool_call_id: calls[idx].id,
         content: (r.ok ? `动作成功：${r.result}` : `动作失败：${r.error}`)
-          + '\n（如果雪要求你移动或做事，请继续调用 stardew_action 完成动作后再回复；如果任务已完成，直接简短回复即可。）'
+          + '\n（雪要求行动时，请直接调用 stardew_action 完成动作后再回复；不要再重复查看状态。）'
+      });
+    }
+    // 防死循环：连续两轮只查看状态 → 硬性打断
+    if (round > 0 && allStateOnly) {
+      chatMessages.push({
+        role: 'user',
+        content: '（你连续多次只查看了状态，但雪要求的是行动。请立即调用 stardew_action 执行一个明确动作，例如 warp 传送到某处或 emote 表情，不要再调用 stardew_state。）'
       });
     }
     let call = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });
@@ -6406,6 +6429,12 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
   if (mozha.write || mozha.read) reply = stripMozhaTags(reply);
   const toyRes = handleToyCmdTag(reply, undefined, sendSSE);
   reply = toyRes.reply;
+  // 兜底：轮数耗尽仍无正文时，用最后一次状态结果填补，避免白屏
+  if (!String(reply || '').trim()) {
+    reply = lastResultText
+      ? `（默确认了农场状态：${lastResultText.slice(0, 120)}）`
+      : '（默在农场里看了看，暂时没有动作。）';
+  }
   return { reply, thinking };
 }
 
@@ -6414,7 +6443,7 @@ async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
   const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
   const state = String(brief.stateBrief || '').trim();
-  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 行动前先 stardew_state 看体力/时间/位置；体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 当雪让你在农场里做事/走动/拿东西时：看完状态必须立刻调用 stardew_action 完成动作（移动用 warp 最稳），做完再简短汇报；只读状态不行动是不合格的\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
+  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
 }
 
 // 把一天（或一段）的农场短时日志交给 AI 压缩成事件单元进记忆海：低价值直接丢弃
