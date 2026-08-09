@@ -2539,10 +2539,21 @@
         const stamina = Math.round(Number(p.stamina) || 0);
         const maxStamina = Math.round(Number(p.maxStamina) || 0);
         let brief = `角色${p.name || '?'} · 第${t.year || '?'}年${t.season || '?'}季第${t.dayOfMonth || '?'}天 ${t.timeOfDay || '?'} · ${loc.name || '?'}(${p.x},${p.y}) · 体力${stamina}/${maxStamina} · 健康${Number(p.health) || 0}/${Number(p.maxHealth) || 0} · 钱${Number(p.money) || 0}g · 手持${p.currentTool || '无'}${menu ? ' · ' + menu : ''}`;
-        // 视野：面前 + 附近物品/家具/角色（带坐标），让默能"看见"周围
+        const parts = [];
+        // 天气（场景切换时也会跟着简报带给默）
+        const w = d.weather;
+        if (w) {
+          let wx = '晴';
+          if (w.isGreenRain) wx = '绿雨';
+          else if (w.isRaining && w.isLightning) wx = '雷雨';
+          else if (w.isSnowing) wx = '雪';
+          else if (w.isRaining) wx = '雨';
+          else if (w.isDebrisWeather) wx = '沙尘';
+          parts.push(`天气:${wx}`);
+        }
+        // 视野：面前 + 附近物品/家具/角色/田地（带坐标），让默能"看见"周围
         const n = d.nearby;
         if (n) {
-          const parts = [];
           if (n.front) parts.push(`面前${n.front.name}(${n.front.x},${n.front.y})`);
           if (Array.isArray(n.objects) && n.objects.length) {
             const objs = n.objects.slice(0, 12).map(o => `${o.name}(${o.x},${o.y})`).join('、');
@@ -2554,8 +2565,20 @@
           if (Array.isArray(n.farmers) && n.farmers.length) {
             parts.push(`角色:${n.farmers.map(f => `${f.name}(${f.x},${f.y})`).join('、')}`);
           }
-          if (parts.length) brief += ' · ' + parts.join('；');
+          if (Array.isArray(n.terrain) && n.terrain.length) {
+            const dirt = n.terrain.filter(x => x && x.tilled);
+            const withCrop = dirt.filter(x => x.crop);
+            const harvestable = withCrop.filter(x => x.harvestable);
+            if (dirt.length) {
+              const summary = `田地:开垦${dirt.length}块` + (withCrop.length ? `(种${withCrop.length}·可收${harvestable.length})` : '');
+              const detail = dirt.slice(0, 12).map(x => `(${x.x},${x.y})${x.watered ? '浇' : ''}${x.crop ? x.crop + (x.harvestable ? '✓' : '') : '空'}`).join('、');
+              parts.push(summary + (detail ? `:${detail}${dirt.length > 12 ? `等${dirt.length}块` : ''}` : ''));
+            }
+            const trees = n.terrain.filter(x => x && x.kind === 'Tree');
+            if (trees.length) parts.push(`树${trees.length}棵`);
+          }
         }
+        if (parts.length) brief += ' · ' + parts.join('；');
         return brief;
       }
 
