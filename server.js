@@ -559,14 +559,14 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
 
           if (delta?.content) {
             const c = delta.content;
-            const isNew = !fullReply.endsWith(c);
-            if (isNew) {
-              fullReply += c;
-              if (bufferContent) {
-                contentBuffer += c;
-              } else {
-                sendSSE({ content: c });
-              }
+            // 内容分片直接追加，不做尾缀去重：
+            // 去重会把"1500"里第二个 0 当成已存在的重复吞掉，变成"150"
+            // （思考/工具调用的去重保留，那两处确实会重发分片）
+            fullReply += c;
+            if (bufferContent) {
+              contentBuffer += c;
+            } else {
+              sendSSE({ content: c });
             }
           }
 
@@ -1103,8 +1103,8 @@ async function shouldPush() {
 
 // ------------------ 分支版本工具 ------------------
 // 加载可见历史消息，按分支组（group_id + role）只保留版本号最大的最新消息；
-// 历史按字数上限裁剪：保留最近的内容，累计不超过 maxChars（默认 4000 字）
-function trimHistoryToChars(msgs, maxChars = 4000) {
+// 历史按字数上限裁剪：保留最近的内容，累计不超过 maxChars（默认 5000 字）
+function trimHistoryToChars(msgs, maxChars = 5000) {
   const out = [];
   let used = 0;
   for (let i = (msgs || []).length - 1; i >= 0; i--) {
@@ -1305,8 +1305,8 @@ app.post('/api/chat', async (req, res) => {
       fileText = await extractFileText(file);
     }
 
-    // 加载历史消息（按字数上限 4000 字，分支去重后取最近内容；超长消息截断）
-    const historyMessages = trimHistoryToChars(await loadLatestHistory(1, 60), 4000).map(msg => ({
+    // 加载历史消息（按字数上限 5000 字，分支去重后取最近内容；超长消息截断）
+    const historyMessages = trimHistoryToChars(await loadLatestHistory(1, 60), 5000).map(msg => ({
       role: msg.role,
       content: trimContextMessage(msg.content)
     }));
@@ -1693,7 +1693,7 @@ app.get('/api/history', async (req, res) => {
 app.post('/api/context-preview', async (req, res) => {
   try {
     const text = String(req.body?.message || '').trim() || '（示例消息）';
-    const recentHistory = trimHistoryToChars(await loadLatestHistory(1, 60), 4000);
+    const recentHistory = trimHistoryToChars(await loadLatestHistory(1, 60), 5000);
     const historyText = recentHistory.map(m => String(m.content || '')).join('\n');
     const memoryContext = await buildMemoryContext(text, { historyText });
     const toyManualContext = await getToyManualContext(req.body?.toyManual);
@@ -1893,7 +1893,7 @@ app.post('/api/regenerate', async (req, res) => {
       : userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...trimHistoryToChars(filteredHistory, 4000).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
+      ...trimHistoryToChars(filteredHistory, 5000).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: regenUserContent }
     ];
 
@@ -3875,7 +3875,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
         return !(mn.includes(excludeNorm) || excludeNorm.includes(mn));
       });
     }
-    // 已在最近历史上下文里的内容不再重复召回（避免 4000 字历史 + 召回重复）
+    // 已在最近历史上下文里的内容不再重复召回（避免 5000 字历史 + 召回重复）
     if (historyNorm) {
       items = items.filter(m => {
         const src = (Array.isArray(m.evidence) && m.evidence.length) ? String(m.evidence[0] || '') : String(m.content || '');
@@ -5048,15 +5048,25 @@ app.get('/api/aevum/:id/context', async (req, res) => {
       exchanges = await getEpisodeRecentExchanges(mem.episode_id, 6);
     }
     if (!exchanges.length && Array.isArray(mem.evidence) && mem.evidence.length) {
-      const snippet = String(mem.evidence[0] || '').trim().slice(0, 40);
-      if (snippet.length >= 6) {
-        const { data: rawRows } = await supabase
+      // 把 AI 用来概括的那几轮原文都带上：逐条 evidence 反查原文存档
+      const evs = mem.evidence.map(s => String(s || '').trim()).filter(Boolean);
+      const rawRows = [];
+      for (const s of evs) {
+        if (rawRows.length >= 3) break;
+        const snippet = s.slice(0, 30);
+        if (snippet.length < 6) continue;
+        const { data: rows } = await supabase
           .from('aevum_raw')
           .select('content')
           .ilike('content', `%${snippet}%`)
           .order('id', { ascending: true })
           .limit(3);
-        exchanges = (rawRows || []).map(r => {
+        for (const r of (rows || [])) {
+          if (!rawRows.some(x => x.content === r.content)) rawRows.push(r);
+          if (rawRows.length >= 3) break;
+        }
+      }
+      exchanges = rawRows.map(r => {
           const c = String(r.content || '');
           const sep = c.indexOf('\n助手说：');
           if (sep === -1) return { role: 'assistant', content: c };
@@ -5065,6 +5075,9 @@ app.get('/api/aevum/:id/context', async (req, res) => {
             { role: 'assistant', content: c.slice(sep + '\n助手说：'.length).trim() }
           ];
         }).flat();
+      if (!exchanges.length) {
+        // 反查不到存档时，直接把 evidence 原文片段全部带回，而不是只给第一条
+        exchanges = evs.map(s => ({ role: 'assistant', content: s }));
       }
     }
     res.json({ exchanges, topic });
@@ -6089,7 +6102,7 @@ app.post('/api/edit-message', async (req, res) => {
     // 9. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 编辑后的用户消息）
     const chatMessages = [
       { role: 'system', content: systemPrompt },
-      ...trimHistoryToChars(filteredHistory, 4000).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
+      ...trimHistoryToChars(filteredHistory, 5000).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
       { role: 'user', content: newContent.trim() }
     ];
 

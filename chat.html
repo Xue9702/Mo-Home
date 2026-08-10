@@ -3509,7 +3509,9 @@
         const statusBg = m.status === 'active' ? '#e8f9f0' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6';
         const statusColor = m.status === 'active' ? '#2ecc71' : m.status === 'archived' ? '#aaa' : '#b8860b';
         const when = m.event_time || m.created_at;
-        const ev = (m.evidence && m.evidence.length) ? String(m.evidence[0] || '').trim() : '';
+        const ev = (m.evidence && m.evidence.length)
+          ? m.evidence.map(s => String(s || '').trim()).filter(Boolean).join('\n')
+          : '';
         const fullCtx = m.context || ev;
         return `
           <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
@@ -5207,7 +5209,7 @@
           ${section('③ 天气', data.weatherContext)}
           ${section('④ 注入的记忆（记忆海/记忆书/记忆心/计划）', data.memoryContext)}
           ${section('⑤ 动态', data.momentsContext)}
-          ${section('⑥ 聊天记录（最近10轮）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
+          ${section('⑥ 聊天记录（按字数上限约5000字）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
           ${section('⑦ 工具指令（搜索/动态/默札/玩具）· 放最后', data.toolsText)}
           ${section('⑧ 组装后的完整系统提示（供参考）', data.systemPrompt)}`;
         box.classList.add('feature-modal');
