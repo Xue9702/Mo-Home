@@ -2755,6 +2755,7 @@
           if (action === 'state') {
             const r = await farmFetchLocal(port, '/state');
             if (!r.ok || !r.data) return { ok: false, error: r.error || '游戏未连接' };
+            if (cmd && cmd.raw) return { ok: true, result: JSON.stringify(r.data) };
             return { ok: true, result: farmStateBrief(r.data) || JSON.stringify(r.data).slice(0, 300) };
           }
           const pathMap = {
@@ -2763,7 +2764,9 @@
             wakeup: '/wakeup',
             position: '/position',
             fishbot: '/fishbot', key: '/key', craft: '/craft', harvest: '/harvest', store: '/store',
-            pause: '/pause', resume: '/resume', give: '/give', money: '/money', heal: '/heal'
+            pause: '/pause', resume: '/resume', give: '/give', money: '/money', heal: '/heal',
+            surroundings: '/surroundings', animals: '/animals', machines: '/machines',
+            menu: '/menu', buy: '/buy', refill: '/refill', scan: '/scan'
           };
           const path = pathMap[action];
           if (!path) return { ok: false, error: `未知动作：${action}` };
@@ -2779,7 +2782,12 @@
               };
             }
           }
-          let r = await farmFetchLocal(port, path, 'POST', params);
+          let r;
+          if (action === 'surroundings') {
+            r = await farmFetchLocal(port, `/surroundings?radius=${Number(params.radius) || 10}`);
+          } else {
+            r = await farmFetchLocal(port, path, 'POST', params);
+          }
           // 兜底：预检（OPTIONS）被拦导致请求失败时，改用"免预检"模式重发一次（text/plain），
           // 让动作仍能真实发到游戏里（虽然读不到返回值）
           if (!r.ok && /fetch|Failed|TypeError|CORS|预检/i.test(r.error || '')) {
@@ -2797,6 +2805,8 @@
           const d = r.data || {};
           const text = JSON.stringify(d);
           if (d.ok === false) return { ok: false, error: (d.error || text).slice(0, 300) };
+          // 流程打包：需要原始 JSON（状态/扫描/动物等），跳过下面的移动验证与人类可读格式化
+          if (cmd && cmd.raw) return { ok: true, result: JSON.stringify(r.data) };
           // 记录默自己发出的游戏内消息，避免"听见自己说话"的回声
           if (action === 'chat' && params && params.message) {
             farmState.lastMoChatText = String(params.message).slice(0, 150);
@@ -2840,11 +2850,14 @@
         const params = (cmd && cmd.params) || {};
         let paramsText = '';
         try { paramsText = JSON.stringify(params); } catch (e) { paramsText = String(params); }
-        farmLogAdd(`默指令 → ${action} ${paramsText.slice(0, 100)}`);
+        // 流程打包的静默步骤不刷日志，避免农场动态被几十条动作刷屏
+        if (!(cmd && cmd.silent)) farmLogAdd(`默指令 → ${action} ${paramsText.slice(0, 100)}`);
         const r = await farmExecCmd(cmd);
-        farmLogAdd(r.ok
-          ? `结果 → ${String(r.result || '').slice(0, 140)}`
-          : `结果 → 失败：${String(r.error || '').slice(0, 140)}`);
+        if (!(cmd && cmd.silent)) {
+          farmLogAdd(r.ok
+            ? `结果 → ${String(r.result || '').slice(0, 140)}`
+            : `结果 → 失败：${String(r.error || '').slice(0, 140)}`);
+        }
         postFarmResult(cmd.requestId, r);
         return r;
       }
@@ -5014,6 +5027,11 @@
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
+                if (json.stardewFlow) {
+                  const statusLine = currentThinkingContainer && currentThinkingContainer.querySelector('.search-status-line');
+                  if (statusLine) statusLine.textContent = '🌾 ' + json.stardewFlow;
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
                 if (json.stardewCmd) {
                   farmHandleCmd(json.stardewCmd);
@@ -5490,6 +5508,11 @@
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
+                if (json.stardewFlow) {
+                  const statusLine = currentThinkDiv.querySelector('.search-status-line');
+                  if (statusLine) statusLine.textContent = '🌾 ' + json.stardewFlow;
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
 
                 if (json.toyCmd) {
                   toyExecuteCmd(json.toyCmd);
@@ -5641,6 +5664,11 @@
                   if (statusLine) {
                     statusLine.appendChild(document.createTextNode(' 📄 正在查看网页…'));
                   }
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
+                if (json.stardewFlow) {
+                  const statusLine = currentThinkDiv.querySelector('.search-status-line');
+                  if (statusLine) statusLine.textContent = '🌾 ' + json.stardewFlow;
                   messageList.scrollTop = messageList.scrollHeight;
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }

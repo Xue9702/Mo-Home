@@ -795,6 +795,30 @@ function buildAllTools() {
     {
       type: 'function',
       function: {
+        name: 'stardew_flow',
+        description: '把一整串农场动作打包成流程一次执行（不占逐格操作轮次）。雪让你"种一片地/浇一片地/砍几棵树/收一片菜/清一片障碍/撸动物/买东西/钓鱼"时，优先用本工具，不要用 stardew_action 一步步走。参数全部放顶层，例如 {"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}。流程：farm 种田（翻地+播种+浇水，需区域和种子）、water 浇水（区域）、chop 砍树（区域或count）、clear 清障（区域）、harvest 收菜（区域）、pet 撸动物、buy 购物（location+id/quantity）、fish 自动钓鱼。跑完返回结果摘要；中途体力不足会提前停止并说明。',
+        parameters: {
+          type: 'object',
+          properties: {
+            flow: { type: 'string', enum: ['farm', 'water', 'chop', 'clear', 'harvest', 'pet', 'buy', 'fish'], description: '流程名' },
+            x1: { type: 'integer', description: '区域左上角 x（格子坐标）' },
+            y1: { type: 'integer', description: '区域左上角 y' },
+            x2: { type: 'integer', description: '区域右下角 x' },
+            y2: { type: 'integer', description: '区域右下角 y' },
+            seed: { type: 'string', description: 'farm 的种子名，如 Parsnip Seeds' },
+            count: { type: 'integer', description: 'chop 最多砍几棵；buy 数量' },
+            location: { type: 'string', description: 'buy 的商店名，如 SeedShop / FishShop / Blacksmith' },
+            id: { type: 'string', description: 'buy 的物品 ID' },
+            item: { type: 'string', description: 'buy 的物品名（常见种子可自动识别）' },
+            quantity: { type: 'integer', description: 'buy 数量' }
+          },
+          required: ['flow']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
         name: 'mozha_write',
         description: '在你的默札上写一页：不记事件，只记心——某一刻想留住的话、想告诉未来自己的事。只有真心想落笔时调用。',
         parameters: {
@@ -6442,7 +6466,7 @@ const STARDEW_CMD_TIMEOUT_MS = 30000; // 浏览器执行单条指令的超时
 const STARDEW_TRIGGER_COOLDOWN_MS = 5 * 60 * 1000; // 游戏时刻冷却：现实 5 分钟
 
 function isStardewToolName(name) {
-  return name === 'stardew_state' || name === 'stardew_action';
+  return name === 'stardew_state' || name === 'stardew_action' || name === 'stardew_flow';
 }
 
 function parseToolArgs(raw) {
@@ -6456,15 +6480,15 @@ app.post('/api/stardew/result', (req, res) => {
   try {
     const { requestId, ok, result, error } = req.body || {};
     const cb = stardewPending.get(String(requestId || ''));
-    if (cb) cb({ ok: !!ok, result: String(result || '').slice(0, 800), error: String(error || '').slice(0, 300) });
+    if (cb) cb({ ok: !!ok, result: String(result || '').slice(0, 20000), error: String(error || '').slice(0, 500) });
   } catch (e) { /* 忽略 */ }
   res.json({ ok: true });
 });
 
 // 通过 SSE 把一条星露谷指令发给浏览器，等待浏览器回传结果
-async function execStardewViaBrowser({ action, params, port }, sendSSE) {
+async function execStardewViaBrowser({ action, params, port, silent = false, raw = false }, sendSSE) {
   const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  sendSSE({ stardewCmd: { requestId, action: String(action || 'state'), params: params || {}, port: port || STARDEW_DEFAULT_PORT } });
+  sendSSE({ stardewCmd: { requestId, action: String(action || 'state'), params: params || {}, port: port || STARDEW_DEFAULT_PORT, silent, raw } });
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       stardewPending.delete(requestId);
@@ -6500,6 +6524,18 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
     for (const idx of stardewIndexes) {
       const tc = toolCalls[idx];
       const args = parseToolArgs(tc.function?.arguments);
+      // 流程打包：stardew_flow 一次跑完一整串动作（种田/浇水/砍树/收菜等），不占模型轮次
+      if (tc.function?.name === 'stardew_flow') {
+        allStateOnly = false; // 流程是行动，不算"只看状态"
+        const fp = await runStardewFlow(args, sendSSE, args.port);
+        chatMessages.push({
+          role: 'tool',
+          tool_call_id: calls[idx].id,
+          content: fp.ok ? `流程完成：${fp.summary}` : `流程失败：${fp.summary}`
+        });
+        lastResultText = fp.summary;
+        continue;
+      }
       const isStateTool = tc.function?.name === 'stardew_state';
       const action = isStateTool ? 'state' : String(args.action || '').trim();
       const isStateCall = isStateTool || action === 'state';
@@ -6570,12 +6606,323 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
   return { reply, thinking };
 }
 
+// ================== 星露谷流程执行器（打包动作，不占模型轮次） ==================
+const FLOW_MAX_TILES = 80;        // 单个流程最多操作的格子数
+const FLOW_MAX_TREES = 12;
+const FLOW_MAX_OBSTACLES = 60;
+const FLOW_MAX_ANIMALS = 20;
+const FLOW_STEP_DELAY = 420;      // 每次工具挥动后的等待（毫秒），给游戏注册动作的时间
+
+function flowSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function flowNormRect(x1, y1, x2, y2) {
+  const X1 = Math.min(x1, x2), X2 = Math.max(x1, x2);
+  const Y1 = Math.min(y1, y2), Y2 = Math.max(y1, y2);
+  const tiles = [];
+  for (let y = Y1; y <= Y2; y++) {
+    for (let x = X1; x <= X2; x++) tiles.push([x, y]);
+  }
+  return { x1: X1, y1: Y1, x2: X2, y2: Y2, tiles };
+}
+
+// 流程内指令：silent 让浏览器不在农场动态里刷屏；raw 直接拿原始 JSON
+async function flowCmd(sendSSE, port, action, params = {}, raw = false) {
+  return execStardewViaBrowser({ action, params, port, silent: true, raw }, sendSSE);
+}
+
+async function flowState(sendSSE, port) {
+  const r = await flowCmd(sendSSE, port, 'state', {}, true);
+  if (!r.ok || !r.result) throw new Error('读取游戏状态失败：' + (r.error || '未知'));
+  try { return JSON.parse(r.result); } catch (e) { throw new Error('游戏状态解析失败'); }
+}
+
+async function flowRaw(sendSSE, port, action, params = {}) {
+  const r = await flowCmd(sendSSE, port, action, params, true);
+  if (!r.ok) throw new Error(`${action} 失败：${r.error || '未知'}`);
+  try { return JSON.parse(r.result); } catch (e) { return null; }
+}
+
+async function flowStaminaOk(sendSSE, port, reserve = 0.15) {
+  const st = await flowState(sendSSE, port);
+  const cur = Number(st.player?.stamina) || 0;
+  const mx = Number(st.player?.maxStamina) || 1;
+  return { ok: cur / mx >= reserve, cur, mx };
+}
+
+// 站到目标格上方（下方兜底），面向目标
+async function flowStandFacing(sendSSE, port, loc, tx, ty) {
+  const standY = ty - 1 >= 0 ? ty - 1 : ty + 1;
+  const face = ty - 1 >= 0 ? 2 : 0;
+  await flowCmd(sendSSE, port, 'warp', { location: loc, x: tx, y: standY });
+  await flowSleep(150);
+  await flowCmd(sendSSE, port, 'face', { direction: face });
+  await flowSleep(80);
+}
+
+// 在目标格上用工具（Hoe/Watering Can/种子/空手）
+async function flowUseAt(sendSSE, port, loc, tx, ty, itemName = null, opts = {}) {
+  await flowStandFacing(sendSSE, port, loc, tx, ty);
+  if (itemName) await flowCmd(sendSSE, port, 'select', { name: itemName });
+  await flowCmd(sendSSE, port, 'use', {});
+  await flowSleep(opts.delay || FLOW_STEP_DELAY);
+}
+
+// 在目标格上互动（收菜/撸动物），弹出菜单就按确认关掉
+async function flowInteractAt(sendSSE, port, loc, tx, ty, opts = {}) {
+  await flowStandFacing(sendSSE, port, loc, tx, ty);
+  await flowCmd(sendSSE, port, 'interact', {});
+  await flowSleep(opts.delay || 380);
+  try {
+    const m = await flowRaw(sendSSE, port, 'menu', {});
+    if (m && m.open) {
+      await flowCmd(sendSSE, port, 'key', { key: 'confirm' });
+      await flowSleep(200);
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+// 扫描矩形区域：先传送到中心，再 /surroundings 取区域内格子
+async function flowScanRegion(sendSSE, port, rect) {
+  const cx = Math.floor((rect.x1 + rect.x2) / 2);
+  const cy = Math.floor((rect.y1 + rect.y2) / 2);
+  const st = await flowState(sendSSE, port);
+  const loc = st.location?.name || 'Farm';
+  await flowCmd(sendSSE, port, 'warp', { location: loc, x: cx, y: cy });
+  await flowSleep(200);
+  const need = Math.max(rect.x2 - rect.x1, rect.y2 - rect.y1) / 2 + 4;
+  const data = await flowRaw(sendSSE, port, 'surroundings', { radius: Math.min(Math.max(8, Math.ceil(need)), 30) });
+  if (!data || !Array.isArray(data.tiles)) return [];
+  return data.tiles.filter(t => t.x >= rect.x1 && t.x <= rect.x2 && t.y >= rect.y1 && t.y <= rect.y2);
+}
+
+async function flowRefillIfEmpty(sendSSE, port) {
+  try {
+    const st = await flowState(sendSSE, port);
+    const wc = (st.inventory || []).find(i => i.name === 'Watering Can');
+    if (wc && Number(wc.waterLeft) <= 0) {
+      await flowCmd(sendSSE, port, 'refill', {});
+      await flowSleep(200);
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+// ---- 种田：翻地 → 播种 → 浇水（蛇形）----
+async function flowFarm(sendSSE, port, args) {
+  if (args.x1 === undefined || args.y1 === undefined || args.x2 === undefined || args.y2 === undefined) {
+    return { ok: false, summary: '种田需要提供区域坐标 x1,y1,x2,y2（格子坐标）' };
+  }
+  const rect = flowNormRect(Number(args.x1), Number(args.y1), Number(args.x2), Number(args.y2));
+  const seed = String(args.seed || 'Parsnip Seeds').trim();
+  const tiles = rect.tiles.slice(0, FLOW_MAX_TILES);
+  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
+  let planted = 0, watered = 0, stopped = false;
+  sendSSE({ stardewFlow: `种田：规划 ${tiles.length} 格（${seed}）` });
+  // 翻地 + 播种
+  for (let i = 0; i < tiles.length; i++) {
+    if (i % 5 === 0) {
+      const s = await flowStaminaOk(sendSSE, port);
+      if (!s.ok) { stopped = true; sendSSE({ stardewFlow: `体力不足，提前停止（${Math.round(s.cur)}/${s.mx}）` }); break; }
+    }
+    const [tx, ty] = tiles[i];
+    await flowUseAt(sendSSE, port, loc, tx, ty, 'Hoe', { delay: 330 });
+    await flowUseAt(sendSSE, port, loc, tx, ty, seed, { delay: 330 });
+    planted++;
+    if ((i + 1) % 5 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `种田 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
+  }
+  // 浇水
+  if (!stopped && args.skipWater !== true) {
+    await flowCmd(sendSSE, port, 'refill', {});
+    for (let i = 0; i < tiles.length; i++) {
+      if (i % 3 === 0) await flowRefillIfEmpty(sendSSE, port);
+      const [tx, ty] = tiles[i];
+      await flowUseAt(sendSSE, port, loc, tx, ty, 'Watering Can', { delay: 300 });
+      watered++;
+      if ((i + 1) % 10 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `浇水 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
+    }
+  }
+  return { ok: true, summary: `种田完成：翻地播种 ${planted} 格（${seed}）${watered ? `，浇水 ${watered} 格` : ''}${stopped ? '（体力不足提前停止）' : ''}` };
+}
+
+// ---- 浇水：区域内未浇水的作物 ----
+async function flowWater(sendSSE, port, args) {
+  if (args.x1 === undefined || args.y1 === undefined || args.x2 === undefined || args.y2 === undefined) {
+    return { ok: false, summary: '浇水需要提供区域坐标 x1,y1,x2,y2' };
+  }
+  const rect = flowNormRect(Number(args.x1), Number(args.y1), Number(args.x2), Number(args.y2));
+  const tiles = await flowScanRegion(sendSSE, port, rect);
+  const need = tiles.filter(t => t.terrain === 'HoeDirt' && !t.watered && t.crop).slice(0, FLOW_MAX_TILES);
+  if (!need.length) return { ok: true, summary: '这片区域没有需要浇水的作物' };
+  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
+  await flowCmd(sendSSE, port, 'refill', {});
+  let done = 0;
+  for (let i = 0; i < need.length; i++) {
+    if (i % 3 === 0) await flowRefillIfEmpty(sendSSE, port);
+    await flowUseAt(sendSSE, port, loc, need[i].x, need[i].y, 'Watering Can', { delay: 320 });
+    done++;
+    if ((i + 1) % 10 === 0 || i === need.length - 1) sendSSE({ stardewFlow: `浇水 ${Math.min(i + 1, need.length)}/${need.length}` });
+  }
+  return { ok: true, summary: `浇水完成：${done} 格作物` };
+}
+
+// ---- 砍树：区域内或周围最近的树 ----
+async function flowChop(sendSSE, port, args) {
+  let trees;
+  if (args.x1 !== undefined && args.x2 !== undefined) {
+    const rect = flowNormRect(Number(args.x1), Number(args.y1 || args.x1), Number(args.x2), Number(args.y2 || args.x2));
+    trees = (await flowScanRegion(sendSSE, port, rect)).filter(t => (t.terrain || '').startsWith('Tree:'));
+  } else {
+    const st = await flowState(sendSSE, port);
+    const loc = st.location?.name || 'Farm';
+    const data = await flowRaw(sendSSE, port, 'surroundings', { radius: 20 });
+    trees = (data && data.tiles || []).filter(t => (t.terrain || '').startsWith('Tree:'));
+  }
+  const list = trees.slice(0, Number(args.count) || FLOW_MAX_TREES);
+  if (!list.length) return { ok: true, summary: '附近没找到树' };
+  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
+  let chopped = 0, stopped = false;
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i];
+    const s = await flowStaminaOk(sendSSE, port, 0.1);
+    if (!s.ok) { stopped = true; sendSSE({ stardewFlow: '体力低，停止砍树' }); break; }
+    await flowStandFacing(sendSSE, port, loc, t.x, t.y);
+    await flowCmd(sendSSE, port, 'select', { name: 'Axe' });
+    for (let h = 0; h < 12; h++) { await flowCmd(sendSSE, port, 'use', {}); await flowSleep(520); }
+    for (let h = 0; h < 6; h++) { await flowCmd(sendSSE, port, 'use', {}); await flowSleep(520); }
+    chopped++;
+    if ((i + 1) % 3 === 0 || i === list.length - 1) sendSSE({ stardewFlow: `砍树 ${Math.min(i + 1, list.length)}/${list.length}` });
+  }
+  return { ok: true, summary: `砍树完成：${chopped} 棵${stopped ? '（体力不足提前停止）' : ''}` };
+}
+
+// ---- 清障：区域内石头/树枝/杂草/树，按工具分组处理 ----
+async function flowClear(sendSSE, port, args) {
+  if (args.x1 === undefined || args.y1 === undefined || args.x2 === undefined || args.y2 === undefined) {
+    return { ok: false, summary: '清障需要提供区域坐标 x1,y1,x2,y2' };
+  }
+  const rect = flowNormRect(Number(args.x1), Number(args.y1), Number(args.x2), Number(args.y2));
+  const tiles = (await flowScanRegion(sendSSE, port, rect)).slice(0, FLOW_MAX_OBSTACLES);
+  const groups = { Axe: [], Pickaxe: [], Scythe: [] };
+  for (const t of tiles) {
+    const obj = t.object || '';
+    const terrain = t.terrain || '';
+    if (terrain.startsWith('Tree:') || obj === 'Twig') groups.Axe.push(t);
+    else if (obj === 'Stone' || obj === 'Boulder' || obj === 'Meteorite') groups.Pickaxe.push(t);
+    else if (obj === 'Weeds' || obj === 'Fiber' || obj === 'Grass') groups.Scythe.push(t);
+  }
+  const total = groups.Axe.length + groups.Pickaxe.length + groups.Scythe.length;
+  if (!total) return { ok: true, summary: '这片区域没有需要清理的障碍' };
+  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
+  let cleared = 0;
+  for (const [tool, list] of Object.entries(groups)) {
+    if (!list.length) continue;
+    await flowCmd(sendSSE, port, 'select', { name: tool });
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      if (tool === 'Axe' && (t.terrain || '').startsWith('Tree:')) {
+        for (let h = 0; h < 12; h++) { await flowCmd(sendSSE, port, 'use', {}); await flowSleep(500); }
+      } else {
+        await flowUseAt(sendSSE, port, loc, t.x, t.y, null, { delay: 380 });
+      }
+      cleared++;
+      sendSSE({ stardewFlow: `清障 ${cleared}/${total}` });
+    }
+  }
+  return { ok: true, summary: `清障完成：清理 ${cleared} 处障碍（石头 ${groups.Pickaxe.length}、树/枝 ${groups.Axe.length}、杂草 ${groups.Scythe.length}）` };
+}
+
+// ---- 收菜：区域内可收获的作物 ----
+async function flowHarvest(sendSSE, port, args) {
+  if (args.x1 === undefined || args.y1 === undefined || args.x2 === undefined || args.y2 === undefined) {
+    return { ok: false, summary: '收菜需要提供区域坐标 x1,y1,x2,y2' };
+  }
+  const rect = flowNormRect(Number(args.x1), Number(args.y1), Number(args.x2), Number(args.y2));
+  const tiles = (await flowScanRegion(sendSSE, port, rect)).filter(t => t.harvestable).slice(0, FLOW_MAX_TILES);
+  if (!tiles.length) return { ok: true, summary: '这片区域没有可收获的作物' };
+  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
+  let got = 0;
+  for (let i = 0; i < tiles.length; i++) {
+    await flowInteractAt(sendSSE, port, loc, tiles[i].x, tiles[i].y);
+    got++;
+    if ((i + 1) % 10 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `收菜 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
+  }
+  return { ok: true, summary: `收获完成：采摘 ${got} 格作物` };
+}
+
+// ---- 撸动物：未撸过的动物 ----
+async function flowPet(sendSSE, port, args) {
+  const st = await flowState(sendSSE, port);
+  const loc = st.location?.name || 'Farm';
+  const data = await flowRaw(sendSSE, port, 'animals', {});
+  const animals = (data && data.animals) || [];
+  const unpetted = animals.filter(a => !a.wasPetToday).slice(0, FLOW_MAX_ANIMALS);
+  if (!animals.length) return { ok: true, summary: '附近没有动物（去农场、畜棚或鸡舍看看）' };
+  if (!unpetted.length) return { ok: true, summary: `动物都撸过了（共 ${animals.length} 只）` };
+  let done = 0;
+  for (let i = 0; i < unpetted.length; i++) {
+    const a = unpetted[i];
+    await flowInteractAt(sendSSE, port, loc, a.x, a.y);
+    done++;
+    sendSSE({ stardewFlow: `撸动物 ${Math.min(i + 1, unpetted.length)}/${unpetted.length}` });
+  }
+  return { ok: true, summary: `撸了 ${done} 只动物（共 ${animals.length} 只）` };
+}
+
+// ---- 购物：传送到商店并购买 ----
+const FLOW_SEED_IDS = {
+  'parsnip seeds': 472, 'potato seeds': 475, 'cauliflower seeds': 474, 'bean starter': 473,
+  'kale seeds': 476, 'melon seeds': 479, 'tomato seeds': 477, 'blueberry seeds': 481,
+  'hot pepper seeds': 478, 'corn seeds': 487, 'pumpkin seeds': 490, 'yam seeds': 485,
+  'eggplant seeds': 488, 'wheat seeds': 484, 'sunflower seeds': 431, 'strawberry seeds': 745
+};
+async function flowBuy(sendSSE, port, args) {
+  const location = String(args.location || 'SeedShop');
+  const id = String(args.id || args.item || '').trim();
+  const quantity = Math.max(1, Number(args.quantity || args.count || 1));
+  if (!id) return { ok: false, summary: '购买需要提供 id（物品ID）或 item（物品名）' };
+  const resolved = FLOW_SEED_IDS[id.toLowerCase()] || (id.startsWith('(') || /^\d+$/.test(id) ? id : null);
+  if (!resolved) return { ok: false, summary: `不认识物品「${id}」，请提供数字 ID` };
+  sendSSE({ stardewFlow: `购物：去 ${location} 买 ${quantity} 个` });
+  await flowCmd(sendSSE, port, 'warp', { location });
+  await flowSleep(400);
+  const r = await flowCmd(sendSSE, port, 'buy', { id: resolved, quantity });
+  return r.ok
+    ? { ok: true, summary: `已购买 ${quantity} 个（ID ${resolved}）` }
+    : { ok: false, summary: `购买失败：${r.error || '未知'}` };
+}
+
+// ---- 钓鱼：开启自动钓鱼 ----
+async function flowFish(sendSSE, port, args) {
+  const r = await flowCmd(sendSSE, port, 'fishbot', { action: 'on' });
+  return r.ok
+    ? { ok: true, summary: '已开启自动钓鱼（fishbot），钓到会进背包，需要停就喊我' }
+    : { ok: false, summary: `开启钓鱼失败：${r.error || '未知'}` };
+}
+
+async function runStardewFlow(args, sendSSE, port) {
+  const flow = String(args.flow || '').toLowerCase();
+  try {
+    switch (flow) {
+      case 'farm': case 'plant': case '种田': return await flowFarm(sendSSE, port, args);
+      case 'water': case '浇水': return await flowWater(sendSSE, port, args);
+      case 'chop': case '砍树': return await flowChop(sendSSE, port, args);
+      case 'clear': case '清障': return await flowClear(sendSSE, port, args);
+      case 'harvest': case '收菜': case '收获': return await flowHarvest(sendSSE, port, args);
+      case 'pet': case '撸动物': return await flowPet(sendSSE, port, args);
+      case 'buy': case '购物': return await flowBuy(sendSSE, port, args);
+      case 'fish': case '钓鱼': return await flowFish(sendSSE, port, args);
+      default: return { ok: false, summary: `未知流程「${flow}」。可用：farm(种田)/water(浇水)/chop(砍树)/clear(清障)/harvest(收菜)/pet(撸动物)/buy(购物)/fish(钓鱼)` };
+    }
+  } catch (e) {
+    return { ok: false, summary: `流程中断：${e.message}` };
+  }
+}
+
 // 浏览器上报连接简报时，把星露谷状态/动态追加到系统提示（只在本轮生效）
 async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
   const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
   const state = String(brief.stateBrief || '').trim();
-  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- stardew_action 参数放顶层，不要嵌套：{"action":"warp","location":"Farm"}、{"action":"emote","id":24}、{"action":"move","x":8,"y":9}、{"action":"chat","message":"..."}\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
+  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 批量任务（种一片地/浇一片地/砍树/收菜/清障/撸动物/买东西/钓鱼）**直接调用 stardew_flow 打包执行**，参数放顶层（{"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}），流程跑完会返回结果摘要；**不要**用 stardew_action 一格一格走\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- stardew_action 参数放顶层，不要嵌套：{"action":"warp","location":"Farm"}、{"action":"emote","id":24}、{"action":"move","x":8,"y":9}、{"action":"chat","message":"..."}\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
 }
 
 // 把一天（或一段）的农场短时日志交给 AI 压缩成事件单元进记忆海：低价值直接丢弃
