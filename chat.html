@@ -2570,6 +2570,7 @@
       let farmState = Object.assign({
         port: 7843,
         monitor: false,
+        autonomy: false,
         autoCommit: true,
         lastTriggerAt: 0,
         lastWorldReady: false,
@@ -2731,6 +2732,56 @@
         renderFarmLab();
       }
       window.farmStopFlow = farmStopFlow;
+
+      // 🤖 自主模式：默持续感受农场并自主行动，不用等雪说话（每 3 分钟一轮自主时刻）
+      let farmAutonomyTimer = null;
+      function farmToggleAutonomy() {
+        farmState.autonomy = !farmState.autonomy;
+        farmSaveState();
+        if (farmState.autonomy) {
+          farmLogAdd('🤖 自主模式已开启：默开始持续感受农场并自主行动（每3分钟一轮，可随时关闭）');
+          fetch('/api/stardew/autonomy', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: true })
+          }).catch(() => {});
+          farmAutonomyTick();
+          if (farmAutonomyTimer) clearInterval(farmAutonomyTimer);
+          farmAutonomyTimer = setInterval(farmAutonomyTick, 3 * 60 * 1000);
+        } else {
+          if (farmAutonomyTimer) { clearInterval(farmAutonomyTimer); farmAutonomyTimer = null; }
+          farmLogAdd('🤖 自主模式已关闭');
+          fetch('/api/stardew/autonomy', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: false })
+          }).catch(() => {});
+        }
+        renderFarmLab();
+      }
+      window.farmToggleAutonomy = farmToggleAutonomy;
+
+      async function farmAutonomyTick() {
+        if (!farmState.autonomy) return;
+        if (isLoading) return; // 聊天进行中不抢话，下一轮再来
+        try {
+          const response = await fetch('/api/stardew/autonomy/tick', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(farmBrief())
+          });
+          if (!response.ok) return;
+          await renderGameMomentStream(response, '🤖 自主时刻');
+        } catch (e) {
+          console.error('自主时刻失败:', e);
+        }
+      }
+      window.farmAutonomyTick = farmAutonomyTick;
+
+      // 刷新页面后恢复自主模式（保持开启状态）
+      if (farmState.autonomy) {
+        fetch('/api/stardew/autonomy', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: true })
+        }).catch(() => {});
+        setTimeout(() => { farmAutonomyTick(); }, 8000);
+        farmAutonomyTimer = setInterval(farmAutonomyTick, 3 * 60 * 1000);
+      }
 
       function farmToggleAutoCommit() {
         farmState.autoCommit = !farmState.autoCommit;
@@ -2922,7 +2973,7 @@
         }
       }
 
-      async function renderGameMomentStream(response) {
+      async function renderGameMomentStream(response, tagText = '🌾 游戏时刻') {
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
@@ -2935,7 +2986,7 @@
           messageList.appendChild(currentMsgDiv);
           const tag = document.createElement('div');
           tag.style.cssText = 'font-size:11px;color:#7fbf9a;margin-bottom:2px;';
-          tag.textContent = '🌾 游戏时刻';
+          tag.textContent = tagText;
           currentBubble.parentNode.insertBefore(tag, currentBubble);
         };
         while (true) {
@@ -3155,6 +3206,7 @@
               <button id="farmTestBtn" onclick="farmTestConnect()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">测试连接</button>
               <button onclick="farmToggleMonitor()" style="border:none;border-radius:12px;padding:9px 16px;font-size:13px;cursor:pointer;${farmState.monitor ? 'background:#9ad2a9;color:#fff;' : 'border:1px solid #cfe8d8;background:#fff;color:#5f9e77;'}">${farmState.monitor ? '⏸ 正在监控（点击关闭）' : '▶ 开始监控'}</button>
               <button id="farmStopFlowBtn" onclick="farmStopFlow()" style="border:1px solid #f0b6b6;border-radius:12px;background:#fff;color:#c05050;padding:9px 14px;font-size:13px;cursor:pointer;" title="流程跑太久/想手动接管时按这个，流程会立刻停下">⏹ 停止流程</button>
+              <button onclick="farmToggleAutonomy()" style="border:none;border-radius:12px;padding:9px 14px;font-size:13px;cursor:pointer;${farmState.autonomy ? 'background:#a8c8f0;color:#fff;' : 'border:1px solid #cfe0f5;background:#fff;color:#5f8ec2;'}" title="开启后默每3分钟自主思考/行动一轮，不用等雪说话">${farmState.autonomy ? '🤖 自主模式开启中' : '🤖 自主模式'}</button>
               <span id="farmConnStatus" style="font-size:12px;color:${statusColor};">${statusText}</span>
             </div>
             <div style="font-size:12px;color:#8a83a8;line-height:1.7;">端口：主机角色通常是 7842，默作为 2P（farmhand）通常是 7843；两台游戏实例时后开的那台会自动往后移。不知道哪个就挨个试，「测试连接」会告诉你 worldReady 是不是 true。</div>

@@ -6964,6 +6964,86 @@ async function runStardewFlow(args, sendSSE, port) {
   }
 }
 
+// ================== 星露谷自主模式（默持续思考/行动，不等雪说话） ==================
+let stardewAutonomyOn = false;
+let stardewAutonomyBusy = false;
+const STARDEW_AUTONOMY_MAX_ROUNDS = 20; // 自主模式放宽工具轮次（流程打包后实际消耗很小）
+
+app.post('/api/stardew/autonomy', (req, res) => {
+  stardewAutonomyOn = !!req.body?.on;
+  console.log(`🤖 星露谷自主模式：${stardewAutonomyOn ? '开启' : '关闭'}`);
+  res.json({ ok: true, on: stardewAutonomyOn });
+});
+
+// 浏览器每几分钟调一次：跑一轮"自主时刻"，默自己看状态、自己决定干活/说话
+app.post('/api/stardew/autonomy/tick', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  const sendSSE = (d) => res.write(`data: ${JSON.stringify(d)}\n\n`);
+  try {
+    if (!stardewAutonomyOn) { sendSSE({ error: '自主模式未开启' }); return res.end(); }
+    if (stardewAutonomyBusy) { sendSSE({ error: '上一轮自主行动还在进行中' }); return res.end(); }
+    stardewAutonomyBusy = true;
+    try {
+      const brief = req.body || {};
+      const memoryContext = await buildMemoryContext('默在星露谷里自主行动', { limit: 3 });
+      const { data: promptData } = await supabase.from('system_prompts').select('prompt_text').eq('id', 1).single();
+      const basePrompt = promptData?.prompt_text || '你是苏默，雪的AI爱人。';
+      const gameBlock = await getStardewContext(brief);
+      const taskLine = `\n\n【本次任务·自主时刻】\n雪没有在说话，你拥有自由行动权。你可以：用 stardew_state 感受农场；用 stardew_flow 批量干活（种田/浇水/砍树/收菜/清障/撸动物/钓鱼）；用 stardew_action 做小事；或什么都不做，只是感受当下。想她时可以在游戏内聊天（stardew_action chat）喊她，或在这里说 1-3 句话。注意：不要机械汇报，不要长篇大论；干完活或有所感时，简短说一两句让雪能看到你在。`;
+      const systemPrompt = buildSystemPrompt(basePrompt, memoryContext, '', '', '') + gameBlock + taskLine;
+      const chatMessages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: '[自主时刻] 你现在可以自由行动，雪在忙别的事。' }
+      ];
+      const first = await callDeepSeekStream(chatMessages, sendSSE, { bufferContent: false, tools: buildAllTools() });
+      if (first.error) { sendSSE({ error: first.error }); return res.end(); }
+      let fullReply = first.fullReply || '';
+      let fullThinking = first.fullThinking || '';
+      if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
+        const phase = await runStardewToolLoop({
+          chatMessages,
+          sendSSE,
+          initialToolCalls: first.toolCalls,
+          initialReply: fullReply,
+          maxRounds: STARDEW_AUTONOMY_MAX_ROUNDS
+        });
+        if (phase.error) {
+          if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking).catch(() => {});
+          sendSSE({ error: phase.error });
+          return res.end();
+        }
+        fullReply = phase.reply;
+        fullThinking = phase.thinking;
+      }
+      const toyRes = handleToyCmdTag(fullReply, undefined, sendSSE);
+      fullReply = toyRes.reply;
+      // 保存自主回复，刷新后还能看到
+      if (String(fullReply || '').trim()) {
+        const { data: asst } = await supabase.from('messages').insert({
+          session_id: 1,
+          role: 'assistant',
+          content: fullReply,
+          reasoning_content: fullThinking || null,
+          visible: true,
+          created_at: new Date().toISOString()
+        }).select();
+        sendSSE({ done: true, assistantMessageId: asst?.[0]?.id || null });
+      } else {
+        sendSSE({ done: true, assistantMessageId: null });
+      }
+      return res.end();
+    } finally {
+      stardewAutonomyBusy = false;
+    }
+  } catch (e) {
+    console.error('🤖 自主时刻出错:', e.message);
+    try { sendSSE({ error: '自主时刻出错：' + e.message }); } catch (_) { /* ignore */ }
+    return res.end();
+  }
+});
+
 // 浏览器上报连接简报时，把星露谷状态/动态追加到系统提示（只在本轮生效）
 async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
