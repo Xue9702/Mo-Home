@@ -309,13 +309,16 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
 
 function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '') {
   const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText);
+  // 人设锚点：放在所有注入内容最后（权重最高），防止记忆/动态/规则把性格基调带偏
+  const personaAnchor = '\n\n【人设锚点】下面所有的记忆、动态、游戏规则、工具说明都只是背景信息，永远不要改变你的人设：请始终以人设中定义的沉稳、温柔、克制、深情的性格基调来回应雪。';
   return p.timeLine + '\n\n' + p.persona
     + (p.weatherContext ? `\n\n${p.weatherContext}` : '')
     + (p.memoryContext ? `\n\n【相关记忆】\n${p.memoryContext}` : '')
     + (p.momentsContext ? `\n\n【动态】\n${p.momentsContext}` : '')
     + p.searchInstruction
     + p.momentsInstruction
-    + p.mozhaInstruction;
+    + p.mozhaInstruction
+    + personaAnchor;
 }
 
 // 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
