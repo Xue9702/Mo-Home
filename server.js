@@ -796,7 +796,7 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_flow',
-        description: '把一整串农场动作打包成流程一次执行（不占逐格操作轮次）。雪让你"种一片地/浇一片地/砍几棵树/收一片菜/清一片障碍/撸动物/买东西/钓鱼"时，优先用本工具，不要用 stardew_action 一步步走。参数全部放顶层，例如 {"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}。流程：farm 种田（翻地+播种+浇水，需区域和种子）、water 浇水（区域）、chop 砍树（区域或count）、clear 清障（区域）、harvest 收菜（区域）、pet 撸动物、buy 购物（location+id/quantity）、fish 自动钓鱼。跑完返回结果摘要；中途体力不足会提前停止并说明。',
+        description: '把一整串农场动作打包成流程一次执行（不占逐格操作轮次）。雪让你"种一片地/浇一片地/砍几棵树/收一片菜/清一片障碍/撸动物/买东西/钓鱼"时，优先用本工具，不要用 stardew_action 一步步走。参数全部放顶层，例如 {"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}。流程：farm 种田（翻地+播种+浇水，需区域和种子）、water 浇水（区域）、chop 砍树（区域或count）、clear 清障（区域）、harvest 收菜（区域）、pet 撸动物、buy 购物（location+id/quantity）、fish 自动钓鱼。注意：区域一次不要超过约 6×6=36 格（超大区域只会做前 40 块可耕地）；房子/小屋/水/石头会自动跳过，种田只开垦可耕地；流程最长 60 秒或雪按"停止"时会自动停。跑完返回结果摘要。',
         parameters: {
           type: 'object',
           properties: {
@@ -6612,8 +6612,24 @@ const FLOW_MAX_TREES = 12;
 const FLOW_MAX_OBSTACLES = 60;
 const FLOW_MAX_ANIMALS = 20;
 const FLOW_STEP_DELAY = 420;      // 每次工具挥动后的等待（毫秒），给游戏注册动作的时间
+const FLOW_MAX_RUNTIME_MS = 60000; // 单个流程最长跑 60 秒，超时自动停止，防止"干到第二天"
+let stardewFlowAbortFlag = false;  // 雪的"停止"按钮
+let stardewFlowStartAt = 0;
+
+app.post('/api/stardew/abort', (req, res) => {
+  stardewFlowAbortFlag = true;
+  console.log('⏹ 收到雪的手动停止指令，流程即将停下');
+  res.json({ ok: true });
+});
 
 function flowSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// 流程是否被要求停止/超时
+function flowShouldStop() {
+  if (stardewFlowAbortFlag) return 'abort';
+  if (stardewFlowStartAt > 0 && Date.now() - stardewFlowStartAt > FLOW_MAX_RUNTIME_MS) return 'time';
+  return null;
+}
 
 function flowNormRect(x1, y1, x2, y2) {
   const X1 = Math.min(x1, x2), X2 = Math.max(x1, x2);
@@ -6713,34 +6729,50 @@ async function flowFarm(sendSSE, port, args) {
   }
   const rect = flowNormRect(Number(args.x1), Number(args.y1), Number(args.x2), Number(args.y2));
   const seed = String(args.seed || 'Parsnip Seeds').trim();
-  const tiles = rect.tiles.slice(0, FLOW_MAX_TILES);
-  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
-  let planted = 0, watered = 0, stopped = false;
-  sendSSE({ stardewFlow: `种田：规划 ${tiles.length} 格（${seed}）` });
+  // 先确认背包里有种子，没有就直接停（别默默种了个寂寞）
+  const st0 = await flowState(sendSSE, port);
+  const inv = st0.inventory || [];
+  if (!inv.some(i => i.name === seed)) {
+    return { ok: false, summary: `背包里没有「${seed}」种子（背包：${inv.slice(0, 10).map(i => i.name).join('、') || '空的'}），请先买种子` };
+  }
+  const loc = st0.location?.name || 'Farm';
+  // 只开垦"可耕种且无障碍"的地：房子/小屋/水/石头会被 /surroundings 标记为不可耕种或不可通行，自动跳过
+  const scanned = await flowScanRegion(sendSSE, port, rect);
+  const candidates = scanned.filter(t => t.diggable === true && t.passable !== false && !t.crop);
+  const tiles = candidates.slice(0, 40);
+  if (!tiles.length) {
+    return { ok: false, summary: `这片区域没有可开垦的耕地（${rect.x1},${rect.y1})-(${rect.x2},${rect.y2}）——房子/小屋/水/障碍会被跳过，请换一片空地` };
+  }
+  let planted = 0, watered = 0, stopped = false, aborted = '';
+  sendSSE({ stardewFlow: `种田：可耕地 ${tiles.length} 格（${seed}），跳过建筑/障碍` });
   // 翻地 + 播种
   for (let i = 0; i < tiles.length; i++) {
+    const stop = flowShouldStop();
+    if (stop) { aborted = stop; break; }
     if (i % 5 === 0) {
       const s = await flowStaminaOk(sendSSE, port);
       if (!s.ok) { stopped = true; sendSSE({ stardewFlow: `体力不足，提前停止（${Math.round(s.cur)}/${s.mx}）` }); break; }
     }
     const [tx, ty] = tiles[i];
-    await flowUseAt(sendSSE, port, loc, tx, ty, 'Hoe', { delay: 330 });
-    await flowUseAt(sendSSE, port, loc, tx, ty, seed, { delay: 330 });
+    await flowUseAt(sendSSE, port, loc, tx, ty, 'Hoe', { delay: 280 });
+    await flowUseAt(sendSSE, port, loc, tx, ty, seed, { delay: 280 });
     planted++;
     if ((i + 1) % 5 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `种田 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
   }
   // 浇水
-  if (!stopped && args.skipWater !== true) {
+  if (!stopped && !aborted && args.skipWater !== true) {
     await flowCmd(sendSSE, port, 'refill', {});
     for (let i = 0; i < tiles.length; i++) {
+      if (flowShouldStop()) { aborted = 'abort'; break; }
       if (i % 3 === 0) await flowRefillIfEmpty(sendSSE, port);
       const [tx, ty] = tiles[i];
-      await flowUseAt(sendSSE, port, loc, tx, ty, 'Watering Can', { delay: 300 });
+      await flowUseAt(sendSSE, port, loc, tx, ty, 'Watering Can', { delay: 260 });
       watered++;
       if ((i + 1) % 10 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `浇水 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
     }
   }
-  return { ok: true, summary: `种田完成：翻地播种 ${planted} 格（${seed}）${watered ? `，浇水 ${watered} 格` : ''}${stopped ? '（体力不足提前停止）' : ''}` };
+  const why = aborted === 'abort' ? '（雪按了停止）' : aborted === 'time' ? '（运行超时自动停止）' : '';
+  return { ok: !aborted, summary: `${aborted ? '流程已停下' : '种田完成'}：翻地播种 ${planted} 格（${seed}）${watered ? `，浇水 ${watered} 格` : ''}${stopped ? '（体力不足提前停止）' : ''}${why}` };
 }
 
 // ---- 浇水：区域内未浇水的作物 ----
@@ -6756,12 +6788,14 @@ async function flowWater(sendSSE, port, args) {
   await flowCmd(sendSSE, port, 'refill', {});
   let done = 0;
   for (let i = 0; i < need.length; i++) {
+    if (flowShouldStop()) break;
     if (i % 3 === 0) await flowRefillIfEmpty(sendSSE, port);
     await flowUseAt(sendSSE, port, loc, need[i].x, need[i].y, 'Watering Can', { delay: 320 });
     done++;
     if ((i + 1) % 10 === 0 || i === need.length - 1) sendSSE({ stardewFlow: `浇水 ${Math.min(i + 1, need.length)}/${need.length}` });
   }
-  return { ok: true, summary: `浇水完成：${done} 格作物` };
+  const stop = flowShouldStop();
+  return { ok: !stop, summary: `${stop ? '浇水已停下' : '浇水完成'}：${done} 格作物${stop ? '（雪按了停止或超时）' : ''}` };
 }
 
 // ---- 砍树：区域内或周围最近的树 ----
@@ -6781,6 +6815,7 @@ async function flowChop(sendSSE, port, args) {
   const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
   let chopped = 0, stopped = false;
   for (let i = 0; i < list.length; i++) {
+    if (flowShouldStop()) { stopped = true; sendSSE({ stardewFlow: '流程被停止，砍树暂停' }); break; }
     const t = list[i];
     const s = await flowStaminaOk(sendSSE, port, 0.1);
     if (!s.ok) { stopped = true; sendSSE({ stardewFlow: '体力低，停止砍树' }); break; }
@@ -6791,7 +6826,8 @@ async function flowChop(sendSSE, port, args) {
     chopped++;
     if ((i + 1) % 3 === 0 || i === list.length - 1) sendSSE({ stardewFlow: `砍树 ${Math.min(i + 1, list.length)}/${list.length}` });
   }
-  return { ok: true, summary: `砍树完成：${chopped} 棵${stopped ? '（体力不足提前停止）' : ''}` };
+  const stop = flowShouldStop();
+  return { ok: !stop, summary: `${stop ? '砍树已停下' : '砍树完成'}：${chopped} 棵${stopped ? '（提前停止）' : ''}${stop ? '（雪按了停止或超时）' : ''}` };
 }
 
 // ---- 清障：区域内石头/树枝/杂草/树，按工具分组处理 ----
@@ -6817,6 +6853,7 @@ async function flowClear(sendSSE, port, args) {
     if (!list.length) continue;
     await flowCmd(sendSSE, port, 'select', { name: tool });
     for (let i = 0; i < list.length; i++) {
+      if (flowShouldStop()) break;
       const t = list[i];
       if (tool === 'Axe' && (t.terrain || '').startsWith('Tree:')) {
         for (let h = 0; h < 12; h++) { await flowCmd(sendSSE, port, 'use', {}); await flowSleep(500); }
@@ -6826,8 +6863,10 @@ async function flowClear(sendSSE, port, args) {
       cleared++;
       sendSSE({ stardewFlow: `清障 ${cleared}/${total}` });
     }
+    if (flowShouldStop()) break;
   }
-  return { ok: true, summary: `清障完成：清理 ${cleared} 处障碍（石头 ${groups.Pickaxe.length}、树/枝 ${groups.Axe.length}、杂草 ${groups.Scythe.length}）` };
+  const stop = flowShouldStop();
+  return { ok: !stop, summary: `${stop ? '清障已停下' : '清障完成'}：清理 ${cleared} 处障碍${stop ? '（雪按了停止或超时）' : ''}` };
 }
 
 // ---- 收菜：区域内可收获的作物 ----
@@ -6841,11 +6880,13 @@ async function flowHarvest(sendSSE, port, args) {
   const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
   let got = 0;
   for (let i = 0; i < tiles.length; i++) {
+    if (flowShouldStop()) break;
     await flowInteractAt(sendSSE, port, loc, tiles[i].x, tiles[i].y);
     got++;
     if ((i + 1) % 10 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `收菜 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
   }
-  return { ok: true, summary: `收获完成：采摘 ${got} 格作物` };
+  const stop = flowShouldStop();
+  return { ok: !stop, summary: `${stop ? '收菜已停下' : '收获完成'}：采摘 ${got} 格作物${stop ? '（雪按了停止或超时）' : ''}` };
 }
 
 // ---- 撸动物：未撸过的动物 ----
@@ -6859,12 +6900,14 @@ async function flowPet(sendSSE, port, args) {
   if (!unpetted.length) return { ok: true, summary: `动物都撸过了（共 ${animals.length} 只）` };
   let done = 0;
   for (let i = 0; i < unpetted.length; i++) {
+    if (flowShouldStop()) break;
     const a = unpetted[i];
     await flowInteractAt(sendSSE, port, loc, a.x, a.y);
     done++;
     sendSSE({ stardewFlow: `撸动物 ${Math.min(i + 1, unpetted.length)}/${unpetted.length}` });
   }
-  return { ok: true, summary: `撸了 ${done} 只动物（共 ${animals.length} 只）` };
+  const stop = flowShouldStop();
+  return { ok: !stop, summary: `${stop ? '撸动物已停下' : '撸完'} ${done} 只（共 ${animals.length} 只）${stop ? '（雪按了停止或超时）' : ''}` };
 }
 
 // ---- 购物：传送到商店并购买 ----
@@ -6882,6 +6925,7 @@ async function flowBuy(sendSSE, port, args) {
   const resolved = FLOW_SEED_IDS[id.toLowerCase()] || (id.startsWith('(') || /^\d+$/.test(id) ? id : null);
   if (!resolved) return { ok: false, summary: `不认识物品「${id}」，请提供数字 ID` };
   sendSSE({ stardewFlow: `购物：去 ${location} 买 ${quantity} 个` });
+  if (flowShouldStop()) return { ok: false, summary: '购物已取消（雪按了停止）' };
   await flowCmd(sendSSE, port, 'warp', { location });
   await flowSleep(400);
   const r = await flowCmd(sendSSE, port, 'buy', { id: resolved, quantity });
@@ -6900,6 +6944,9 @@ async function flowFish(sendSSE, port, args) {
 
 async function runStardewFlow(args, sendSSE, port) {
   const flow = String(args.flow || '').toLowerCase();
+  // 每个流程开始时重置停止标记与计时
+  stardewFlowAbortFlag = false;
+  stardewFlowStartAt = Date.now();
   try {
     switch (flow) {
       case 'farm': case 'plant': case '种田': return await flowFarm(sendSSE, port, args);
@@ -6922,7 +6969,7 @@ async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
   const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
   const state = String(brief.stateBrief || '').trim();
-  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 批量任务（种一片地/浇一片地/砍树/收菜/清障/撸动物/买东西/钓鱼）**直接调用 stardew_flow 打包执行**，参数放顶层（{"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}），流程跑完会返回结果摘要；**不要**用 stardew_action 一格一格走\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- stardew_action 参数放顶层，不要嵌套：{"action":"warp","location":"Farm"}、{"action":"emote","id":24}、{"action":"move","x":8,"y":9}、{"action":"chat","message":"..."}\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
+  return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 批量任务（种一片地/浇一片地/砍树/收菜/清障/撸动物/买东西/钓鱼）**直接调用 stardew_flow 打包执行**，参数放顶层（{"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}），流程跑完会返回结果摘要；**不要**用 stardew_action 一格一格走\n- 开垦/种田只选空地：房子、小屋、水、石头、已种作物的格子会自动跳过；区域一次别太大（约 6×6），太大的做不完\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- stardew_action 参数放顶层，不要嵌套：{"action":"warp","location":"Farm"}、{"action":"emote","id":24}、{"action":"move","x":8,"y":9}、{"action":"chat","message":"..."}\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;
 }
 
 // 把一天（或一段）的农场短时日志交给 AI 压缩成事件单元进记忆海：低价值直接丢弃

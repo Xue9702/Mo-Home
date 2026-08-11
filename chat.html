@@ -2654,6 +2654,9 @@
           if (Array.isArray(n.farmers) && n.farmers.length) {
             parts.push(`角色:${n.farmers.map(f => `${f.name}(${f.x},${f.y})`).join('、')}`);
           }
+          if (Array.isArray(n.buildings) && n.buildings.length) {
+            parts.push(`建筑:${n.buildings.map(b => `${b.name}(${b.x},${b.y})${b.w}x${b.h}`).join('、')}`);
+          }
           if (Array.isArray(n.terrain) && n.terrain.length) {
             const dirt = n.terrain.filter(x => x && x.tilled);
             const withCrop = dirt.filter(x => x.crop);
@@ -2706,6 +2709,28 @@
         if (farmState.monitor) farmPoll();
       }
       window.farmToggleMonitor = farmToggleMonitor;
+
+      // ⏹ 停止正在跑的农场流程：告诉服务器停止，流程会在下一步停下并把控制权还给雪
+      async function farmStopFlow() {
+        const btn = document.getElementById('farmStopFlowBtn');
+        if (btn) { btn.textContent = '⏹ 正在停止…'; btn.disabled = true; }
+        try {
+          const r = await fetch('/api/stardew/abort', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          const j = await r.json().catch(() => null);
+          farmLogAdd(j && j.ok ? '⏹ 已发送停止指令，流程即将停下' : '⏹ 停止指令发送失败，请再点一次');
+        } catch (e) {
+          farmLogAdd('⏹ 停止指令发送失败：' + ((e && e.message) || e));
+        }
+        setTimeout(() => {
+          if (btn) { btn.textContent = '⏹ 停止流程'; btn.disabled = false; }
+        }, 2500);
+        renderFarmLab();
+      }
+      window.farmStopFlow = farmStopFlow;
 
       function farmToggleAutoCommit() {
         farmState.autoCommit = !farmState.autoCommit;
@@ -3129,6 +3154,7 @@
               <button onclick="farmSetPort()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:12px;cursor:pointer;">设端口</button>
               <button id="farmTestBtn" onclick="farmTestConnect()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:9px 18px;font-size:13px;cursor:pointer;">测试连接</button>
               <button onclick="farmToggleMonitor()" style="border:none;border-radius:12px;padding:9px 16px;font-size:13px;cursor:pointer;${farmState.monitor ? 'background:#9ad2a9;color:#fff;' : 'border:1px solid #cfe8d8;background:#fff;color:#5f9e77;'}">${farmState.monitor ? '⏸ 正在监控（点击关闭）' : '▶ 开始监控'}</button>
+              <button id="farmStopFlowBtn" onclick="farmStopFlow()" style="border:1px solid #f0b6b6;border-radius:12px;background:#fff;color:#c05050;padding:9px 14px;font-size:13px;cursor:pointer;" title="流程跑太久/想手动接管时按这个，流程会立刻停下">⏹ 停止流程</button>
               <span id="farmConnStatus" style="font-size:12px;color:${statusColor};">${statusText}</span>
             </div>
             <div style="font-size:12px;color:#8a83a8;line-height:1.7;">端口：主机角色通常是 7842，默作为 2P（farmhand）通常是 7843；两台游戏实例时后开的那台会自动往后移。不知道哪个就挨个试，「测试连接」会告诉你 worldReady 是不是 true。</div>
