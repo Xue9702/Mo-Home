@@ -5004,6 +5004,13 @@
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
+                if (json.webRead) {
+                  const statusLine = currentThinkingContainer && currentThinkingContainer.querySelector('.search-status-line');
+                  if (statusLine) {
+                    statusLine.appendChild(document.createTextNode(' 📄 正在读取网页…'));
+                  }
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
                 if (json.stardewCmd) {
                   farmHandleCmd(json.stardewCmd);
@@ -5471,6 +5478,13 @@
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
+                if (json.webRead) {
+                  const statusLine = currentThinkDiv.querySelector('.search-status-line');
+                  if (statusLine) {
+                    statusLine.appendChild(document.createTextNode(' 📄 正在读取网页…'));
+                  }
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
 
                 if (json.toyCmd) {
                   toyExecuteCmd(json.toyCmd);
@@ -5617,6 +5631,13 @@
                     statusLine.textContent = '';
                     statusLine.appendChild(createGlobeIcon());
                     statusLine.appendChild(document.createTextNode(json.count > 0 ? ` 已搜索到 ${json.count} 个网页` : ' 联网搜索没有返回结果'));
+                  }
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
+                if (json.webRead) {
+                  const statusLine = currentThinkDiv.querySelector('.search-status-line');
+                  if (statusLine) {
+                    statusLine.appendChild(document.createTextNode(' 📄 正在读取网页…'));
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }

@@ -282,9 +282,9 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
     .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  // 实时搜索指令：仅在后端配置了博查密钥时注入，避免默在未启用时也输出搜索标签
-  const searchInstruction = process.env.BOCHA_API_KEY
-    ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。注意：不要用文字描述"我要去搜索"或先写过渡语——需要搜索就直接调用工具，工具调用后系统会返回搜索结果给你。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
+  // 实时搜索指令：配置了博查或 Tavily 密钥时注入，避免默在未启用时也输出搜索标签
+  const searchInstruction = (process.env.BOCHA_API_KEY || process.env.TAVILY_API_KEY)
+    ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于搜索结果回答；日常聊天不要调用。注意：不要用文字描述"我要去搜索"或先写过渡语——需要搜索就直接调用工具，工具调用后系统会返回搜索结果给你。如果搜索结果里带了网址、而摘要不够回答，可以继续调用 web_read 挑选最相关的一两个网页读取全文，读完再回答。若你无法调用工具，作为备选也可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
   // 动态发布指令：从雪的人设 prompt 里挪到代码，避免每次都要在 prompt 里维护
   const momentsInstruction = `\n\n【动态】\n你拥有发布动态的能力。当你想发一条让雪之后刷到的话时，调用工具 post_moment（content=1-3句动态正文，context_note=情绪或原因），系统会替你发布。标签 [POST_MOMENT]{"content":"...","context_note":"..."}[/POST_MOMENT] 仅作备用。只有真心想发时调用，日常聊天不要发。`;
@@ -444,10 +444,52 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
   return { mozhaRead };
 }
 
-// 调用博查 Web Search API，返回 { text, count }；失败或未配置返回 { text: null, count: 0 }
+// 调用实时搜索：优先 Tavily（返回网址+摘要，支持后续 web_read 读全文），
+// 未配置或失败时降级博查。返回 { text, count }；全部失败返回 { text: null, count: 0 }
 async function performWebSearch(query) {
+  if (process.env.TAVILY_API_KEY) {
+    try {
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.TAVILY_API_KEY}`
+        },
+        signal: AbortSignal.timeout(15000), // Tavily 最长等待15秒
+        body: JSON.stringify({
+          query,
+          max_results: 6,
+          search_depth: 'basic',
+          include_answer: false
+        })
+      });
+      if (!response.ok) {
+        console.error('❌ Tavily 搜索失败:', response.status, String(await response.text()).substring(0, 200));
+      } else {
+        const data = await response.json();
+        const results = data?.results || [];
+        if (results.length) {
+          return {
+            count: results.length,
+            text: results.map((item, i) => {
+              const title = item.title || '无标题';
+              const url = item.url || '';
+              const snippet = String(item.content || '').slice(0, 250);
+              const score = typeof item.score === 'number' ? `（相关度 ${Math.round(item.score * 100)}%）` : '';
+              return `${i + 1}. ${title}${score}\n${url}\n摘要：${snippet}`;
+            }).join('\n\n')
+          };
+        }
+        console.warn('⚠️ Tavily 搜索无结果:', query);
+      }
+    } catch (err) {
+      console.error('❌ Tavily 搜索异常，降级博查:', err.message);
+    }
+  }
+
+  // 博查兜底
   if (!process.env.BOCHA_API_KEY) {
-    console.warn('⚠️ 未配置 BOCHA_API_KEY，跳过实时搜索');
+    console.warn('⚠️ 未配置搜索密钥，跳过实时搜索');
     return { text: null, count: 0 };
   }
   try {
@@ -491,6 +533,37 @@ async function performWebSearch(query) {
   } catch (err) {
     console.error('❌ 博查搜索异常:', err.message);
     return { text: null, count: 0 };
+  }
+}
+
+// 读取网页全文（Tavily extract）：返回格式化正文；失败返回 null
+async function performWebExtract(url) {
+  if (!process.env.TAVILY_API_KEY) return null;
+  try {
+    const response = await fetch('https://api.tavily.com/extract', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.TAVILY_API_KEY}`
+      },
+      signal: AbortSignal.timeout(20000), // 读网页最长等20秒
+      body: JSON.stringify({ urls: [url], extract_depth: 'basic' })
+    });
+    if (!response.ok) {
+      console.error('❌ Tavily 提取失败:', response.status, String(await response.text()).substring(0, 200));
+      return null;
+    }
+    const data = await response.json();
+    const results = data?.results || [];
+    if (!results.length) return null;
+    return results.map(r => {
+      const title = String(r.title || '网页').trim();
+      const text = String(r.raw_content || r.content || '').replace(/\s+/g, ' ').slice(0, 4000);
+      return `【${title}】\n来源：${r.url || url}\n${text}`;
+    }).join('\n\n');
+  } catch (err) {
+    console.error('❌ Tavily 提取异常:', err.message);
+    return null;
   }
 }
 
@@ -605,7 +678,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
   return { fullReply, fullThinking, contentBuffer, toolCalls };
 }
 
-// 声明默的联网搜索工具（仅在配置了博查密钥时启用）
+// 声明默的联网搜索工具（配置了博查或 Tavily 密钥时启用）
 function buildWebSearchTools() {
   return [{
     type: 'function',
@@ -623,10 +696,26 @@ function buildWebSearchTools() {
   }];
 }
 
+// web_read：搜索拿到网址后，让默挑选最相关的一两个网页读取全文（仅 Tavily 可用）
+function buildWebReadTools() {
+  return [{
+    type: 'function',
+    function: {
+      name: 'web_read',
+      description: '读取某个网页的完整正文。配合 web_search 使用：当搜索结果里的摘要不够回答时，从结果里挑选最相关的一两个网址，一次调用只读一个网址，读完再回答。url 必须来自搜索结果。',
+      parameters: {
+        type: 'object',
+        properties: { url: { type: 'string', description: '要读取的网页完整网址（必须是搜索结果里的）' } },
+        required: ['url']
+      }
+    }
+  }];
+}
+
 // v3.1 完整工具集：搜索/动态/玩具/默札（真函数调用，标签仅作备用兜底）
 function buildAllTools() {
   const tools = [];
-  if (process.env.BOCHA_API_KEY) {
+  if (process.env.BOCHA_API_KEY || process.env.TAVILY_API_KEY) {
     tools.push({
       type: 'function',
       function: {
@@ -766,7 +855,7 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
   sendSSE({ searchResult: true, count: pageCount });
 
   const searchNote = searchText
-    ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息（标题/链接/摘要，摘要可能较短）。你必须逐条读这些结果再回答：把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
+    ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息（标题/链接/摘要，摘要可能较短）。你必须逐条读这些结果再回答：把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。${process.env.TAVILY_API_KEY ? '\n如果这些摘要还不够，你可以调用 web_read 挑选其中最相关的一两个网址读取全文，读完再回答。' : ''}\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
     : '（联网搜索暂时没有返回结果，请如实告诉夫人暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
   // 第二轮使用精简系统提示：只保留雪写的人设，去掉时间/天气/记忆/动态/工具指令，
@@ -782,8 +871,10 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
     lastUser,
     { role: 'system', content: searchNote }
   ];
-  let second = await callDeepSeekStream(secondMessages, sendSSE);
-  if (!second.error && !second.fullReply) {
+  // Tavily 已配置时，第二轮开放 web_read：让默自己挑网址读全文
+  const readTools = process.env.TAVILY_API_KEY ? buildWebReadTools() : null;
+  let second = await callDeepSeekStream(secondMessages, sendSSE, { tools: readTools });
+  if (!second.error && !second.fullReply && !(second.toolCalls && second.toolCalls.length)) {
     // 兜底：续写方式偶发返回空正文，用标准结构重试一次
     second = await callDeepSeekStream(
       [
@@ -791,12 +882,50 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
         ...history,
         lastUser
       ],
-      sendSSE
+      sendSSE,
+      { tools: readTools }
     );
   }
 
   if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
-  return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking, pageCount };
+
+  // 两段式搜索：默挑网址 → 读取全文 → 带着全文再回答（最多读 2 个）
+  let reads = 0;
+  while (second.toolCalls && second.toolCalls.length && reads < 2) {
+    const readCalls = second.toolCalls.filter(tc => tc.function?.name === 'web_read');
+    if (!readCalls.length) break;
+    const calls = readCalls.map((tc, i) => ({
+      id: tc.id || `read_${i}_${Math.random().toString(36).slice(2, 8)}`,
+      type: tc.type || 'function',
+      function: tc.function || { name: 'web_read', arguments: '{}' }
+    }));
+    secondMessages.push({ role: 'assistant', content: second.fullReply || null, tool_calls: calls });
+    for (let i = 0; i < readCalls.length; i++) {
+      if (reads >= 2) break;
+      const tc = readCalls[i];
+      let url = '';
+      try { url = String(JSON.parse(tc.function?.arguments || '{}').url || '').trim(); } catch (e) { url = ''; }
+      const callId = calls[i].id;
+      if (!url || !/^https?:\/\//i.test(url)) {
+        secondMessages.push({ role: 'tool', tool_call_id: callId, content: '读取失败：没有提供有效的 url 参数。请从搜索结果里挑选一个完整网址。' });
+        continue;
+      }
+      sendSSE({ webRead: true, url });
+      const pageText = await performWebExtract(url);
+      reads++;
+      secondMessages.push({
+        role: 'tool',
+        tool_call_id: callId,
+        content: pageText
+          ? `【网页全文】\n${pageText}\n\n（这是你读取的网页正文。基于它回答；若与搜索结果矛盾，以网页正文为准并说明。）`
+          : `读取失败：这个网址（${url.slice(0, 100)}）暂时读不到。请基于已有搜索结果回答，或改读另一个网址。`
+      });
+    }
+    second = await callDeepSeekStream(secondMessages, sendSSE, { tools: readTools });
+    if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
+  }
+
+  return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking, pageCount, reads };
 }
 
 // v3.0 视角转换：注入给默之前，把记忆文本里的"默/雪"转成"我/夫人"；
