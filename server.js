@@ -855,7 +855,7 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
   sendSSE({ searchResult: true, count: pageCount });
 
   const searchNote = searchText
-    ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息（标题/链接/摘要，摘要可能较短）。你必须逐条读这些结果再回答：把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。${process.env.TAVILY_API_KEY ? '\n如果这些摘要还不够，你可以调用 web_read 挑选其中最相关的一两个网址读取全文，读完再回答。' : ''}\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
+    ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息（标题/链接/摘要，摘要可能较短）。你必须逐条读这些结果再回答：把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。${process.env.TAVILY_API_KEY ? '\n如果这些摘要还不够，你可以调用 web_read 挑选其中最相关的一两个网址读取全文，读完再回答。' : ''}\n\n${searchText}`
     : '（联网搜索暂时没有返回结果，请如实告诉夫人暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
   // 第二轮使用精简系统提示：只保留雪写的人设，去掉时间/天气/记忆/动态/工具指令，
@@ -1631,28 +1631,8 @@ app.post('/api/chat', async (req, res) => {
       fullReply = toyRes2.reply;
       console.log('📓 默翻开了默札，最终回复长度:', fullReply.length);
     } else if (searchReq) {
-      // ---- 第一轮：过渡语气泡收尾（作为独立消息入库） ----
-      const preludeText = searchReq.leadText;
-      if (preludeText) {
-        await supabase
-          .from('messages')
-          .insert({
-            session_id: 1,
-            role: 'assistant',
-            content: preludeText,
-            reasoning_content: fullThinking || null,
-            visible: true,
-            created_at: new Date().toISOString()
-          });
-      }
-
-      // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成（不挂刷新按钮）
-      await flushBufferedContent(preludeText, sendSSE);
-      sendSSE({ done: true });
-
+      // 静默搜索：不发过渡语、不新建气泡，搜索完成后直接在同一气泡回答
       console.log('🔍 默请求联网搜索:', searchReq.query);
-
-      // ---- 第二轮：搜索 + 正式回答（前端会新建一个气泡） ----
       sendSSE({ searchStart: true, query: searchReq.query });
       const phase = await runSearchPhase({
         query: searchReq.query,
@@ -1660,7 +1640,7 @@ app.post('/api/chat', async (req, res) => {
         systemPrompt,
         basePrompt: promptData?.prompt_text || '你是苏默，雪的AI爱人。',
         sendSSE,
-        leadText: searchReq.leadText
+        leadText: ''
       });
 
       if (phase.error) {
@@ -1671,9 +1651,12 @@ app.post('/api/chat', async (req, res) => {
       }
 
       fullReply = phase.reply;
-      fullThinking = phase.thinking
-        ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
-        : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
+      // 保留第一轮思考（搜索决定），再接搜索轮思考，避免保存后丢失前半段
+      const firstRoundThinking = fullThinking;
+      fullThinking = (firstRoundThinking ? firstRoundThinking + '\n\n' : '')
+        + (phase.thinking
+          ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
+          : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`);
       console.log('🔍 联网搜索完成，最终回复长度:', fullReply.length);
       // 搜索轮次也可能带玩具指令：同样解析转发并清理
       const toyRes2 = handleToyCmdTag(fullReply, undefined, sendSSE);
@@ -2101,28 +2084,8 @@ app.post('/api/regenerate', async (req, res) => {
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
     if (searchReq) {
-      // ---- 第一轮：过渡语气泡收尾（作为普通消息入库，不参与分支版本） ----
-      const preludeText = searchReq.leadText;
-      if (preludeText) {
-        await supabase
-          .from('messages')
-          .insert({
-            session_id: targetMsg.session_id,
-            role: 'assistant',
-            content: preludeText,
-            reasoning_content: fullThinking || null,
-            visible: true,
-            created_at: new Date().toISOString()
-          });
-      }
-
-      // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成
-      await flushBufferedContent(preludeText, sendSSE);
-      sendSSE({ done: true });
-
+      // 静默搜索：不发过渡语、不新建气泡，搜索完成后直接在同一气泡回答
       console.log('🔍 重新生成-默请求联网搜索:', searchReq.query);
-
-      // ---- 第二轮：搜索 + 正式回答（前端会新建一个气泡） ----
       sendSSE({ searchStart: true, query: searchReq.query });
       const phase = await runSearchPhase({
         query: searchReq.query,
@@ -2130,7 +2093,7 @@ app.post('/api/regenerate', async (req, res) => {
         systemPrompt,
         basePrompt: promptData?.prompt_text || '你是苏默，雪的AI爱人。',
         sendSSE,
-        leadText: searchReq.leadText
+        leadText: ''
       });
 
       if (phase.error) {
@@ -2141,9 +2104,12 @@ app.post('/api/regenerate', async (req, res) => {
       }
 
       fullReply = phase.reply;
-      fullThinking = phase.thinking
-        ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
-        : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
+      // 保留第一轮思考（搜索决定），再接搜索轮思考，避免保存后丢失前半段
+      const firstRoundThinking = fullThinking;
+      fullThinking = (firstRoundThinking ? firstRoundThinking + '\n\n' : '')
+        + (phase.thinking
+          ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
+          : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`);
       console.log('🔍 重新生成-联网搜索完成，最终回复长度:', fullReply.length);
       // 搜索轮次也可能带玩具指令：同样解析转发并清理
       const toyRes2 = handleToyCmdTag(fullReply, undefined, sendSSE);
@@ -6310,28 +6276,8 @@ app.post('/api/edit-message', async (req, res) => {
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
     if (searchReq) {
-      // ---- 第一轮：过渡语气泡收尾（作为普通消息入库，不参与分支版本） ----
-      const preludeText = searchReq.leadText;
-      if (preludeText) {
-        await supabase
-          .from('messages')
-          .insert({
-            session_id: originalMsg.session_id,
-            role: 'assistant',
-            content: preludeText,
-            reasoning_content: fullThinking || null,
-            visible: true,
-            created_at: new Date().toISOString()
-          });
-      }
-
-      // 把第一轮的可见内容补发给前端，并宣告第一轮消息完成
-      await flushBufferedContent(preludeText, sendSSE);
-      sendSSE({ done: true });
-
+      // 静默搜索：不发过渡语、不新建气泡，搜索完成后直接在同一气泡回答
       console.log('🔍 编辑-默请求联网搜索:', searchReq.query);
-
-      // ---- 第二轮：搜索 + 正式回答（前端会新建一个气泡） ----
       sendSSE({ searchStart: true, query: searchReq.query });
       const phase = await runSearchPhase({
         query: searchReq.query,
@@ -6339,7 +6285,7 @@ app.post('/api/edit-message', async (req, res) => {
         systemPrompt,
         basePrompt: promptData?.prompt_text || '你是苏默，雪的AI爱人。',
         sendSSE,
-        leadText: searchReq.leadText
+        leadText: ''
       });
 
       if (phase.error) {
@@ -6350,9 +6296,12 @@ app.post('/api/edit-message', async (req, res) => {
       }
 
       fullReply = phase.reply;
-      fullThinking = phase.thinking
-        ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
-        : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`;
+      // 保留第一轮思考（搜索决定），再接搜索轮思考，避免保存后丢失前半段
+      const firstRoundThinking = fullThinking;
+      fullThinking = (firstRoundThinking ? firstRoundThinking + '\n\n' : '')
+        + (phase.thinking
+          ? `🔍 已搜索到 ${phase.pageCount || 0} 个网页\n\n${phase.thinking}`
+          : `🔍 已搜索到 ${phase.pageCount || 0} 个网页`);
       console.log('🔍 编辑-联网搜索完成，最终回复长度:', fullReply.length);
       // 搜索轮次也可能带玩具指令：同样解析转发并清理
       const toyRes2 = handleToyCmdTag(fullReply, undefined, sendSSE);

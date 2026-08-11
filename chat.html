@@ -4984,10 +4984,13 @@
                   (currentThinkBody || currentThinkingContainer).textContent = fullThinking;
                 }
                 if (json.searchStart) {
-                  // 第一轮气泡已收尾：新建一条消息承载“搜索状态 + 第二轮思考 + 正式回答”
-                  const m2 = createAssistantStreamMessage();
-                  currentMsgDiv = m2.msg; currentThinkingContainer = m2.thinkDiv; currentAssistantBubble = m2.bubble;
-                  messageList.appendChild(currentMsgDiv);
+                  // 静默搜索：不新建气泡，把搜索状态行挂进当前思考区，同一气泡里直接回答
+                  if (!currentThinkingContainer) {
+                    currentThinkingContainer = document.createElement('div');
+                    currentThinkingContainer.className = 'thinking-content';
+                    currentThinkingContainer.style.display = 'block';
+                    currentMsgDiv.insertBefore(currentThinkingContainer, currentAssistantBubble);
+                  }
                   const block = setupSearchStatusBlock(currentThinkingContainer);
                   currentThinkBody = block.thinkBody;
                   searchPhaseActive = true;
@@ -5007,7 +5010,7 @@
                 if (json.webRead) {
                   const statusLine = currentThinkingContainer && currentThinkingContainer.querySelector('.search-status-line');
                   if (statusLine) {
-                    statusLine.appendChild(document.createTextNode(' 📄 正在读取网页…'));
+                    statusLine.appendChild(document.createTextNode(' 📄 正在查看网页…'));
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
@@ -5440,10 +5443,12 @@
                 }
 
                 if (json.searchStart) {
-                  // 第一轮气泡已收尾：新建一条消息承载“搜索状态 + 第二轮思考 + 正式回答”
-                  const m2 = createAssistantStreamMessage();
-                  currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
-                  messageList.appendChild(currentMsgDiv);
+                  // 静默搜索：不新建气泡，同一气泡里继续（思考→搜索状态→回答）
+                  if (!currentMsgDiv || !currentThinkDiv) {
+                    const m2 = createAssistantStreamMessage();
+                    currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+                    messageList.appendChild(currentMsgDiv);
+                  }
                   const block = setupSearchStatusBlock(currentThinkDiv);
                   currentThinkBody = block.thinkBody;
                   searchPhaseActive = true;
@@ -5481,7 +5486,7 @@
                 if (json.webRead) {
                   const statusLine = currentThinkDiv.querySelector('.search-status-line');
                   if (statusLine) {
-                    statusLine.appendChild(document.createTextNode(' 📄 正在读取网页…'));
+                    statusLine.appendChild(document.createTextNode(' 📄 正在查看网页…'));
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
@@ -5614,10 +5619,7 @@
                   (currentThinkBody || currentThinkDiv).textContent = fullThinking;
                 }
                 if (json.searchStart) {
-                  // 第一轮气泡已收尾：新建一条消息承载“搜索状态 + 第二轮思考 + 正式回答”
-                  const m2 = createAssistantStreamMessage();
-                  currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
-                  messageList.insertBefore(currentMsgDiv, newMsgDiv.nextSibling);
+                  // 静默搜索：不新建气泡，同一气泡里继续（思考→搜索状态→回答）
                   const block = setupSearchStatusBlock(currentThinkDiv);
                   currentThinkBody = block.thinkBody;
                   searchPhaseActive = true;
@@ -5637,7 +5639,7 @@
                 if (json.webRead) {
                   const statusLine = currentThinkDiv.querySelector('.search-status-line');
                   if (statusLine) {
-                    statusLine.appendChild(document.createTextNode(' 📄 正在读取网页…'));
+                    statusLine.appendChild(document.createTextNode(' 📄 正在查看网页…'));
                   }
                   messageList.scrollTop = messageList.scrollHeight;
                 }
