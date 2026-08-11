@@ -460,7 +460,7 @@ async function performWebSearch(query) {
       signal: AbortSignal.timeout(15000), // 博查最长等待15秒，避免卡住整个回复
       body: JSON.stringify({
         query,
-        count: 5,
+        count: 8,
         summary: true,
         freshness: 'noLimit'
       })
@@ -476,15 +476,16 @@ async function performWebSearch(query) {
       console.warn('⚠️ 博查搜索无结果:', query);
       return { text: null, count: 0 };
     }
-    const top = pages.slice(0, 5);
+    const top = pages.slice(0, 8);
     return {
       count: top.length,
       text: top.map((item, i) => {
-      const title = item.name || item.title || '无标题';
-      const url = item.url || '';
-      const snippet = item.summary || item.snippet || item.description || '';
-      const date = item.datePublished ? `（${item.datePublished}）` : '';
-      return `${i + 1}. ${title}${date}\n${url}\n${snippet}`;
+        const title = item.name || item.title || '无标题';
+        const url = item.url || '';
+        const site = item.siteName ? ` · ${item.siteName}` : '';
+        const snippet = String(item.summary || item.snippet || item.description || '').slice(0, 300);
+        const date = item.datePublished ? `（${item.datePublished}）` : '';
+        return `${i + 1}. ${title}${date}${site}\n${url}\n摘要：${snippet}`;
       }).join('\n\n')
     };
   } catch (err) {
@@ -765,7 +766,7 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
   sendSSE({ searchResult: true, count: pageCount });
 
   const searchNote = searchText
-    ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息。你必须基于这些结果回答：从结果中提炼并引用关键内容；如果结果里没有你需要的内容，就如实说"没搜到"，绝对不要编造或脑补。\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
+    ? `【实时搜索结果】\n这是你刚刚通过 web_search 拿到的真实信息（标题/链接/摘要，摘要可能较短）。你必须逐条读这些结果再回答：把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。\n\n${searchText}${leadText ? `\n\n（你刚开口说了：「${leadText.substring(0, 80)}」，请自然地接着这句把回答说完，不要重新开始）` : ''}`
     : '（联网搜索暂时没有返回结果，请如实告诉夫人暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
   // 第二轮使用精简系统提示：只保留雪写的人设，去掉时间/天气/记忆/动态/工具指令，
