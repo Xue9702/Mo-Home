@@ -796,11 +796,11 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'stardew_flow',
-        description: '把一整串农场动作打包成流程一次执行（不占逐格操作轮次）。雪让你"种一片地/浇一片地/砍几棵树/收一片菜/清一片障碍/撸动物/买东西/钓鱼"时，优先用本工具，不要用 stardew_action 一步步走。参数全部放顶层，例如 {"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}。流程：farm 种田（翻地+播种+浇水，需区域和种子）、water 浇水（区域）、chop 砍树（区域或count）、clear 清障（区域）、harvest 收菜（区域）、pet 撸动物、buy 购物（location+id/quantity）、fish 自动钓鱼。注意：区域一次不要超过约 6×6=36 格（超大区域只会做前 40 块可耕地）；房子/小屋/水/石头会自动跳过，种田只开垦可耕地；流程最长 60 秒或雪按"停止"时会自动停。跑完返回结果摘要。',
+        description: '把一整串农场动作打包成流程一次执行（不占逐格操作轮次）。雪让你"种一片地/浇一片地/砍几棵树/收一片菜/清一片障碍/撸动物/买东西/钓鱼/看宝箱/取宝箱物品"时，优先用本工具，不要用 stardew_action 一步步走。参数全部放顶层，例如 {"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}。流程：farm 种田（翻地+播种+浇水，需区域和种子）、water 浇水（区域）、chop 砍树（区域或count）、clear 清障（区域）、harvest 收菜（区域）、pet 撸动物、buy 购物（location+id/quantity）、fish 自动钓鱼、chest 查看宝箱（x,y）、take 取宝箱物品（x,y,name,count）。注意：区域一次不要超过约 10×10（超大区域只会做前 120 块可耕地）；房子/小屋/水/石头会自动跳过，种田只开垦可耕地；雪按"停止"按钮时流程会立刻停下。跑完返回结果摘要。',
         parameters: {
           type: 'object',
           properties: {
-            flow: { type: 'string', enum: ['farm', 'water', 'chop', 'clear', 'harvest', 'pet', 'buy', 'fish'], description: '流程名' },
+            flow: { type: 'string', enum: ['farm', 'water', 'chop', 'clear', 'harvest', 'pet', 'buy', 'fish', 'chest', 'take'], description: '流程名' },
             x1: { type: 'integer', description: '区域左上角 x（格子坐标）' },
             y1: { type: 'integer', description: '区域左上角 y' },
             x2: { type: 'integer', description: '区域右下角 x' },
@@ -6607,14 +6607,13 @@ async function runStardewToolLoop({ chatMessages, sendSSE, initialToolCalls = nu
 }
 
 // ================== 星露谷流程执行器（打包动作，不占模型轮次） ==================
-const FLOW_MAX_TILES = 80;        // 单个流程最多操作的格子数
+const FLOW_MAX_TILES = 120;       // 单个流程最多操作的格子数（宏引擎很快，可以干大点）
 const FLOW_MAX_TREES = 12;
 const FLOW_MAX_OBSTACLES = 60;
 const FLOW_MAX_ANIMALS = 20;
 const FLOW_STEP_DELAY = 420;      // 每次工具挥动后的等待（毫秒），给游戏注册动作的时间
-const FLOW_MAX_RUNTIME_MS = 60000; // 单个流程最长跑 60 秒，超时自动停止，防止"干到第二天"
 let stardewFlowAbortFlag = false;  // 雪的"停止"按钮
-let stardewFlowStartAt = 0;
+let stardewFlowWalkMode = true;    // 走路模式：默像人一样走过去（false=瞬移）
 
 app.post('/api/stardew/abort', (req, res) => {
   stardewFlowAbortFlag = true;
@@ -6624,11 +6623,9 @@ app.post('/api/stardew/abort', (req, res) => {
 
 function flowSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// 流程是否被要求停止/超时
+// 流程是否被要求停止（时间上限已取消，靠"停止"按钮控制）
 function flowShouldStop() {
-  if (stardewFlowAbortFlag) return 'abort';
-  if (stardewFlowStartAt > 0 && Date.now() - stardewFlowStartAt > FLOW_MAX_RUNTIME_MS) return 'time';
-  return null;
+  return stardewFlowAbortFlag ? 'abort' : null;
 }
 
 function flowNormRect(x1, y1, x2, y2) {
@@ -6747,7 +6744,8 @@ async function flowRunMacroChunks(sendSSE, port, steps, label, chunkSize = 24) {
 function flowStandStep(tx, ty) {
   const standY = ty - 1 >= 0 ? ty - 1 : ty + 1;
   const face = ty - 1 >= 0 ? 2 : 0;
-  return { warp: { op: 'warp', x: tx, y: standY }, face: { op: 'face', direction: face } };
+  const op = stardewFlowWalkMode ? 'walk' : 'warp';
+  return { warp: { op, x: tx, y: standY }, face: { op: 'face', direction: face } };
 }
 
 // ---- 种田：翻地 → 播种 → 浇水（蛇形）----
@@ -6968,11 +6966,32 @@ async function flowFish(sendSSE, port, args) {
     : { ok: false, summary: `开启钓鱼失败：${r.error || '未知'}` };
 }
 
+// ---- 宝箱：查看内容 / 拿取物品 ----
+async function flowChest(sendSSE, port, args) {
+  if (args.x === undefined || args.y === undefined) return { ok: false, summary: '查看宝箱需要提供坐标 x,y' };
+  const r = await flowCmd(sendSSE, port, 'chest', { x: args.x, y: args.y }, true);
+  if (!r.ok || !r.result) return { ok: false, summary: '读取宝箱失败：' + (r.error || '未知') };
+  let data = null;
+  try { data = JSON.parse(r.result); } catch (e) { /* ignore */ }
+  if (!data || data.ok === false) return { ok: false, summary: (data && data.error) || '宝箱读取失败' };
+  const items = (data.items || []).map(i => `${i.name}x${i.count}`).join('、');
+  return { ok: true, summary: `宝箱(${args.x},${args.y})：${items || '空的'}（${data.used || 0}/${data.capacity || '?'}格）` };
+}
+
+async function flowTake(sendSSE, port, args) {
+  if (args.x === undefined || args.y === undefined || !args.name) return { ok: false, summary: '拿取宝箱物品需要 x,y 和 name' };
+  const count = Math.max(1, Number(args.count || 1));
+  const r = await flowCmd(sendSSE, port, 'chest/take', { x: args.x, y: args.y, name: args.name, count });
+  if (!r.ok) return { ok: false, summary: '取出失败：' + (r.error || '未知') };
+  let taken = count;
+  try { const j = JSON.parse(r.result); if (j && j.taken) taken = j.taken; } catch (e) { /* ignore */ }
+  return { ok: true, summary: `已从宝箱取出 ${args.name} x${taken}` };
+}
+
 async function runStardewFlow(args, sendSSE, port) {
   const flow = String(args.flow || '').toLowerCase();
   // 每个流程开始时重置停止标记与计时
   stardewFlowAbortFlag = false;
-  stardewFlowStartAt = Date.now();
   try {
     switch (flow) {
       case 'farm': case 'plant': case '种田': return await flowFarm(sendSSE, port, args);
@@ -6983,7 +7002,9 @@ async function runStardewFlow(args, sendSSE, port) {
       case 'pet': case '撸动物': return await flowPet(sendSSE, port, args);
       case 'buy': case '购物': return await flowBuy(sendSSE, port, args);
       case 'fish': case '钓鱼': return await flowFish(sendSSE, port, args);
-      default: return { ok: false, summary: `未知流程「${flow}」。可用：farm(种田)/water(浇水)/chop(砍树)/clear(清障)/harvest(收菜)/pet(撸动物)/buy(购物)/fish(钓鱼)` };
+      case 'chest': case '宝箱': return await flowChest(sendSSE, port, args);
+      case 'take': case '取物': case '拿取': return await flowTake(sendSSE, port, args);
+      default: return { ok: false, summary: `未知流程「${flow}」。可用：farm(种田)/water(浇水)/chop(砍树)/clear(清障)/harvest(收菜)/pet(撸动物)/buy(购物)/fish(钓鱼)/chest(查看宝箱)/take(取宝箱物品)` };
     }
   } catch (e) {
     return { ok: false, summary: `流程中断：${e.message}` };
@@ -7073,6 +7094,8 @@ app.post('/api/stardew/autonomy/tick', async (req, res) => {
 // 浏览器上报连接简报时，把星露谷状态/动态追加到系统提示（只在本轮生效）
 async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
+  // 走路/瞬移模式由星露谷页的按钮控制（每轮简报带过来）
+  stardewFlowWalkMode = brief.walkMode !== false;
   const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
   const state = String(brief.stateBrief || '').trim();
   return `\n\n【星露谷·农场】\n你正连接着星露谷（本地游戏，通过浏览器操控，端口 ${Number(brief.port) || STARDEW_DEFAULT_PORT}）。当前游戏简报：${state || '（未知）'}${log ? `\n最近农场动态：\n${log}` : ''}\n规则：\n- 只有雪聊到农场/星露谷、或你正在农场行动时才调用 stardew_state / stardew_action\n- 批量任务（种一片地/浇一片地/砍树/收菜/清障/撸动物/买东西/钓鱼）**直接调用 stardew_flow 打包执行**，参数放顶层（{"flow":"farm","x1":10,"y1":4,"x2":20,"y2":8,"seed":"Parsnip Seeds"}），流程跑完会返回结果摘要；**不要**用 stardew_action 一格一格走\n- 开垦/种田只选空地：房子、小屋、水、石头、已种作物的格子会自动跳过；区域一次别太大（约 6×6），太大的做不完\n- 当雪让你在农场里做事/走动/拿东西时：直接调用 stardew_action 完成动作（移动用 warp 最稳、走路用 move 指定不同于当前的位置），**不要先反复查看状态**——stardew_state 只在你确实需要确认时才调用一次\n- stardew_action 参数放顶层，不要嵌套：{"action":"warp","location":"Farm"}、{"action":"emote","id":24}、{"action":"move","x":8,"y":9}、{"action":"chat","message":"..."}\n- 禁止连续多次只调用 stardew_state 而不行动；如果雪要求行动，请立刻执行\n- 体力低或快凌晨 2 点就提醒雪或安排睡觉\n- 工具通过浏览器控制本地游戏；如果雪说"没反应"，提醒她去星露谷页确认连接\n- 不要假装已经行动——只有工具返回成功才是真的动了手`;

@@ -2571,6 +2571,7 @@
         port: 7843,
         monitor: false,
         autonomy: false,
+        walkMode: true,
         autoCommit: true,
         lastTriggerAt: 0,
         lastWorldReady: false,
@@ -2658,6 +2659,13 @@
           if (Array.isArray(n.buildings) && n.buildings.length) {
             parts.push(`建筑:${n.buildings.map(b => `${b.name}(${b.x},${b.y})${b.w}x${b.h}`).join('、')}`);
           }
+          if (Array.isArray(d.players) && d.players.length) {
+            const me = (d.player || {}).name;
+            const others = d.players.filter(pl => pl.name !== me);
+            if (others.length) {
+              parts.push(`她:${others.map(pl => `${pl.name}在${pl.location || '?'}(${pl.x},${pl.y})`).join('、')}`);
+            }
+          }
           if (Array.isArray(n.terrain) && n.terrain.length) {
             const dirt = n.terrain.filter(x => x && x.tilled);
             const withCrop = dirt.filter(x => x.crop);
@@ -2733,19 +2741,40 @@
       }
       window.farmStopFlow = farmStopFlow;
 
-      // 🤖 自主模式：默持续感受农场并自主行动，不用等雪说话（每 3 分钟一轮自主时刻）
+      // 🤖 自主模式：默持续感受农场并自主行动，不用等雪说话
+      // 跑完一轮自动接下一轮（间隔约 20 秒）；聊天/流程进行中会自动让路，结束后继续
       let farmAutonomyTimer = null;
+      function farmAutonomySchedule() {
+        if (!farmState.autonomy) return;
+        if (farmAutonomyTimer) clearTimeout(farmAutonomyTimer);
+        farmAutonomyTimer = setTimeout(async () => {
+          farmAutonomyTimer = null;
+          if (!farmState.autonomy) return;
+          if (isLoading) { farmAutonomySchedule(); return; }
+          try {
+            const response = await fetch('/api/stardew/autonomy/tick', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(farmBrief())
+            });
+            if (!response.ok) { farmAutonomySchedule(); return; }
+            await renderGameMomentStream(response, '🤖 自主时刻');
+          } catch (e) {
+            console.error('自主时刻失败:', e);
+          }
+          farmAutonomySchedule();
+        }, 20000);
+      }
+
       function farmToggleAutonomy() {
         farmState.autonomy = !farmState.autonomy;
         farmSaveState();
         if (farmState.autonomy) {
-          farmLogAdd('🤖 自主模式已开启：默开始持续感受农场并自主行动（每3分钟一轮，可随时关闭）');
+          farmLogAdd('🤖 自主模式已开启：默开始持续感受农场并自主行动（可随时关闭）');
           fetch('/api/stardew/autonomy', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: true })
           }).catch(() => {});
-          farmAutonomyTick();
-          if (farmAutonomyTimer) clearInterval(farmAutonomyTimer);
-          farmAutonomyTimer = setInterval(farmAutonomyTick, 3 * 60 * 1000);
+          setTimeout(() => { farmAutonomySchedule(); }, 3000);
         } else {
           if (farmAutonomyTimer) { clearInterval(farmAutonomyTimer); farmAutonomyTimer = null; }
           farmLogAdd('🤖 自主模式已关闭');
@@ -2757,31 +2786,22 @@
       }
       window.farmToggleAutonomy = farmToggleAutonomy;
 
-      async function farmAutonomyTick() {
-        if (!farmState.autonomy) return;
-        if (isLoading) return; // 聊天进行中不抢话，下一轮再来
-        try {
-          const response = await fetch('/api/stardew/autonomy/tick', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(farmBrief())
-          });
-          if (!response.ok) return;
-          await renderGameMomentStream(response, '🤖 自主时刻');
-        } catch (e) {
-          console.error('自主时刻失败:', e);
-        }
-      }
-      window.farmAutonomyTick = farmAutonomyTick;
-
       // 刷新页面后恢复自主模式（保持开启状态）
       if (farmState.autonomy) {
         fetch('/api/stardew/autonomy', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: true })
         }).catch(() => {});
-        setTimeout(() => { farmAutonomyTick(); }, 8000);
-        farmAutonomyTimer = setInterval(farmAutonomyTick, 3 * 60 * 1000);
+        setTimeout(() => { farmAutonomySchedule(); }, 8000);
       }
+
+      // 🚶 走路/⚡ 瞬移模式切换
+      function farmToggleWalk() {
+        farmState.walkMode = farmState.walkMode !== false ? false : true;
+        farmSaveState();
+        farmLogAdd(farmState.walkMode ? '🚶 走路模式：默像人一样走过去' : '⚡ 瞬移模式：默直接传送');
+        renderFarmLab();
+      }
+      window.farmToggleWalk = farmToggleWalk;
 
       function farmToggleAutoCommit() {
         farmState.autoCommit = !farmState.autoCommit;
@@ -2842,7 +2862,8 @@
             fishbot: '/fishbot', key: '/key', craft: '/craft', harvest: '/harvest', store: '/store',
             pause: '/pause', resume: '/resume', give: '/give', money: '/money', heal: '/heal',
             surroundings: '/surroundings', animals: '/animals', machines: '/machines',
-            menu: '/menu', buy: '/buy', refill: '/refill', scan: '/scan', macro: '/macro'
+            menu: '/menu', buy: '/buy', refill: '/refill', scan: '/scan', macro: '/macro',
+            chest: '/chest', 'chest/take': '/chest/take'
           };
           const path = pathMap[action];
           if (!path) return { ok: false, error: `未知动作：${action}` };
@@ -2943,6 +2964,7 @@
         return {
           connected: !!farmState.lastWorldReady,
           port: farmState.port,
+          walkMode: farmState.walkMode !== false,
           log: farmLogLast(8),
           stateBrief: farmState.stateBrief || ''
         };
@@ -3207,6 +3229,7 @@
               <button onclick="farmToggleMonitor()" style="border:none;border-radius:12px;padding:9px 16px;font-size:13px;cursor:pointer;${farmState.monitor ? 'background:#9ad2a9;color:#fff;' : 'border:1px solid #cfe8d8;background:#fff;color:#5f9e77;'}">${farmState.monitor ? '⏸ 正在监控（点击关闭）' : '▶ 开始监控'}</button>
               <button id="farmStopFlowBtn" onclick="farmStopFlow()" style="border:1px solid #f0b6b6;border-radius:12px;background:#fff;color:#c05050;padding:9px 14px;font-size:13px;cursor:pointer;" title="流程跑太久/想手动接管时按这个，流程会立刻停下">⏹ 停止流程</button>
               <button onclick="farmToggleAutonomy()" style="border:none;border-radius:12px;padding:9px 14px;font-size:13px;cursor:pointer;${farmState.autonomy ? 'background:#a8c8f0;color:#fff;' : 'border:1px solid #cfe0f5;background:#fff;color:#5f8ec2;'}" title="开启后默每3分钟自主思考/行动一轮，不用等雪说话">${farmState.autonomy ? '🤖 自主模式开启中' : '🤖 自主模式'}</button>
+              <button onclick="farmToggleWalk()" style="border:1px solid #cfe8d8;border-radius:12px;padding:9px 12px;font-size:13px;cursor:pointer;${farmState.walkMode !== false ? 'background:#e8f7ef;color:#4d8f68;' : 'background:#fff;color:#5f9e77;'}" title="走路=像人一样走过去（流畅）；瞬移=直接传送（更快）">${farmState.walkMode !== false ? '🚶 走路模式' : '⚡ 瞬移模式'}</button>
               <span id="farmConnStatus" style="font-size:12px;color:${statusColor};">${statusText}</span>
             </div>
             <div style="font-size:12px;color:#8a83a8;line-height:1.7;">端口：主机角色通常是 7842，默作为 2P（farmhand）通常是 7843；两台游戏实例时后开的那台会自动往后移。不知道哪个就挨个试，「测试连接」会告诉你 worldReady 是不是 true。</div>
