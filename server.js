@@ -6722,6 +6722,34 @@ async function flowRefillIfEmpty(sendSSE, port) {
   } catch (e) { /* 忽略 */ }
 }
 
+// 把步骤列表分块交给游戏内宏执行（挥动自动检测，无 HTTP 往返、无固定等待）
+async function flowRunMacroChunks(sendSSE, port, steps, label, chunkSize = 24) {
+  let doneSteps = 0;
+  for (let i = 0; i < steps.length; i += chunkSize) {
+    const stop = flowShouldStop();
+    if (stop) return { stopped: true, doneSteps };
+    const chunk = steps.slice(i, i + chunkSize);
+    sendSSE({ stardewFlow: `${label} ${Math.min(i + chunk.length, steps.length)}/${steps.length}` });
+    const r = await flowCmd(sendSSE, port, 'macro', { steps: chunk }, true);
+    if (!r.ok || !r.result) {
+      return { error: '宏执行失败：' + (r.error || '未知') + (r.result ? String(r.result).slice(0, 120) : '') };
+    }
+    doneSteps += chunk.length;
+    // 每 3 块检查一次体力，太低就停
+    if ((i / chunkSize) % 3 === 2) {
+      const s = await flowStaminaOk(sendSSE, port, 0.12);
+      if (!s.ok) return { lowStamina: true, doneSteps, stamina: `${Math.round(s.cur)}/${s.mx}` };
+    }
+  }
+  return { doneSteps };
+}
+
+function flowStandStep(tx, ty) {
+  const standY = ty - 1 >= 0 ? ty - 1 : ty + 1;
+  const face = ty - 1 >= 0 ? 2 : 0;
+  return { warp: { op: 'warp', x: tx, y: standY }, face: { op: 'face', direction: face } };
+}
+
 // ---- 种田：翻地 → 播种 → 浇水（蛇形）----
 async function flowFarm(sendSSE, port, args) {
   if (args.x1 === undefined || args.y1 === undefined || args.x2 === undefined || args.y2 === undefined) {
@@ -6743,36 +6771,31 @@ async function flowFarm(sendSSE, port, args) {
   if (!tiles.length) {
     return { ok: false, summary: `这片区域没有可开垦的耕地（${rect.x1},${rect.y1})-(${rect.x2},${rect.y2}）——房子/小屋/水/障碍会被跳过，请换一片空地` };
   }
-  let planted = 0, watered = 0, stopped = false, aborted = '';
   sendSSE({ stardewFlow: `种田：可耕地 ${tiles.length} 格（${seed}），跳过建筑/障碍` });
-  // 翻地 + 播种
-  for (let i = 0; i < tiles.length; i++) {
-    const stop = flowShouldStop();
-    if (stop) { aborted = stop; break; }
-    if (i % 5 === 0) {
-      const s = await flowStaminaOk(sendSSE, port);
-      if (!s.ok) { stopped = true; sendSSE({ stardewFlow: `体力不足，提前停止（${Math.round(s.cur)}/${s.mx}）` }); break; }
-    }
-    const [tx, ty] = tiles[i];
-    await flowUseAt(sendSSE, port, loc, tx, ty, 'Hoe', { delay: 280 });
-    await flowUseAt(sendSSE, port, loc, tx, ty, seed, { delay: 280 });
-    planted++;
-    if ((i + 1) % 5 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `种田 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
+  // 生成步骤：每格 = 传送+朝向+锄头(挥动)+种子(瞬放)
+  const plantSteps = [];
+  for (const [tx, ty] of tiles) {
+    const pos = flowStandStep(tx, ty);
+    plantSteps.push(pos.warp, pos.face, { op: 'select', name: 'Hoe' }, { op: 'use' }, { op: 'select', name: seed }, { op: 'use' });
   }
+  let result = await flowRunMacroChunks(sendSSE, port, plantSteps, '种田');
+  if (result.error) return { ok: false, summary: result.error };
+  let planted = Math.min(tiles.length, Math.floor(result.doneSteps / 6));
+  if (result.stopped) return { ok: false, summary: `种田已停下：翻地播种 ${planted} 格（${seed}）——雪按了停止或超时` };
+  if (result.lowStamina) return { ok: false, summary: `种田因体力不足停止：已种 ${planted} 格（${seed}），体力 ${result.stamina}` };
   // 浇水
-  if (!stopped && !aborted && args.skipWater !== true) {
-    await flowCmd(sendSSE, port, 'refill', {});
-    for (let i = 0; i < tiles.length; i++) {
-      if (flowShouldStop()) { aborted = 'abort'; break; }
-      if (i % 3 === 0) await flowRefillIfEmpty(sendSSE, port);
-      const [tx, ty] = tiles[i];
-      await flowUseAt(sendSSE, port, loc, tx, ty, 'Watering Can', { delay: 260 });
-      watered++;
-      if ((i + 1) % 10 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `浇水 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
+  let watered = 0;
+  if (args.skipWater !== true) {
+    const waterSteps = [{ op: 'refill' }, { op: 'select', name: 'Watering Can' }];
+    for (const [tx, ty] of tiles) {
+      const pos = flowStandStep(tx, ty);
+      waterSteps.push(pos.warp, pos.face, { op: 'use' });
     }
+    result = await flowRunMacroChunks(sendSSE, port, waterSteps, '浇水');
+    watered = Math.min(tiles.length, Math.max(0, Math.floor((result.doneSteps - 2) / 3)));
+    if (result.error) return { ok: false, summary: `种完 ${planted} 格但浇水失败：${result.error}` };
   }
-  const why = aborted === 'abort' ? '（雪按了停止）' : aborted === 'time' ? '（运行超时自动停止）' : '';
-  return { ok: !aborted, summary: `${aborted ? '流程已停下' : '种田完成'}：翻地播种 ${planted} 格（${seed}）${watered ? `，浇水 ${watered} 格` : ''}${stopped ? '（体力不足提前停止）' : ''}${why}` };
+  return { ok: true, summary: `种田完成：翻地播种 ${planted} 格（${seed}）${watered ? `，浇水 ${watered} 格` : ''}` };
 }
 
 // ---- 浇水：区域内未浇水的作物 ----
@@ -6784,18 +6807,17 @@ async function flowWater(sendSSE, port, args) {
   const tiles = await flowScanRegion(sendSSE, port, rect);
   const need = tiles.filter(t => t.terrain === 'HoeDirt' && !t.watered && t.crop).slice(0, FLOW_MAX_TILES);
   if (!need.length) return { ok: true, summary: '这片区域没有需要浇水的作物' };
-  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
-  await flowCmd(sendSSE, port, 'refill', {});
-  let done = 0;
-  for (let i = 0; i < need.length; i++) {
-    if (flowShouldStop()) break;
-    if (i % 3 === 0) await flowRefillIfEmpty(sendSSE, port);
-    await flowUseAt(sendSSE, port, loc, need[i].x, need[i].y, 'Watering Can', { delay: 320 });
-    done++;
-    if ((i + 1) % 10 === 0 || i === need.length - 1) sendSSE({ stardewFlow: `浇水 ${Math.min(i + 1, need.length)}/${need.length}` });
+  const steps = [{ op: 'refill' }, { op: 'select', name: 'Watering Can' }];
+  for (const t of need) {
+    const pos = flowStandStep(t.x, t.y);
+    steps.push(pos.warp, pos.face, { op: 'use' });
   }
-  const stop = flowShouldStop();
-  return { ok: !stop, summary: `${stop ? '浇水已停下' : '浇水完成'}：${done} 格作物${stop ? '（雪按了停止或超时）' : ''}` };
+  const result = await flowRunMacroChunks(sendSSE, port, steps, '浇水');
+  if (result.error) return { ok: false, summary: result.error };
+  const done = Math.min(need.length, Math.max(0, Math.floor((result.doneSteps - 2) / 3)));
+  if (result.stopped) return { ok: false, summary: `浇水已停下：${done} 格（雪按了停止或超时）` };
+  if (result.lowStamina) return { ok: false, summary: `浇水因体力不足停止：${done} 格` };
+  return { ok: true, summary: `浇水完成：${done} 格作物` };
 }
 
 // ---- 砍树：区域内或周围最近的树 ----
@@ -6812,22 +6834,19 @@ async function flowChop(sendSSE, port, args) {
   }
   const list = trees.slice(0, Number(args.count) || FLOW_MAX_TREES);
   if (!list.length) return { ok: true, summary: '附近没找到树' };
-  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
-  let chopped = 0, stopped = false;
-  for (let i = 0; i < list.length; i++) {
-    if (flowShouldStop()) { stopped = true; sendSSE({ stardewFlow: '流程被停止，砍树暂停' }); break; }
-    const t = list[i];
-    const s = await flowStaminaOk(sendSSE, port, 0.1);
-    if (!s.ok) { stopped = true; sendSSE({ stardewFlow: '体力低，停止砍树' }); break; }
-    await flowStandFacing(sendSSE, port, loc, t.x, t.y);
-    await flowCmd(sendSSE, port, 'select', { name: 'Axe' });
-    for (let h = 0; h < 12; h++) { await flowCmd(sendSSE, port, 'use', {}); await flowSleep(520); }
-    for (let h = 0; h < 6; h++) { await flowCmd(sendSSE, port, 'use', {}); await flowSleep(520); }
-    chopped++;
-    if ((i + 1) % 3 === 0 || i === list.length - 1) sendSSE({ stardewFlow: `砍树 ${Math.min(i + 1, list.length)}/${list.length}` });
+  const steps = [{ op: 'select', name: 'Axe' }];
+  for (const t of list) {
+    const pos = flowStandStep(t.x, t.y);
+    steps.push(pos.warp, pos.face);
+    for (let h = 0; h < 12; h++) steps.push({ op: 'use' });
+    for (let h = 0; h < 6; h++) steps.push({ op: 'use' });
   }
-  const stop = flowShouldStop();
-  return { ok: !stop, summary: `${stop ? '砍树已停下' : '砍树完成'}：${chopped} 棵${stopped ? '（提前停止）' : ''}${stop ? '（雪按了停止或超时）' : ''}` };
+  const result = await flowRunMacroChunks(sendSSE, port, steps, '砍树', 18);
+  if (result.error) return { ok: false, summary: result.error };
+  const chopped = Math.min(list.length, Math.max(0, Math.floor((result.doneSteps - 1) / 18)));
+  if (result.stopped) return { ok: false, summary: `砍树已停下：${chopped} 棵（雪按了停止或超时）` };
+  if (result.lowStamina) return { ok: false, summary: `砍树因体力不足停止：${chopped} 棵` };
+  return { ok: true, summary: `砍树完成：${chopped} 棵` };
 }
 
 // ---- 清障：区域内石头/树枝/杂草/树，按工具分组处理 ----
@@ -6847,26 +6866,25 @@ async function flowClear(sendSSE, port, args) {
   }
   const total = groups.Axe.length + groups.Pickaxe.length + groups.Scythe.length;
   if (!total) return { ok: true, summary: '这片区域没有需要清理的障碍' };
-  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
-  let cleared = 0;
+  const steps = [];
   for (const [tool, list] of Object.entries(groups)) {
     if (!list.length) continue;
-    await flowCmd(sendSSE, port, 'select', { name: tool });
-    for (let i = 0; i < list.length; i++) {
-      if (flowShouldStop()) break;
-      const t = list[i];
+    steps.push({ op: 'select', name: tool });
+    for (const t of list) {
+      const pos = flowStandStep(t.x, t.y);
+      steps.push(pos.warp, pos.face);
       if (tool === 'Axe' && (t.terrain || '').startsWith('Tree:')) {
-        for (let h = 0; h < 12; h++) { await flowCmd(sendSSE, port, 'use', {}); await flowSleep(500); }
+        for (let h = 0; h < 12; h++) steps.push({ op: 'use' });
       } else {
-        await flowUseAt(sendSSE, port, loc, t.x, t.y, null, { delay: 380 });
+        steps.push({ op: 'use' });
       }
-      cleared++;
-      sendSSE({ stardewFlow: `清障 ${cleared}/${total}` });
     }
-    if (flowShouldStop()) break;
   }
-  const stop = flowShouldStop();
-  return { ok: !stop, summary: `${stop ? '清障已停下' : '清障完成'}：清理 ${cleared} 处障碍${stop ? '（雪按了停止或超时）' : ''}` };
+  const result = await flowRunMacroChunks(sendSSE, port, steps, '清障');
+  if (result.error) return { ok: false, summary: result.error };
+  if (result.stopped) return { ok: false, summary: `清障已停下：清理 ${Math.min(total, result.doneSteps)} 处（雪按了停止或超时）` };
+  if (result.lowStamina) return { ok: false, summary: `清障因体力不足停止：清理 ${Math.min(total, result.doneSteps)} 处` };
+  return { ok: true, summary: `清障完成：清理 ${total} 处障碍` };
 }
 
 // ---- 收菜：区域内可收获的作物 ----
@@ -6877,16 +6895,17 @@ async function flowHarvest(sendSSE, port, args) {
   const rect = flowNormRect(Number(args.x1), Number(args.y1), Number(args.x2), Number(args.y2));
   const tiles = (await flowScanRegion(sendSSE, port, rect)).filter(t => t.harvestable).slice(0, FLOW_MAX_TILES);
   if (!tiles.length) return { ok: true, summary: '这片区域没有可收获的作物' };
-  const loc = (await flowState(sendSSE, port)).location?.name || 'Farm';
-  let got = 0;
-  for (let i = 0; i < tiles.length; i++) {
-    if (flowShouldStop()) break;
-    await flowInteractAt(sendSSE, port, loc, tiles[i].x, tiles[i].y);
-    got++;
-    if ((i + 1) % 10 === 0 || i === tiles.length - 1) sendSSE({ stardewFlow: `收菜 ${Math.min(i + 1, tiles.length)}/${tiles.length}` });
+  const steps = [];
+  for (const t of tiles) {
+    const pos = flowStandStep(t.x, t.y);
+    steps.push(pos.warp, pos.face, { op: 'interact' });
   }
-  const stop = flowShouldStop();
-  return { ok: !stop, summary: `${stop ? '收菜已停下' : '收获完成'}：采摘 ${got} 格作物${stop ? '（雪按了停止或超时）' : ''}` };
+  const result = await flowRunMacroChunks(sendSSE, port, steps, '收菜');
+  if (result.error) return { ok: false, summary: result.error };
+  const got = Math.min(tiles.length, Math.floor(result.doneSteps / 3));
+  if (result.stopped) return { ok: false, summary: `收菜已停下：采摘 ${got} 格（雪按了停止或超时）` };
+  if (result.lowStamina) return { ok: false, summary: `收菜因体力不足停止：采摘 ${got} 格` };
+  return { ok: true, summary: `收获完成：采摘 ${got} 格作物` };
 }
 
 // ---- 撸动物：未撸过的动物 ----
@@ -6898,24 +6917,31 @@ async function flowPet(sendSSE, port, args) {
   const unpetted = animals.filter(a => !a.wasPetToday).slice(0, FLOW_MAX_ANIMALS);
   if (!animals.length) return { ok: true, summary: '附近没有动物（去农场、畜棚或鸡舍看看）' };
   if (!unpetted.length) return { ok: true, summary: `动物都撸过了（共 ${animals.length} 只）` };
-  let done = 0;
-  for (let i = 0; i < unpetted.length; i++) {
-    if (flowShouldStop()) break;
-    const a = unpetted[i];
-    await flowInteractAt(sendSSE, port, loc, a.x, a.y);
-    done++;
-    sendSSE({ stardewFlow: `撸动物 ${Math.min(i + 1, unpetted.length)}/${unpetted.length}` });
+  const steps = [];
+  for (const a of unpetted) {
+    const pos = flowStandStep(a.x, a.y);
+    steps.push(pos.warp, pos.face, { op: 'interact' });
   }
-  const stop = flowShouldStop();
-  return { ok: !stop, summary: `${stop ? '撸动物已停下' : '撸完'} ${done} 只（共 ${animals.length} 只）${stop ? '（雪按了停止或超时）' : ''}` };
+  const result = await flowRunMacroChunks(sendSSE, port, steps, '撸动物');
+  if (result.error) return { ok: false, summary: result.error };
+  const done = Math.min(unpetted.length, Math.floor(result.doneSteps / 3));
+  if (result.stopped) return { ok: false, summary: `撸动物已停下：${done} 只（雪按了停止或超时）` };
+  if (result.lowStamina) return { ok: false, summary: `撸动物因体力不足停止：${done} 只` };
+  return { ok: true, summary: `撸了 ${done} 只动物（共 ${animals.length} 只）` };
 }
 
 // ---- 购物：传送到商店并购买 ----
 const FLOW_SEED_IDS = {
   'parsnip seeds': 472, 'potato seeds': 475, 'cauliflower seeds': 474, 'bean starter': 473,
-  'kale seeds': 476, 'melon seeds': 479, 'tomato seeds': 477, 'blueberry seeds': 481,
-  'hot pepper seeds': 478, 'corn seeds': 487, 'pumpkin seeds': 490, 'yam seeds': 485,
-  'eggplant seeds': 488, 'wheat seeds': 484, 'sunflower seeds': 431, 'strawberry seeds': 745
+  'garlic seeds': 476, 'kale seeds': 477, 'rhubarb seeds': 478, 'melon seeds': 479, 'tomato seeds': 480,
+  'blueberry seeds': 481, 'hot pepper seeds': 482, 'wheat seeds': 483, 'radish seeds': 484, 'yam seeds': 485,
+  'corn seeds': 487, 'eggplant seeds': 488, 'artichoke seeds': 489, 'pumpkin seeds': 490,
+  'bok choy seeds': 491, 'amaranth seeds': 492, 'cranberry seeds': 493, 'sunflower seeds': 431,
+  'strawberry seeds': 745, 'ancient fruit seeds': 499, 'tulip seeds': 429, 'poppy seeds': 453,
+  'spangle seeds': 455,
+  'wheat flour': 246, 'sugar': 245, 'oil': 247, 'vinegar': 419, 'coffee bean': 433,
+  'basic fertilizer': 368, 'quality fertilizer': 369, 'speed-gro': 465, 'deluxe speed-gro': 466,
+  'salmonberry': 296, 'blackberry': 410, 'wood': 388, 'stone': 390, 'clay': 330, 'fiber': 771
 };
 async function flowBuy(sendSSE, port, args) {
   const location = String(args.location || 'SeedShop');
