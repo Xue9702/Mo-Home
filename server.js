@@ -4105,12 +4105,15 @@ function formatMemoryTime(iso) {
   }
 }
 
-async function extractAevumMemories(texts, episodeId = null) {
-  if (!Array.isArray(texts) || texts.length === 0) return 0;
+async function extractAevumMemories(texts, episodeId = null, opts = {}) {
+  const debugMode = !!(opts && opts.debug);
+  const dbg = { apiError: null, parseError: null, empty: false, replyPreview: '' };
+  const finish = (n) => debugMode ? { extracted: n, debug: dbg } : n;
+  if (!Array.isArray(texts) || texts.length === 0) return finish(0);
   const dialogue = texts
     .map(t => `${t.role === 'user' ? '雪' : '默'}：${String(t.content || '').slice(0, 800)}`)
     .join('\n');
-  if (!dialogue.trim()) return 0;
+  if (!dialogue.trim()) return finish(0);
 
   const system = `你是 Aevum Memory 的记忆提取器，把对话里值得长期记住的事情提炼成"事件单元"，存进记忆海。
 核心判断：这段对话里发生了什么值得记住的事？没有长期价值就不提取。没有记忆，比错误记忆更好；每次最多 5 条，宁缺毋滥，不凑数。
@@ -4149,18 +4152,20 @@ async function extractAevumMemories(texts, episodeId = null) {
           { role: 'user', content: `请提取这段对话的记忆：\n${dialogue}` }
         ],
         reasoning_effort: 'low',
-        max_tokens: 1500,
+        max_tokens: 3000,
         temperature: 0.4,
         stream: false
       })
     });
     if (!resp.ok) {
       const errText = await resp.text();
-      console.error('Aevum 提取 API 错误:', resp.status, String(errText).substring(0, 200));
-      return 0;
+      dbg.apiError = `${resp.status}: ${String(errText).substring(0, 300)}`;
+      console.error('Aevum 提取 API 错误:', dbg.apiError);
+      return finish(0);
     }
     const data = await resp.json();
     const reply = String(data.choices?.[0]?.message?.content || '');
+    dbg.replyPreview = reply.slice(0, 600);
     const marker = '[AEVUM_MEMORIES]';
     const idx = reply.indexOf(marker);
     let rawText = '';
@@ -4170,8 +4175,9 @@ async function extractAevumMemories(texts, episodeId = null) {
       // 模型偶尔漏掉标记：尝试从回复里直接抠 JSON 对象
       const firstBrace = reply.indexOf('{');
       if (firstBrace === -1) {
+        dbg.parseError = '未找到 [AEVUM_MEMORIES] 标记，也无 JSON 大括号';
         console.warn('Aevum 提取未找到标记，回复前 200 字:', reply.slice(0, 200));
-        return 0;
+        return finish(0);
       }
       rawText = reply.substring(firstBrace);
     }
@@ -4186,8 +4192,9 @@ async function extractAevumMemories(texts, episodeId = null) {
       }
       parsed = JSON.parse(jsonText);
     } catch (e) {
+      dbg.parseError = e.message;
       console.error('Aevum 提取结果解析失败:', e.message, '回复前 300 字:', reply.slice(0, 300));
-      return 0;
+      return finish(0);
     }
     // 回写事件块元信息（topic/intention/emotional_context）
     if (episodeId && parsed && typeof parsed.episode_meta === 'object') {
@@ -4200,6 +4207,7 @@ async function extractAevumMemories(texts, episodeId = null) {
     }
     const memories = Array.isArray(parsed?.memories) ? parsed.memories : [];
     if (!memories.length) {
+      dbg.empty = true;
       console.log('Aevum 提取结果为空（模型判断无长期价值或输出异常），episode:', episodeId);
     }
     let inserted = 0;
@@ -4252,10 +4260,11 @@ async function extractAevumMemories(texts, episodeId = null) {
       inserted++;
     }
     if (inserted > 0) console.log(`🔮 Aevum 提取 ${inserted} 条事件单元进记忆海`);
-    return inserted;
+    return finish(inserted);
   } catch (err) {
+    dbg.parseError = err.message;
     console.error('Aevum 提取失败:', err.message);
-    return 0;
+    return finish(0);
   }
 }
 
@@ -4271,8 +4280,8 @@ app.post('/api/aevum/extract', async (req, res) => {
       .order('id', { ascending: false })
       .limit(limit);
     const texts = (data || []).slice().reverse();
-    const count = await extractAevumMemories(texts);
-    res.json({ ok: true, extracted: count });
+    const result = await extractAevumMemories(texts, null, { debug: true });
+    res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ error: '提取失败' });
   }
