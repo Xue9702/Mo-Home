@@ -583,8 +583,8 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
       model: 'deepseek-v4-flash',
       messages: chatMessages,
       ...(tools ? { tools, tool_choice: 'auto' } : {}),
-      reasoning_effort: 'medium',
-      temperature: 0.7,
+      reasoning_effort: 'high',
+      temperature: 1.0,
       max_tokens: 4096,
       stream: true
     })
