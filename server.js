@@ -4133,7 +4133,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、游戏、其他
 - tags：3-5 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
 - evidence_turns：你概括这段对话时用到的是第几轮到第几轮（从 1 开始数这段对话，例如 [5,7]；只用一轮就 [5,5]）
-- evidence：把用到的那几轮完整原文逐字放进数组（每轮一条，合计最多约 800 字；不要截断省略），供召回时把原文一起带给默
+- evidence：把用到的那几轮原文放进数组（每轮一条，从每轮中选取最相关的连续片段，每轮最多 250 字、最多 2 轮，总长不超过 500 字），供召回时把原文一起带给默
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
 - 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"]}]}`;
@@ -4152,7 +4152,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
           { role: 'user', content: `请提取这段对话的记忆：\n${dialogue}` }
         ],
         reasoning_effort: 'low',
-        max_tokens: 3000,
+        max_tokens: 6000,
         temperature: 0.4,
         stream: false
       })
