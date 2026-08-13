@@ -585,7 +585,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
       ...(tools ? { tools, tool_choice: 'auto' } : {}),
       reasoning_effort: 'high',
       temperature: 1.0,
-      max_tokens: 4096,
+      max_tokens: 8192,
       stream: true
     })
   });
