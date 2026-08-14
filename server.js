@@ -2227,8 +2227,28 @@ app.post('/api/regenerate', async (req, res) => {
       fullReply = stripMozhaTags(fullReply);
       if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
     }
-    // v3.1 函数调用：动态/玩具/默札副作用（重新生成不接续翻阅）
-    await executeSideEffectTools(first.toolCalls, sendSSE);
+    // v3.1 函数调用：动态/玩具/默札副作用；默札翻阅在重新生成时同样接续
+    const toolSideEffects = await executeSideEffectTools(first.toolCalls, sendSSE);
+    if (toolSideEffects.mozhaRead) {
+      await flushBufferedContent(first.contentBuffer, sendSSE);
+      sendSSE({ done: true });
+      sendSSE({ mozhaStart: true });
+      const mPhase = await runMozhaPhase({ chatMessages, systemPrompt, sendSSE });
+      if (mPhase.error) {
+        if (mPhase.reply || mPhase.thinking) await savePartialAssistantGrouped(mPhase.reply, mPhase.thinking, groupId, nextVersion, targetMsg.session_id).catch(() => {});
+        sendSSE({ error: mPhase.error });
+        res.end();
+        return;
+      }
+      if (!mPhase.reply) {
+        sendSSE({ error: '默札翻阅没有生成回复，请再试一次' });
+        res.end();
+        return;
+      }
+      fullReply = mPhase.reply;
+      fullThinking = mPhase.thinking;
+      first.contentBuffer = undefined;
+    }
 
     // 星露谷：重新生成时模型调用农场工具 → 进入"农场行动"接续轮
     if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
@@ -6718,8 +6738,28 @@ app.post('/api/edit-message', async (req, res) => {
       fullReply = stripMozhaTags(fullReply);
       if (first.contentBuffer !== undefined) first.contentBuffer = stripMozhaTags(first.contentBuffer);
     }
-    // v3.1 函数调用：动态/玩具/默札副作用（编辑后生成不接续翻阅）
-    await executeSideEffectTools(first.toolCalls, sendSSE);
+    // v3.1 函数调用：动态/玩具/默札副作用；默札翻阅在编辑后生成时同样接续
+    const toolSideEffects = await executeSideEffectTools(first.toolCalls, sendSSE);
+    if (toolSideEffects.mozhaRead) {
+      await flushBufferedContent(first.contentBuffer, sendSSE);
+      sendSSE({ done: true });
+      sendSSE({ mozhaStart: true });
+      const mPhase = await runMozhaPhase({ chatMessages, systemPrompt, sendSSE });
+      if (mPhase.error) {
+        if (mPhase.reply || mPhase.thinking) await savePartialAssistantGrouped(mPhase.reply, mPhase.thinking, groupId, newVersion, originalMsg.session_id).catch(() => {});
+        sendSSE({ error: mPhase.error });
+        res.end();
+        return;
+      }
+      if (!mPhase.reply) {
+        sendSSE({ error: '默札翻阅没有生成回复，请再试一次' });
+        res.end();
+        return;
+      }
+      fullReply = mPhase.reply;
+      fullThinking = mPhase.thinking;
+      first.contentBuffer = undefined;
+    }
 
     // 星露谷：编辑后生成时模型调用农场工具 → 进入"农场行动"接续轮
     if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
