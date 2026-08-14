@@ -456,8 +456,8 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
     } else if (name === 'set_reminder') {
       const remindAtRaw = String(args.remind_at || '').trim();
       const content = String(args.content || '').trim();
-      const parsed = new Date(remindAtRaw);
-      if (content && !isNaN(parsed.getTime())) {
+      const parsed = parseRemindAt(remindAtRaw);
+      if (content && parsed) {
         const { error } = await supabase.from('reminders').insert({
           content,
           remind_at: parsed.toISOString(),
@@ -891,7 +891,7 @@ function buildAllTools() {
       type: 'function',
       function: {
         name: 'set_reminder',
-        description: '给雪设置一个闹钟提醒：到点后雪的手机会收到系统通知（即使小屋页面没开也会推送到浏览器）。雪说"几点提醒我/设个闹钟/提醒我做事"时调用；remind_at 用完整时间（ISO 格式，北京时间，例如 2026-08-14T21:30:00 表示今晚 9 点半），content 写清楚提醒什么。',
+        description: '给雪设置一个闹钟提醒：到点后雪的手机会收到系统通知（即使小屋页面没开也会推送到浏览器）。雪说"几点提醒我/设个闹钟/提醒我做事"时调用；remind_at 写北京时间、不带时区后缀的完整时间，例如 2026-08-14T21:30:00 表示今晚 9 点半（不要加 Z 或 +00:00，系统会自动按北京时间处理），content 写清楚提醒什么。',
         parameters: {
           type: 'object',
           properties: {
@@ -3475,6 +3475,16 @@ async function getPushSubscriptions() {
   return data || [];
 }
 
+// 已注册推送设备数（诊断/设置页展示用）
+app.get('/api/push/subscriptions/count', async (req, res) => {
+  try {
+    const { count } = await supabase.from('push_subscriptions').select('id', { count: 'exact', head: true });
+    res.json({ count: count || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 async function sendPushAll(subs, title, body, url = '/') {
   if (!PUSH_ENABLED) return 0;
   let sent = 0;
@@ -3494,6 +3504,21 @@ async function sendPushAll(subs, title, body, url = '/') {
 }
 
 // ================== 闹钟（reminders） ==================
+
+// 解析闹钟时间：不带时区后缀的按北京时间（UTC+8）处理，
+// 避免 Render 服务器在 UTC 时区把"17:07 北京"错当成"17:07 UTC"（差 8 小时）
+function parseRemindAt(raw) {
+  const s = String(raw || '').trim().replace(/ /g, 'T');
+  if (!s) return null;
+  // 已显式带时区（Z 或 ±HH:MM）→ 原样解析
+  if (/[zZ]$/.test(s) || /[+-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // 未带时区 → 按北京时间解析
+  const d = new Date(s + '+08:00');
+  return isNaN(d.getTime()) ? null : d;
+}
 
 // 闹钟列表：进行中 + 最近触发的 20 条
 app.get('/api/reminders', async (req, res) => {
@@ -3515,8 +3540,8 @@ app.post('/api/reminders', async (req, res) => {
   const content = String(req.body?.content || '').trim();
   const remindAtRaw = String(req.body?.remind_at || '').trim();
   if (!content) return res.status(400).json({ error: '提醒内容不能为空' });
-  const parsed = new Date(remindAtRaw);
-  if (isNaN(parsed.getTime())) return res.status(400).json({ error: '时间格式无效' });
+  const parsed = parseRemindAt(remindAtRaw);
+  if (!parsed) return res.status(400).json({ error: '时间格式无效' });
   try {
     const { data, error } = await supabase
       .from('reminders')
