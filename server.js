@@ -430,6 +430,18 @@ async function saveMozhaEntry(content) {
 }
 
 // v3.1 函数调用副作用：动态/玩具/默札写入（服务端执行或转发浏览器）；返回是否要翻阅默札
+// 工具事件：实时显示在聊天页（拍一拍样式）+ 存进聊天历史，让默记得自己调用过什么
+async function saveToolEvent(text, sendSSE) {
+  if (!text) return;
+  try { if (sendSSE) sendSSE({ toolEvent: text }); } catch (e) { /* 前端不在线时忽略 */ }
+  await supabase.from('messages').insert({
+    session_id: 1,
+    role: 'assistant',
+    content: `【工具事件】${String(text).slice(0, 120)}`,
+    visible: true
+  }).catch(e => console.error('工具事件保存失败:', e.message));
+}
+
 async function executeSideEffectTools(toolCalls, sendSSE) {
   let mozhaRead = false;
   for (const tc of (toolCalls || [])) {
@@ -442,17 +454,25 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
       if (content) {
         await saveMoMoment(content, String(args.context_note || '').trim() || '默在聊天时决定分享');
         console.log('✅ [Moments] 动态已发布（函数调用）');
+        await saveToolEvent(`📢 你发布了一条动态：「${content.slice(0, 30)}」`, sendSSE);
       }
     } else if (name === 'toy_control') {
       const fn = String(args.fn || '');
       if (['suck', 'stroke', 'vibrate', 'stop'].includes(fn)) {
         sendSSE({ toyCmd: { fn, level: fn === 'stop' ? 0 : Math.max(1, Math.min(8, parseInt(args.level, 10) || 1)) } });
+        const fnName = { suck: '吸吮', stroke: '伸缩', vibrate: '震动', stop: '停止' }[fn] || fn;
+        const level = fn === 'stop' ? '' : (parseInt(args.level, 10) || 1) + ' 档';
+        await saveToolEvent(`🎮 你操作了玩具（${fnName}${level ? ' ' + level : ''}）`, sendSSE);
       }
     } else if (name === 'mozha_write') {
       const content = String(args.content || '').trim();
-      if (content) await saveMozhaEntry(content);
+      if (content) {
+        await saveMozhaEntry(content);
+        await saveToolEvent('📓 你在默札上写下了一页', sendSSE);
+      }
     } else if (name === 'mozha_read') {
       mozhaRead = true;
+      await saveToolEvent('📓 你翻开了默札', sendSSE);
     } else if (name === 'set_reminder') {
       const remindAtRaw = String(args.remind_at || '').trim();
       const content = String(args.content || '').trim();
@@ -468,6 +488,10 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
         } else {
           console.log('✅ 闹钟已设置（工具）:', content, remindAtRaw);
           sendSSE({ remindSet: { content, remind_at: parsed.toISOString() } });
+          const bj = new Date(parsed.getTime() + 8 * 3600 * 1000);
+          const p = n => String(n).padStart(2, '0');
+          const t = `${bj.getUTCFullYear()}-${p(bj.getUTCMonth() + 1)}-${p(bj.getUTCDate())} ${p(bj.getUTCHours())}:${p(bj.getUTCMinutes())}`;
+          await saveToolEvent(`⏰ 你设置了闹钟：「${content.slice(0, 30)}」（${t}）`, sendSSE);
         }
       } else {
         console.warn('⚠️ set_reminder 参数无效:', remindAtRaw, content);
@@ -477,7 +501,10 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
       if (content) {
         const { error } = await supabase.from('todos').insert({ content: content.slice(0, 500), status: 'pending' });
         if (error) console.error('❌ 待办添加失败（工具）:', error.message);
-        else console.log('✅ 待办已添加（工具）:', content);
+        else {
+          console.log('✅ 待办已添加（工具）:', content);
+          await saveToolEvent(`📌 你记下了待办：「${content.slice(0, 30)}」`, sendSSE);
+        }
       }
     } else if (name === 'todo_done') {
       const id = parseInt(args.id, 10);
@@ -488,7 +515,10 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
           .eq('id', id)
           .eq('status', 'pending');
         if (error) console.error('❌ 待办完成失败（工具）:', error.message);
-        else console.log('✅ 待办已完成（工具）: id', id);
+        else {
+          console.log('✅ 待办已完成（工具）: id', id);
+          await saveToolEvent(`✅ 你划掉了待办（#${id}）`, sendSSE);
+        }
       }
     }
   }
@@ -967,6 +997,7 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
   const searchText = search.text || null;
   const pageCount = search.count || 0;
   sendSSE({ searchResult: true, count: pageCount });
+  if (searchText) saveToolEvent(`🔍 你搜索了：「${String(query).slice(0, 30)}」（找到 ${pageCount} 个结果）`, sendSSE).catch(() => {});
 
   const searchNote = searchText
     ? `【实时搜索结果】\n这是第二轮：上一轮你调用了 web_search，以下是它返回的真实结果（标题/链接/摘要，摘要可能较短）。你现在只做两件事：\n1. 逐条读这些结果，把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；\n2. 如果摘要不够回答：${process.env.TAVILY_API_KEY ? '调用 web_read（工具已就绪）挑选其中最相关的一两个网址读取全文，读完再回答；' : ''}如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。\n回答时直接引用结果，不要再解释你搜到了什么，也不要再提搜索过程。\n\n${searchText}`
@@ -1027,6 +1058,7 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
       sendSSE({ webRead: true, url });
       const pageText = await performWebExtract(url);
       reads++;
+      if (pageText) saveToolEvent(`📄 你查看了网页：${String(url).slice(0, 60)}`, sendSSE).catch(() => {});
       secondMessages.push({
         role: 'tool',
         tool_call_id: callId,

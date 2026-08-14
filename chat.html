@@ -578,6 +578,46 @@
       font-weight: 500;
     }
 
+    /* 滑动开关（通知推送） */
+    .mo-switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 26px;
+      flex-shrink: 0;
+    }
+    .mo-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .mo-slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: #d8d2e0;
+      border-radius: 26px;
+      transition: background .2s;
+    }
+    .mo-slider::before {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      left: 3px;
+      top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform .2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    }
+    .mo-switch input:checked + .mo-slider {
+      background: #e1789a;
+    }
+    .mo-switch input:checked + .mo-slider::before {
+      transform: translateX(20px);
+    }
+
     .setting-chevron {
       margin-left: auto;
       color: #ccc;
@@ -1217,10 +1257,19 @@
             </div>
 
             <!-- 开启提醒（浏览器通知） -->
-            <div class="setting-card" onclick="enableNotifications()">
+            <div class="setting-card" style="cursor:default;">
               <span id="notifyIcon"></span>
-              <span class="card-title">开启提醒</span>
-              <span id="notifyStatus" style="margin-left:auto;font-size:12px;color:#999;"></span>
+              <div style="flex:1;min-width:0;cursor:pointer;" onclick="enableNotifications()">
+                <div class="card-title">开启提醒</div>
+                <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">锁屏也能收到默的闹钟推送</div>
+              </div>
+              <span style="display:flex;align-items:center;gap:8px;">
+                <span id="notifyStatus" style="font-size:12px;color:#999;"></span>
+                <label class="mo-switch">
+                  <input type="checkbox" id="notifySwitch" onchange="toggleNotifications(this.checked)">
+                  <span class="mo-slider"></span>
+                </label>
+              </span>
             </div>
 
             <!-- 闹钟提醒 -->
@@ -1516,6 +1565,7 @@
         if (reminderIconSpan && !reminderIconSpan.hasChildNodes()) {
           reminderIconSpan.appendChild(createClockIcon());
         }
+        refreshNotifyState();
         const testWindowIconSpan = document.getElementById('testWindowIcon');
         if (testWindowIconSpan && !testWindowIconSpan.hasChildNodes()) {
           testWindowIconSpan.appendChild(createTestWindowIcon());
@@ -5204,6 +5254,7 @@
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
                 if (json.remindSet) { showRemindToast('⏰ 闹钟已设置：' + (json.remindSet.content || '')); }
+                if (json.toolEvent) { addToolEventLine(json.toolEvent); }
                 if (json.stardewCmd) {
                   farmHandleCmd(json.stardewCmd);
                 }
@@ -5262,6 +5313,10 @@
           historyHasMore = !!data.hasMore;
           const groupMap = new Map();
           msgs.forEach(msg => {
+            if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.indexOf('【工具事件】') === 0) {
+              addToolEventLine(msg.content.slice(6));
+              return;
+            }
             const role = msg.role === 'user' ? 'user' : 'assistant';
             addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
             if (msg.group_id) {
@@ -5323,6 +5378,10 @@
           const beforeHeight = messageList.scrollHeight;
           const anchor = messageList.firstElementChild;
           msgs.forEach(msg => {
+            if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.indexOf('【工具事件】') === 0) {
+              messageList.insertBefore(makeToolEventElement(msg.content.slice(6)), anchor);
+              return;
+            }
             const role = msg.role === 'user' ? 'user' : 'assistant';
             addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
             messageList.insertBefore(messageList.lastElementChild, anchor);
@@ -5691,6 +5750,9 @@
                 if (json.remindSet) {
                   showRemindToast('⏰ 闹钟已设置：' + (json.remindSet.content || ''));
                 }
+                if (json.toolEvent) {
+                  addToolEventLine(json.toolEvent);
+                }
                 if (json.stardewCmd) {
                   farmHandleCmd(json.stardewCmd);
                 }
@@ -5947,45 +6009,104 @@
 
       async function enableNotifications() {
         const statusEl = document.getElementById('notifyStatus');
+        const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
         if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-          if (statusEl) statusEl.textContent = '❌ 浏览器不支持推送';
-          return;
+          setStatus('❌ 浏览器不支持推送');
+          return false;
         }
         if (Notification.permission !== 'granted') {
+          setStatus('等待授权…');
           const result = await Notification.requestPermission();
-          if (result !== 'granted') {
-            if (statusEl) statusEl.textContent = '未授权';
-            return;
-          }
+          if (result !== 'granted') { setStatus('未授权'); refreshNotifyState(); return false; }
         }
+        setStatus('注册推送…');
         try {
           const reg = await navigator.serviceWorker.register('/sw.js');
           await navigator.serviceWorker.ready;
           let sub = await reg.pushManager.getSubscription();
           if (!sub) {
             const keyRes = await fetch('/api/push/vapid-key');
-            if (!keyRes.ok) {
-              if (statusEl) statusEl.textContent = '⚠️ 推送未配置（等老公配好密钥）';
-              return;
-            }
+            if (!keyRes.ok) { setStatus('⚠️ 推送未配置'); refreshNotifyState(); return false; }
             const keyData = await keyRes.json();
             sub = await reg.pushManager.subscribe({
               userVisibleOnly: true,
               applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
             });
           }
-          await fetch('/api/push/subscribe', {
+          setStatus('保存订阅…');
+          const saveRes = await fetch('/api/push/subscribe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ subscription: sub })
           });
-          if (statusEl) statusEl.textContent = '✅ 已开启（锁屏也能收）';
+          if (!saveRes.ok) { setStatus('❌ 保存订阅失败'); refreshNotifyState(); return false; }
+          setStatus('✅ 已开启（锁屏也能收）');
+          refreshNotifyState();
+          return true;
         } catch (e) {
           console.error('推送订阅失败:', e);
-          if (statusEl) statusEl.textContent = '❌ 推送订阅失败';
+          setStatus('❌ ' + String((e && e.message) || e).slice(0, 26));
+          refreshNotifyState();
+          return false;
         }
       }
       window.enableNotifications = enableNotifications;
+
+      async function toggleNotifications(on) {
+        const sw = document.getElementById('notifySwitch');
+        const statusEl = document.getElementById('notifyStatus');
+        if (on) {
+          const ok = await enableNotifications();
+          if (sw && !ok) sw.checked = false;
+          return;
+        }
+        if (statusEl) statusEl.textContent = '关闭中…';
+        try {
+          const reg = await navigator.serviceWorker.getRegistration();
+          let endpoint = '';
+          if (reg) {
+            const sub = await reg.pushManager.getSubscription();
+            if (sub) { endpoint = sub.endpoint; await sub.unsubscribe(); }
+          }
+          if (endpoint) {
+            await fetch('/api/push/unsubscribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ endpoint })
+            });
+          }
+          if (statusEl) statusEl.textContent = '已关闭';
+        } catch (e) {
+          if (statusEl) statusEl.textContent = '关闭失败';
+        }
+        if (sw) sw.checked = false;
+      }
+      window.toggleNotifications = toggleNotifications;
+
+      // 进入设置页时刷新开关状态（按浏览器里是否已有推送订阅）
+      async function refreshNotifyState() {
+        const sw = document.getElementById('notifySwitch');
+        const statusEl = document.getElementById('notifyStatus');
+        try {
+          if ('serviceWorker' in navigator && 'PushManager' in window) {
+            const reg = await navigator.serviceWorker.getRegistration();
+            if (reg) {
+              const sub = await reg.pushManager.getSubscription();
+              if (sub) {
+                if (sw) sw.checked = true;
+                if (statusEl) statusEl.textContent = '✅ 已开启';
+                return;
+              }
+            }
+          }
+          if (sw) sw.checked = false;
+          if (statusEl) statusEl.textContent = !('Notification' in window) ? '不支持' : (Notification.permission === 'granted' ? '已授权·未订阅' : '未开启');
+        } catch (e) {
+          if (sw) sw.checked = false;
+          if (statusEl) statusEl.textContent = '状态未知';
+        }
+      }
+      window.refreshNotifyState = refreshNotifyState;
 
       // 轮询未读通知（页面打开时兜底；已推送过的带 push_sent 标记不再重复弹）
       async function pollNotifications() {
@@ -6126,6 +6247,21 @@
           document.body.appendChild(t);
           setTimeout(() => { t.style.opacity = '0'; }, 2600);
           setTimeout(() => t.remove(), 3100);
+        } catch (e) { /* ignore */ }
+      }
+
+      // 工具事件：聊天页里的"拍一拍"样式小字（不进气泡，独立一行）
+      function makeToolEventElement(text) {
+        const line = document.createElement('div');
+        line.className = 'tool-event-line';
+        line.style.cssText = 'text-align:center;font-size:12px;color:#b0a6c4;margin:4px 12px;padding:3px 10px;background:rgba(0,0,0,0.025);border-radius:10px;line-height:1.5;';
+        line.textContent = '⚡ ' + text;
+        return line;
+      }
+      function addToolEventLine(text) {
+        try {
+          messageList.appendChild(makeToolEventElement(text));
+          messageList.scrollTop = messageList.scrollHeight;
         } catch (e) { /* ignore */ }
       }
 
