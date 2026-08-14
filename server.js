@@ -434,12 +434,16 @@ async function saveMozhaEntry(content) {
 async function saveToolEvent(text, sendSSE) {
   if (!text) return;
   try { if (sendSSE) sendSSE({ toolEvent: text }); } catch (e) { /* 前端不在线时忽略 */ }
-  await supabase.from('messages').insert({
-    session_id: 1,
-    role: 'assistant',
-    content: `【工具事件】${String(text).slice(0, 120)}`,
-    visible: true
-  }).catch(e => console.error('工具事件保存失败:', e.message));
+  try {
+    await supabase.from('messages').insert({
+      session_id: 1,
+      role: 'assistant',
+      content: `【工具事件】${String(text).slice(0, 120)}`,
+      visible: true
+    });
+  } catch (e) {
+    console.error('工具事件保存失败:', e.message);
+  }
 }
 
 async function executeSideEffectTools(toolCalls, sendSSE) {
@@ -3579,7 +3583,9 @@ async function sendPushAll(subs, title, body, url = '/') {
       console.error('❌ 推送发送失败:', err.statusCode || err.message);
       // 订阅失效（410/404）→ 清理
       if (err.statusCode === 410 || err.statusCode === 404) {
-        supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint).catch(() => {});
+        try {
+          await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+        } catch (e) { /* 清理失败忽略 */ }
       }
     }
   }
@@ -4564,8 +4570,11 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
     }
     // 语义事件边界：AI 判断话题已告一段落 → 关闭当前事件块
     if (episodeId && parsed && parsed.event_complete === true) {
-      supabase.from('aevum_episodes').update({ status: 'closed', updated_at: new Date().toISOString() }).eq('id', episodeId)
-        .catch(e => console.error('Aevum 事件块关闭失败:', e.message));
+      try {
+        await supabase.from('aevum_episodes').update({ status: 'closed', updated_at: new Date().toISOString() }).eq('id', episodeId);
+      } catch (e) {
+        console.error('Aevum 事件块关闭失败:', e.message);
+      }
     }
     const memories = Array.isArray(parsed?.memories) ? parsed.memories : [];
     if (!memories.length) {
