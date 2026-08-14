@@ -1889,8 +1889,8 @@ app.post('/api/chat', async (req, res) => {
     const episodeTexts = await getEpisodeRecentExchanges(aevumEpisodeId, 5);
     const extractInput = [
       ...episodeTexts,
-      { role: 'user', content: finalUserContent },
-      { role: 'assistant', content: fullReply }
+      { role: 'user', content: finalUserContent, time: new Date().toISOString() },
+      { role: 'assistant', content: fullReply, time: new Date().toISOString() }
     ];
     extractAevumMemories(extractInput, aevumEpisodeId).catch(e => console.error('Aevum 自动提取失败:', e.message));
 
@@ -4069,7 +4069,7 @@ async function getEpisodeRecentExchanges(episodeId, limit = 6) {
   try {
     const { data, error } = await supabase
       .from('aevum_raw')
-      .select('content')
+      .select('content, created_at')
       .eq('episode_id', episodeId)
       .order('id', { ascending: false })
       .limit(limit);
@@ -4079,8 +4079,8 @@ async function getEpisodeRecentExchanges(episodeId, limit = 6) {
       const raw = String(row.content || '');
       const sep = raw.indexOf('\n助手说：');
       if (sep === -1) continue;
-      texts.push({ role: 'user', content: raw.slice(0, sep).replace(/^雪说：/, '').trim() });
-      texts.push({ role: 'assistant', content: raw.slice(sep + '\n助手说：'.length).trim() });
+      texts.push({ role: 'user', content: raw.slice(0, sep).replace(/^雪说：/, '').trim(), time: row.created_at || null });
+      texts.push({ role: 'assistant', content: raw.slice(sep + '\n助手说：'.length).trim(), time: row.created_at || null });
     }
     return texts;
   } catch (e) {
@@ -4478,13 +4478,33 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
   const dbg = { apiError: null, parseError: null, empty: false, replyPreview: '' };
   const finish = (n) => debugMode ? { extracted: n, debug: dbg } : n;
   if (!Array.isArray(texts) || texts.length === 0) return finish(0);
+  // 每轮对话尽量带上真实发生时间（北京时间），防止 AI 瞎猜 event_time
+  const fmtDialogueTime = (iso) => {
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const bj = new Date(d.getTime() + 8 * 3600 * 1000);
+      const p = n => String(n).padStart(2, '0');
+      return `${bj.getUTCFullYear()}-${p(bj.getUTCMonth() + 1)}-${p(bj.getUTCDate())} ${p(bj.getUTCHours())}:${p(bj.getUTCMinutes())}`;
+    } catch (e) { return ''; }
+  };
   const dialogue = texts
-    .map(t => `${t.role === 'user' ? '雪' : '默'}：${String(t.content || '').slice(0, 800)}`)
+    .map(t => {
+      const who = t.role === 'user' ? '雪' : '默';
+      const time = t.time ? fmtDialogueTime(t.time) : '';
+      return `${who}${time ? `（${time}）` : ''}：${String(t.content || '').slice(0, 800)}`;
+    })
     .join('\n');
   if (!dialogue.trim()) return finish(0);
 
+  const bjNow = new Date(Date.now() + 8 * 3600 * 1000);
+  const p2 = n => String(n).padStart(2, '0');
+  const nowStr = `${bjNow.getUTCFullYear()}-${p2(bjNow.getUTCMonth() + 1)}-${p2(bjNow.getUTCDate())} ${p2(bjNow.getUTCHours())}:${p2(bjNow.getUTCMinutes())}`;
+
   const system = `你是 Aevum Memory 的记忆提取器，把对话里值得长期记住的事情提炼成"事件单元"，存进记忆海。
 核心判断：这段对话里发生了什么值得记住的事？没有长期价值就不提取。没有记忆，比错误记忆更好；每次最多 5 条，宁缺毋滥，不凑数。
+
+【当前实际时间】现在是 ${nowStr}（北京时间）。这段对话就发生在刚刚，事件通常就在今天或最近几天；推断 event_time 时以这个当前时间为基准，不要编造更早的日期。
 
 【主体 owner，只有三种：USER=雪 / AGENT=默 / OTHER=其他】
 - USER=雪：雪本人的经历、说的话、做的事、偏好
@@ -4495,7 +4515,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 【事件单元要求】
 - content：完整概括一个小事件，说清 时间/背景/谁说了或做了什么/结果；30-120 字；禁止直接复制对话原文或整段引用雪/默的原话；提到人物时用占位符 {USER}=雪、{AGENT}=默，不要在 content 里直接写"雪""默"
 - title：一句话短标题（10 字内），提到人物时同样用 {USER}/{AGENT} 占位符
-- event_time：事件发生的具体时间（YYYY-MM-DD HH:mm，按对话语境判断；不确定就填当前对话时间）
+- event_time：事件发生的具体时间（YYYY-MM-DD HH:mm，按对话语境判断；对话行已带实际发生时间，尽量据此推断；不确定就填当前对话时间）
 - importance 重要度 0-10 整数，按四项相加：明确程度(0-3：是否被明确当成重要的事说出来) + 长期影响(0-3：是否影响未来的决定/关系) + 独特性(0-2：是否罕见不常发生) + 情绪冲击力(0-2：抛开正负面的情绪强度)
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、游戏、其他
@@ -4645,12 +4665,13 @@ app.post('/api/aevum/extract', async (req, res) => {
     const limit = Math.min(parseInt(req.body?.limit, 10) || 12, 30);
     const { data } = await supabase
       .from('messages')
-      .select('role, content')
+      .select('role, content, created_at')
       .eq('session_id', 1)
       .eq('visible', true)
       .order('id', { ascending: false })
       .limit(limit);
     const texts = (data || []).slice().reverse();
+    for (const t of texts) t.time = t.created_at;
     const result = await extractAevumMemories(texts, null, { debug: true });
     res.json({ ok: true, ...result });
   } catch (e) {
@@ -6889,6 +6910,24 @@ app.post('/api/edit-message', async (req, res) => {
     console.error('编辑消息接口错误:', err.message);
     sendSSE({ error: '处理请求时出错：' + (err && err.message) });
     res.end();
+  }
+});
+
+// 修正记忆的事件时间（时间戳错乱时用；格式 YYYY-MM-DD HH:mm 按北京时间解析）
+app.post('/api/aevum/:id/event-time', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'ID 无效' });
+  const parsed = parseAevumEventTime(req.body?.event_time);
+  if (!parsed) return res.status(400).json({ error: '时间格式无效' });
+  try {
+    const { error } = await supabase
+      .from('aevum_memories')
+      .update({ event_time: parsed, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
