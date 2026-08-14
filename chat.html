@@ -6015,7 +6015,7 @@
         if (Notification.permission !== 'granted') {
           setStatus('等待授权…');
           const result = await Notification.requestPermission();
-          if (result !== 'granted') { setStatus('未授权'); refreshNotifyState(); return false; }
+          if (result !== 'granted') { await refreshNotifyState(); setStatus('未授权'); return false; }
         }
         setStatus('注册推送…');
         try {
@@ -6025,7 +6025,7 @@
           let sub = await withTimeout(activeReg.pushManager.getSubscription(), 10000, '读取订阅超时');
           if (!sub) {
             const keyRes = await fetch('/api/push/vapid-key');
-            if (!keyRes.ok) { setStatus('⚠️ 推送未配置'); refreshNotifyState(); return false; }
+            if (!keyRes.ok) { await refreshNotifyState(); setStatus('⚠️ 推送未配置'); return false; }
             const keyData = await keyRes.json();
             setStatus('创建订阅…');
             sub = await withTimeout(activeReg.pushManager.subscribe({
@@ -6039,14 +6039,14 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ subscription: sub })
           });
-          if (!saveRes.ok) { setStatus('❌ 保存订阅失败'); refreshNotifyState(); return false; }
+          if (!saveRes.ok) { await refreshNotifyState(); setStatus('❌ 保存订阅失败'); return false; }
           setStatus('✅ 已开启（锁屏也能收）');
           refreshNotifyState();
           return true;
         } catch (e) {
           console.error('推送订阅失败:', e);
-          setStatus('❌ ' + String((e && e.message) || e).slice(0, 26));
-          refreshNotifyState();
+          await refreshNotifyState();
+          setStatus('❌ ' + String((e && e.message) || e).slice(0, 40));
           return false;
         }
       }

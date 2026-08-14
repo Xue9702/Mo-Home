@@ -963,7 +963,7 @@ function buildAllTools() {
 // 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
 // 流式补发：为拦截 [SEARCH_QUERY] 标签缓存的内容，按小间隔逐段补发，
 // 让默的回复看起来是流式打出来的（思考内容仍实时转发）
-async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 40, delayMs = 12) {
+async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 16, delayMs = 60) {
   if (!contentBuffer) return;
   for (let i = 0; i < contentBuffer.length; i += chunkSize) {
     sendSSE({ content: contentBuffer.substring(i, i + chunkSize) });
@@ -1103,12 +1103,15 @@ async function runMozhaPhase({ chatMessages, systemPrompt, sendSSE }) {
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
   const secondMessages = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: `${systemPrompt}\n\n【默札】${mozhaBody}\n请自然地接着把话说下去：刚刚你翻开了默札，读到了过去留下的文字。可以流露一点温度，但不要复述整段默札。` },
     ...history,
-    lastUser,
-    { role: 'system', content: `【默札】${mozhaBody}\n请自然地接着把话说下去：刚刚你翻开了默札，读到了过去留下的文字。可以流露一点温度，但不要复述整段默札。` }
+    lastUser
   ];
-  const second = await callDeepSeekStream(secondMessages, sendSSE);
+  let second = await callDeepSeekStream(secondMessages, sendSSE);
+  // 兜底：偶发返回空正文时重试一次（同搜索阶段）
+  if (!second.error && !second.fullReply && !(second.toolCalls && second.toolCalls.length)) {
+    second = await callDeepSeekStream(secondMessages, sendSSE);
+  }
   if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
   return { reply: stripSearchTags(second.fullReply), thinking: second.fullThinking };
 }
@@ -1772,6 +1775,11 @@ app.post('/api/chat', async (req, res) => {
       if (phase.error) {
         if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking);
         sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      if (!phase.reply) {
+        sendSSE({ error: '默札翻阅没有生成回复，请再试一次' });
         res.end();
         return;
       }
