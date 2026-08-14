@@ -22,3 +22,9 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 
 -- 通知表补一列：已通过 Web Push 推送过的通知，页面打开时不再重复弹
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS push_sent boolean NOT NULL DEFAULT false;
+
+-- 给 anon/authenticated 角色授权（Supabase 新表默认不开放，必须手动 GRANT）
+GRANT ALL ON public.reminders TO anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.reminders_id_seq TO anon, authenticated;
+GRANT ALL ON public.push_subscriptions TO anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.push_subscriptions_id_seq TO anon, authenticated;
