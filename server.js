@@ -3485,6 +3485,22 @@ app.get('/api/push/subscriptions/count', async (req, res) => {
   }
 });
 
+// 临时诊断：通知表真实状态（排查闹钟触发后通知不显示）
+app.get('/api/diag/notifications', async (req, res) => {
+  try {
+    const unread = await supabase.from('notifications').select('*').eq('read', false).limit(5);
+    const total = await supabase.from('notifications').select('id', { count: 'exact', head: true });
+    const col = await supabase.from('notifications').select('push_sent').limit(1);
+    res.json({
+      unread: unread.error ? { error: unread.error.message } : unread.data,
+      totalCount: total.count,
+      pushSentColumn: col.error ? { error: col.error.message } : 'exists'
+    });
+  } catch (e) {
+    res.status(500).json({ err: e.message });
+  }
+});
+
 async function sendPushAll(subs, title, body, url = '/') {
   if (!PUSH_ENABLED) return 0;
   let sent = 0;
