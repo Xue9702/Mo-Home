@@ -472,6 +472,24 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
       } else {
         console.warn('⚠️ set_reminder 参数无效:', remindAtRaw, content);
       }
+    } else if (name === 'todo_add') {
+      const content = String(args.content || '').trim();
+      if (content) {
+        const { error } = await supabase.from('todos').insert({ content: content.slice(0, 500), status: 'pending' });
+        if (error) console.error('❌ 待办添加失败（工具）:', error.message);
+        else console.log('✅ 待办已添加（工具）:', content);
+      }
+    } else if (name === 'todo_done') {
+      const id = parseInt(args.id, 10);
+      if (Number.isInteger(id)) {
+        const { error } = await supabase
+          .from('todos')
+          .update({ status: 'done', done_at: new Date().toISOString() })
+          .eq('id', id)
+          .eq('status', 'pending');
+        if (error) console.error('❌ 待办完成失败（工具）:', error.message);
+        else console.log('✅ 待办已完成（工具）: id', id);
+      }
     }
   }
   return { mozhaRead };
@@ -881,6 +899,30 @@ function buildAllTools() {
             content: { type: 'string', description: '提醒内容，一句话说清要提醒雪做什么' }
           },
           required: ['remind_at', 'content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'todo_add',
+        description: '给雪的待办清单加一条：雪说"记一下/别忘了要做X"时调用，帮她攒成清单，之后每轮你都会看到还没完成的事项并主动推进。',
+        parameters: {
+          type: 'object',
+          properties: { content: { type: 'string', description: '待办内容，一句话' } },
+          required: ['content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'todo_done',
+        description: '把雪待办清单里的某一条标记为已完成（清单在你上下文的【待办清单】里，id 就是每条前面显示的数字）。雪说"这个做完了/划掉"时调用。',
+        parameters: {
+          type: 'object',
+          properties: { id: { type: 'integer', description: '待办项的 id' } },
+          required: ['id']
         }
       }
     }
@@ -1637,7 +1679,7 @@ app.post('/api/chat', async (req, res) => {
 
     // 检查是否收到了完整的回复（纯副作用工具调用如设置闹钟/发动态也算有效）
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder'].includes(tc.function?.name)
+      ['post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
     );
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
       console.error('未收到有效回复，完整响应体可能为空');
@@ -4917,6 +4959,23 @@ async function getPlansContext(limit = 5) {
   }
 }
 
+// v3.1：待办清单上下文（未完成的待办固定注入，让默随时知道有哪些事要做）
+async function getTodosContext(limit = 8) {
+  try {
+    const { data } = await supabase
+      .from('todos')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    if (!data || !data.length) return '';
+    const lines = data.map(t => `- [${t.id}] ${String(t.content || '').slice(0, 100)}`);
+    return `\n\n【待办清单】（雪还没做完的事，记得主动帮她推进或提醒）\n${perspectiveConvert(lines.join('\n'))}`;
+  } catch (e) {
+    return '';
+  }
+}
+
 // v3.0：统一组装每轮注入的记忆上下文（记忆海召回 → 记忆书场景 → 记忆心 → 计划）
 async function buildMemoryContext(userText, opts = {}) {
   let ctx = '';
@@ -4930,6 +4989,8 @@ async function buildMemoryContext(userText, opts = {}) {
   if (promises) ctx += promises;
   const plans = await getPlansContext();
   if (plans) ctx += plans;
+  const todos = await getTodosContext();
+  if (todos) ctx += todos;
   return ctx;
 }
 
@@ -5166,6 +5227,70 @@ app.delete('/api/aevum/plans/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: '删除失败' });
+  }
+});
+
+// ================== 待办清单（todos） ==================
+
+// 待办列表：未完成 + 最近完成的 20 条
+app.get('/api/todos', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('todos')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ items: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 添加待办
+app.post('/api/todos', async (req, res) => {
+  const content = String(req.body?.content || '').trim();
+  if (!content) return res.status(400).json({ error: '待办内容不能为空' });
+  try {
+    const { data, error } = await supabase
+      .from('todos')
+      .insert({ content: content.slice(0, 500), status: 'pending' })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, item: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 标记完成
+app.post('/api/todos/:id/done', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'ID 无效' });
+  try {
+    const { error } = await supabase
+      .from('todos')
+      .update({ status: 'done', done_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('status', 'pending');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 删除待办
+app.delete('/api/todos/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'ID 无效' });
+  try {
+    const { error } = await supabase.from('todos').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

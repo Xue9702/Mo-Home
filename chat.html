@@ -3296,11 +3296,12 @@
           if (aevumState.filters.owner) params.set('owner', aevumState.filters.owner);
           if (aevumState.filters.domain) params.set('domain', aevumState.filters.domain);
           if (aevumState.filters.q) params.set('q', aevumState.filters.q);
-          const [listRes, statsRes, bookRes, planRes, profRes, moRes, promRes, mozhaRes] = await Promise.all([
+          const [listRes, statsRes, bookRes, planRes, todoRes, profRes, moRes, promRes, mozhaRes] = await Promise.all([
             fetch('/api/aevum?' + params.toString()),
             fetch('/api/aevum/stats'),
             fetch('/api/aevum/books').catch(() => null),
             fetch('/api/aevum/plans').catch(() => null),
+            fetch('/api/todos').catch(() => null),
             fetch('/api/aevum/profile').catch(() => null),
             fetch('/api/aevum/mo-view').catch(() => null),
             fetch('/api/aevum/promises').catch(() => null),
@@ -3310,6 +3311,7 @@
           const stats = await statsRes.json();
           const bookData = bookRes && bookRes.ok ? await bookRes.json() : { books: [] };
           const planData = planRes && planRes.ok ? await planRes.json() : { active: [], expired: [] };
+          const todoData = todoRes && todoRes.ok ? await todoRes.json() : { items: [] };
           const profData = profRes && profRes.ok ? await profRes.json() : { content: '', dimensions: null, updated_at: null };
           const moData = moRes && moRes.ok ? await moRes.json() : { content: '', updated_at: null };
           const promData = promRes && promRes.ok ? await promRes.json() : { active: [], archived: [] };
@@ -3366,7 +3368,7 @@
                 <span style="color:#aaa;">已归档 ${(stats.byStatus && stats.byStatus.archived) || 0}</span>
               </div>` : ''}
             </div>
-            ${aevumState.view === 'book' ? renderBookPanel(bookData, planData) : ''}
+            ${aevumState.view === 'book' ? renderBookPanel(bookData, planData, todoData) : ''}
             ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, promData, mozhaCount) : ''}
             ${inSea && (aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
             ${inSea ? `<div style="display:flex;flex-direction:column;gap:10px;">
@@ -3420,10 +3422,13 @@
       }
 
       // v3.0 记忆书面板：故事线 + 计划
-      function renderBookPanel(bookData, planData) {
+      function renderBookPanel(bookData, planData, todoData) {
         const books = bookData.books || [];
         const plans = planData.active || [];
         const expired = planData.expired || [];
+        const todos = (todoData && todoData.items) || [];
+        const todosPending = todos.filter(t => t.status === 'pending');
+        const todosDone = todos.filter(t => t.status === 'done');
         const today = new Date(); today.setHours(0, 0, 0, 0);
         const todayEnd = new Date(today.getTime() + 86400000);
         const plansCard = `
@@ -3457,6 +3462,24 @@
             : '<div style="font-size:13px;color:#b0a6c4;padding:6px 0;">还没有计划，写一件想做的事吧~</div>'}
             ${expired.length ? `<div style="font-size:12px;color:#b0a6c4;margin-top:4px;">已到期 ${expired.length} 条（不再提醒，可在下轮清掉）</div>` : ''}
           </div>`;
+        const todoCard = `
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="font-size:14px;font-weight:600;color:#333;">待办清单</div>
+            <div style="font-size:12px;color:#8a83a8;">记下还没做完的事，默每轮都会看到，还会主动提醒你推进。</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="todoInput" placeholder="例如：把稿子改完…" style="flex:1;min-width:0;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;outline:none;">
+              <button onclick="aevumAddTodo()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;">＋ 记下</button>
+            </div>
+            <div style="font-size:14px;font-weight:600;color:#333;margin-top:6px;">未完成（${todosPending.length}）</div>
+            ${todosPending.length ? todosPending.map(t => `
+              <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f6f2f8;">
+                <span style="cursor:pointer;font-size:18px;color:#e1789a;flex-shrink:0;" onclick="aevumToggleTodo(${t.id})">☐</span>
+                <div style="flex:1;font-size:13px;color:#444;line-height:1.5;">${escapeHtml2(t.content)}</div>
+                <span style="cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0;" onclick="aevumDeleteTodo(${t.id})">删除</span>
+              </div>`).join('')
+            : '<div style="font-size:13px;color:#b0a6c4;padding:6px 0;">还没有待办，让默帮你记一件吧~</div>'}
+            ${todosDone.length ? `<div style="font-size:12px;color:#b0a6c4;margin-top:4px;">已完成 ${todosDone.length} 条</div>` : ''}
+          </div>`;
         const storiesHtml = books.length ? books.map(b => `
             <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -3481,6 +3504,7 @@
             <div style="font-size:11px;color:#b0a6c4;">点故事线看它包含的事件单元；点事件可看原文。</div>
           </div>
           ${plansCard}
+          ${todoCard}
           ${storiesHtml}`;
       }
 
@@ -3869,6 +3893,40 @@
         renderAevum();
       }
       window.aevumDeletePlan = aevumDeletePlan;
+
+      async function aevumAddTodo() {
+        const input = document.getElementById('todoInput');
+        const content = (input && input.value.trim()) || '';
+        if (!content) { alert('先写点待办内容呀~'); return; }
+        try {
+          const res = await fetch('/api/todos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '添加失败，请确认已执行 setup_todos.sql'); return; }
+          renderAevum();
+        } catch (e) { alert('添加失败，请稍后重试'); }
+      }
+      window.aevumAddTodo = aevumAddTodo;
+
+      async function aevumToggleTodo(id) {
+        try {
+          await fetch('/api/todos/' + id + '/done', { method: 'POST' });
+          renderAevum();
+        } catch (e) { /* 失败静默，下次再试 */ }
+      }
+      window.aevumToggleTodo = aevumToggleTodo;
+
+      async function aevumDeleteTodo(id) {
+        if (!confirm('删除这条待办吗？')) return;
+        try {
+          await fetch('/api/todos/' + id, { method: 'DELETE' });
+          renderAevum();
+        } catch (e) { alert('删除失败'); }
+      }
+      window.aevumDeleteTodo = aevumDeleteTodo;
 
       async function aevumMoGenerate() {
         if (!confirm('AI 重新生成会覆盖当前内容，确定吗？')) return;
