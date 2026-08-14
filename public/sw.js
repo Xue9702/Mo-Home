@@ -1,5 +1,5 @@
-// sw.js - 基础 Service Worker
-const CACHE_NAME = 'mo-home-v4';
+// sw.js - Service Worker for Mo-Home (PWA + Web Push)
+const CACHE_NAME = 'mo-home-v5';
 const urlsToCache = [
   '/',
   '/chat.html',
@@ -8,7 +8,7 @@ const urlsToCache = [
   '/icon-512.png'
 ];
 
-// 安装时缓存关键文件
+// Install: pre-cache key files
 self.addEventListener('install', function(event) {
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -16,11 +16,10 @@ self.addEventListener('install', function(event) {
         return cache.addAll(urlsToCache);
       })
   );
-  // 立即接管页面，避免旧版本继续生效
   self.skipWaiting();
 });
 
-// 拦截请求：优先从网络获取最新版本，失败时才回退到缓存（保证线上总是最新）
+// Fetch: network first, fall back to cache (keeps the site fresh)
 self.addEventListener('fetch', function(event) {
   const request = event.request;
   if (request.method !== 'GET') return;
@@ -28,17 +27,16 @@ self.addEventListener('fetch', function(event) {
   event.respondWith(
     fetch(request)
       .then(function(response) {
-        // 同源成功响应写入缓存，供离线时使用
         if (response && response.ok) {
           try {
             const url = new URL(request.url);
-            if (url.origin === location.origin) {
+            if (url.origin === self.location.origin) {
               const clone = response.clone();
               caches.open(CACHE_NAME).then(function(cache) {
                 cache.put(request, clone);
               });
             }
-          } catch (e) { /* 忽略跨域等无法缓存的情况 */ }
+          } catch (e) { /* ignore cross-origin / non-cacheable */ }
         }
         return response;
       })
@@ -48,7 +46,7 @@ self.addEventListener('fetch', function(event) {
   );
 });
 
-// 激活时清理旧缓存
+// Activate: clean old caches
 self.addEventListener('activate', function(event) {
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
@@ -65,16 +63,38 @@ self.addEventListener('activate', function(event) {
   );
 });
 
-// 点击浏览器通知时回到小屋
+// Push: show a notification with title + body (this is what makes Edge/手机 display content)
+self.addEventListener('push', function(event) {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (e) {
+    payload = { title: '默', body: event.data ? event.data.text() : '' };
+  }
+  const title = payload.title || '默';
+  const options = {
+    body: payload.body || '',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: payload.tag || 'mo-push',
+    data: { url: payload.url || '/' }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Notification click: close and focus / open the home page
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
+  const targetUrl = event.notification.data && event.notification.data.url
+    ? event.notification.data.url
+    : '/';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then(function(clientList) {
         for (const client of clientList) {
-          if ('focus' in client) return client.focus();
+          if ('focus' in client) return client.navigate(targetUrl) || client.focus();
         }
-        return clients.openWindow('/');
+        return clients.openWindow(targetUrl);
       })
   );
 });

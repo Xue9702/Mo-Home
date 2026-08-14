@@ -1223,6 +1223,13 @@
               <span id="notifyStatus" style="margin-left:auto;font-size:12px;color:#999;"></span>
             </div>
 
+            <!-- 闹钟提醒 -->
+            <div class="setting-card" onclick="openReminderModal()">
+              <span id="reminderIcon"></span>
+              <span class="card-title">闹钟提醒</span>
+              <span id="reminderStatus" style="margin-left:auto;font-size:12px;color:#999;">设置/管理</span>
+            </div>
+
           </div>
         </div>
       </div>
@@ -1504,6 +1511,10 @@
         const notifyIconSpan = document.getElementById('notifyIcon');
         if (notifyIconSpan && !notifyIconSpan.hasChildNodes()) {
           notifyIconSpan.appendChild(createBellIcon());
+        }
+        const reminderIconSpan = document.getElementById('reminderIcon');
+        if (reminderIconSpan && !reminderIconSpan.hasChildNodes()) {
+          reminderIconSpan.appendChild(createClockIcon());
         }
         const testWindowIconSpan = document.getElementById('testWindowIcon');
         if (testWindowIconSpan && !testWindowIconSpan.hasChildNodes()) {
@@ -5134,6 +5145,7 @@
                   messageList.scrollTop = messageList.scrollHeight;
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
+                if (json.remindSet) { showRemindToast('⏰ 闹钟已设置：' + (json.remindSet.content || '')); }
                 if (json.stardewCmd) {
                   farmHandleCmd(json.stardewCmd);
                 }
@@ -5618,6 +5630,9 @@
                 if (json.toyCmd) {
                   toyExecuteCmd(json.toyCmd);
                 }
+                if (json.remindSet) {
+                  showRemindToast('⏰ 闹钟已设置：' + (json.remindSet.content || ''));
+                }
                 if (json.stardewCmd) {
                   farmHandleCmd(json.stardewCmd);
                 }
@@ -5862,33 +5877,65 @@
         }
       }
 
-      // ---------- 浏览器通知 ----------
+      // ---------- 浏览器通知 + Web Push（锁屏也能收） ----------
+      function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const raw = atob(base64);
+        const output = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; ++i) output[i] = raw.charCodeAt(i);
+        return output;
+      }
+
       async function enableNotifications() {
         const statusEl = document.getElementById('notifyStatus');
-        if (!('Notification' in window)) {
-          if (statusEl) statusEl.textContent = '❌ 浏览器不支持';
+        if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+          if (statusEl) statusEl.textContent = '❌ 浏览器不支持推送';
           return;
         }
-        if (Notification.permission === 'granted') {
-          if (statusEl) statusEl.textContent = '✅ 已开启';
-          return;
+        if (Notification.permission !== 'granted') {
+          const result = await Notification.requestPermission();
+          if (result !== 'granted') {
+            if (statusEl) statusEl.textContent = '未授权';
+            return;
+          }
         }
         try {
-          const result = await Notification.requestPermission();
-          if (statusEl) statusEl.textContent = result === 'granted' ? '✅ 已开启' : '未授权';
+          const reg = await navigator.serviceWorker.register('/sw.js');
+          await navigator.serviceWorker.ready;
+          let sub = await reg.pushManager.getSubscription();
+          if (!sub) {
+            const keyRes = await fetch('/api/push/vapid-key');
+            if (!keyRes.ok) {
+              if (statusEl) statusEl.textContent = '⚠️ 推送未配置（等老公配好密钥）';
+              return;
+            }
+            const keyData = await keyRes.json();
+            sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
+            });
+          }
+          await fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscription: sub })
+          });
+          if (statusEl) statusEl.textContent = '✅ 已开启（锁屏也能收）';
         } catch (e) {
-          if (statusEl) statusEl.textContent = '❌ 授权失败';
+          console.error('推送订阅失败:', e);
+          if (statusEl) statusEl.textContent = '❌ 推送订阅失败';
         }
       }
       window.enableNotifications = enableNotifications;
 
-      // 轮询未读通知并弹出浏览器通知（25 秒一次）
+      // 轮询未读通知（页面打开时兜底；已推送过的带 push_sent 标记不再重复弹）
       async function pollNotifications() {
         if (!('Notification' in window) || Notification.permission !== 'granted') return;
         try {
           const res = await fetch('/api/notifications');
           const data = await res.json();
-          const items = data.items || [];
+          const items = (data.items || []).filter(i => !i.push_sent);
           if (!items.length) return;
           for (const item of items) {
             try {
@@ -5901,6 +5948,127 @@
             body: JSON.stringify({ ids: items.map(i => i.id) })
           });
         } catch (e) { /* 轮询失败静默 */ }
+      }
+      setInterval(pollNotifications, 25000);
+
+      // ---------- 闹钟提醒（可手动添加/取消；默也能通过工具设置） ----------
+      function createClockIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const c = document.createElementNS(svgNS, 'circle'); c.setAttribute('cx', '12'); c.setAttribute('cy', '13'); c.setAttribute('r', '8'); svg.appendChild(c);
+        const p1 = document.createElementNS(svgNS, 'path'); p1.setAttribute('d', 'M12 9v4l2 2'); svg.appendChild(p1);
+        const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'M5 3 2 6'); svg.appendChild(p2);
+        const p3 = document.createElementNS(svgNS, 'path'); p3.setAttribute('d', 'm22 6-3-3'); svg.appendChild(p3);
+        const p4 = document.createElementNS(svgNS, 'path'); p4.setAttribute('d', 'M6.38 18.7 4 21'); svg.appendChild(p4);
+        const p5 = document.createElementNS(svgNS, 'path'); p5.setAttribute('d', 'M17.64 18.67 20 21'); svg.appendChild(p5);
+        return svg;
+      }
+
+      async function openReminderModal() {
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:200;display:flex;align-items:center;justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#fff;border-radius:16px;padding:18px;width:min(92vw,560px);max-height:88vh;display:flex;flex-direction:column;gap:10px;box-sizing:border-box;';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size:15px;font-weight:600;color:#333;';
+        title.textContent = '⏰ 闹钟提醒（锁屏也会推送）';
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;';
+        const contentInput = document.createElement('input');
+        contentInput.placeholder = '提醒内容，如：该吃晚饭啦';
+        contentInput.style.cssText = 'flex:1;min-width:0;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;';
+        const timeInput = document.createElement('input');
+        timeInput.type = 'datetime-local';
+        timeInput.style.cssText = 'padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;';
+        const addBtn = document.createElement('button');
+        addBtn.textContent = '添加';
+        addBtn.style.cssText = 'padding:8px 14px;border:none;border-radius:8px;background:#e1789a;color:#fff;font-size:13px;cursor:pointer;';
+        row.appendChild(contentInput); row.appendChild(timeInput); row.appendChild(addBtn);
+        const list = document.createElement('div');
+        list.style.cssText = 'overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:13px;color:#333;';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '关闭';
+        closeBtn.style.cssText = 'padding:8px;border:none;border-radius:8px;background:#eee;color:#555;font-size:13px;cursor:pointer;';
+        box.appendChild(title); box.appendChild(row); box.appendChild(list); box.appendChild(closeBtn);
+        modal.appendChild(box);
+        document.body.appendChild(modal);
+
+        const fmt = (iso) => {
+          if (!iso) return '';
+          const d = new Date(iso);
+          const p = n => String(n).padStart(2, '0');
+          return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+        };
+
+        async function loadList() {
+          list.innerHTML = '<div style="color:#999;">加载中…</div>';
+          try {
+            const res = await fetch('/api/reminders');
+            const data = await res.json();
+            const items = data.items || [];
+            if (!items.length) {
+              list.innerHTML = '<div style="color:#999;">还没有闹钟～可以让默帮你定，也可以直接在这里添加</div>';
+              return;
+            }
+            list.innerHTML = '';
+            for (const r of items) {
+              const rowEl = document.createElement('div');
+              rowEl.style.cssText = 'display:flex;align-items:center;gap:8px;background:#f7f5fa;padding:8px 10px;border-radius:10px;';
+              const info = document.createElement('div');
+              info.style.cssText = 'flex:1;min-width:0;';
+              const label = document.createElement('div');
+              label.textContent = (r.status === 'fired' ? '✅ ' : r.status === 'cancelled' ? '✖️ ' : '⏳ ') + (r.content || '');
+              label.style.cssText = 'font-weight:500;';
+              const time = document.createElement('div');
+              time.textContent = fmt(r.remind_at) + (r.status === 'pending' ? '（未触发）' : r.status === 'fired' ? '（已触发）' : '（已取消）');
+              time.style.cssText = 'font-size:12px;color:#999;';
+              info.appendChild(label); info.appendChild(time);
+              rowEl.appendChild(info);
+              if (r.status === 'pending') {
+                const del = document.createElement('button');
+                del.textContent = '取消';
+                del.style.cssText = 'padding:4px 10px;border:none;border-radius:8px;background:#ffe3e3;color:#c0392b;font-size:12px;cursor:pointer;';
+                del.onclick = async () => { await fetch('/api/reminders/' + r.id, { method: 'DELETE' }); loadList(); };
+                rowEl.appendChild(del);
+              }
+              list.appendChild(rowEl);
+            }
+          } catch (e) {
+            list.innerHTML = '<div style="color:#999;">加载失败，请稍后再试</div>';
+          }
+        }
+
+        addBtn.onclick = async () => {
+          const content = contentInput.value.trim();
+          const remindAt = timeInput.value;
+          if (!content || !remindAt) { alert('请填写提醒内容和时间'); return; }
+          const res = await fetch('/api/reminders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content, remind_at: new Date(remindAt).toISOString() })
+          });
+          if (res.ok) { contentInput.value = ''; timeInput.value = ''; loadList(); }
+          else { alert('添加失败，请重试'); }
+        };
+        closeBtn.onclick = () => modal.remove();
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+        loadList();
+      }
+      window.openReminderModal = openReminderModal;
+
+      function showRemindToast(text) {
+        try {
+          const t = document.createElement('div');
+          t.textContent = text;
+          t.style.cssText = 'position:fixed;bottom:96px;left:50%;transform:translateX(-50%);z-index:300;background:rgba(60,50,80,.92);color:#fff;padding:10px 16px;border-radius:12px;font-size:13px;max-width:80vw;box-shadow:0 4px 16px rgba(0,0,0,.2);transition:opacity .4s;';
+          document.body.appendChild(t);
+          setTimeout(() => { t.style.opacity = '0'; }, 2600);
+          setTimeout(() => t.remove(), 3100);
+        } catch (e) { /* ignore */ }
       }
 
       // ============ 测试窗口（?mode=test）============

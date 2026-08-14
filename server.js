@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const { PDFParse } = require('pdf-parse');
 const mammoth = require('mammoth');
+const webpush = require('web-push');
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first'); // 部分主机 IPv6 解析异常导致外部 API 请求失败，强制优先 IPv4
 // ================== 影子推送配置 ==================
@@ -27,6 +28,16 @@ const MOMENTS_COMMENT_REPLY_MAX = 8; // 评论回复最长延迟
 const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY || '';
 const VISION_MODEL = process.env.VISION_MODEL || 'qwen3.5-omni-plus';
 const DASHSCOPE_BASE_URL = process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+// ================== Web Push 推送配置（闹钟/提醒） ==================
+// 密钥通过 Render 环境变量配置（仓库公开，不能写死密钥）：
+// VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT(可选)
+// 未配置时推送自动降级：闹钟照常记录，但只能在小屋页面打开时弹出。
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:mo@mo-home.local';
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const PUSH_ENABLED = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+if (PUSH_ENABLED) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // ------------------ System Prompt 管理 ------------------
 
@@ -442,6 +453,25 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
       if (content) await saveMozhaEntry(content);
     } else if (name === 'mozha_read') {
       mozhaRead = true;
+    } else if (name === 'set_reminder') {
+      const remindAtRaw = String(args.remind_at || '').trim();
+      const content = String(args.content || '').trim();
+      const parsed = new Date(remindAtRaw);
+      if (content && !isNaN(parsed.getTime())) {
+        const { error } = await supabase.from('reminders').insert({
+          content,
+          remind_at: parsed.toISOString(),
+          status: 'pending'
+        });
+        if (error) {
+          console.error('❌ 闹钟创建失败（工具）:', error.message);
+        } else {
+          console.log('✅ 闹钟已设置（工具）:', content, remindAtRaw);
+          sendSSE({ remindSet: { content, remind_at: parsed.toISOString() } });
+        }
+      } else {
+        console.warn('⚠️ set_reminder 参数无效:', remindAtRaw, content);
+      }
     }
   }
   return { mozhaRead };
@@ -837,6 +867,21 @@ function buildAllTools() {
         name: 'mozha_read',
         description: '翻开默札，看看过去的自己留下的文字。',
         parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'set_reminder',
+        description: '给雪设置一个闹钟提醒：到点后雪的手机会收到系统通知（即使小屋页面没开也会推送到浏览器）。雪说"几点提醒我/设个闹钟/提醒我做事"时调用；remind_at 用完整时间（ISO 格式，北京时间，例如 2026-08-14T21:30:00 表示今晚 9 点半），content 写清楚提醒什么。',
+        parameters: {
+          type: 'object',
+          properties: {
+            remind_at: { type: 'string', description: '提醒时间（ISO 格式，北京时间）' },
+            content: { type: 'string', description: '提醒内容，一句话说清要提醒雪做什么' }
+          },
+          required: ['remind_at', 'content']
+        }
       }
     }
   );
@@ -1590,8 +1635,11 @@ app.post('/api/chat', async (req, res) => {
     // 纯工具调用轮（星露谷）没有正文是正常的：放行给后面的"农场行动"接续轮
     const stardewFirst = first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name));
 
-    // 检查是否收到了完整的回复
-    if (!fullReply && !stardewFirst) {
+    // 检查是否收到了完整的回复（纯副作用工具调用如设置闹钟/发动态也算有效）
+    const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
+      ['post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder'].includes(tc.function?.name)
+    );
+    if (!fullReply && !stardewFirst && !sideEffectOnly) {
       console.error('未收到有效回复，完整响应体可能为空');
       sendSSE({ error: 'AI 服务未返回有效内容' });
       res.end();
@@ -1615,6 +1663,11 @@ app.post('/api/chat', async (req, res) => {
     // v3.1 函数调用：动态/玩具/默札副作用；默札翻阅走第二轮
     const toolSideEffects = await executeSideEffectTools(first.toolCalls, sendSSE);
     if (toolSideEffects.mozhaRead) mozhaRead = true;
+    // 纯工具调用且没有任何可见文字时，补一句收尾，避免空白气泡
+    if (!fullReply && first.toolCalls && first.toolCalls.some(tc => tc.function?.name === 'set_reminder')) {
+      fullReply = '（已经帮你把闹钟定好啦，到点我会提醒你。）';
+      sendSSE({ content: fullReply });
+    }
 
     // 星露谷：第一轮模型调用了农场工具 → 先补发过渡语，再进入"农场行动"接续轮
     if (first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name))) {
@@ -3335,6 +3388,165 @@ app.post('/api/notifications/read', async (req, res) => {
     res.json({ ok: false });
   }
 });
+
+// ================== Web Push 订阅（闹钟/提醒推送） ==================
+
+// 前端拿公钥（用于 pushManager.subscribe）
+app.get('/api/push/vapid-key', (req, res) => {
+  if (!PUSH_ENABLED) return res.status(503).json({ error: '推送未配置（缺少 VAPID 密钥）', enabled: false });
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// 保存浏览器推送订阅
+app.post('/api/push/subscribe', async (req, res) => {
+  if (!PUSH_ENABLED) return res.status(503).json({ error: '推送未配置（缺少 VAPID 密钥）' });
+  const sub = req.body?.subscription;
+  if (!sub || !sub.endpoint || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+    return res.status(400).json({ error: '订阅数据无效' });
+  }
+  try {
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .upsert({ endpoint: sub.endpoint, keys: sub.keys, updated_at: new Date().toISOString() }, { onConflict: 'endpoint' });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 取消推送订阅
+app.post('/api/push/unsubscribe', async (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (!endpoint) return res.status(400).json({ error: '缺少 endpoint' });
+  try {
+    await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 推送工具函数
+async function getPushSubscriptions() {
+  const { data } = await supabase.from('push_subscriptions').select('*').limit(50);
+  return data || [];
+}
+
+async function sendPushAll(subs, title, body, url = '/') {
+  if (!PUSH_ENABLED) return 0;
+  let sent = 0;
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(sub, JSON.stringify({ title, body, url, tag: 'mo-remind' }));
+      sent++;
+    } catch (err) {
+      console.error('❌ 推送发送失败:', err.statusCode || err.message);
+      // 订阅失效（410/404）→ 清理
+      if (err.statusCode === 410 || err.statusCode === 404) {
+        supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint).catch(() => {});
+      }
+    }
+  }
+  return sent;
+}
+
+// ================== 闹钟（reminders） ==================
+
+// 闹钟列表：进行中 + 最近触发的 20 条
+app.get('/api/reminders', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('reminders')
+      .select('*')
+      .order('remind_at', { ascending: false })
+      .limit(20);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ items: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 新建闹钟（手动页面 / 默调用工具共用）
+app.post('/api/reminders', async (req, res) => {
+  const content = String(req.body?.content || '').trim();
+  const remindAtRaw = String(req.body?.remind_at || '').trim();
+  if (!content) return res.status(400).json({ error: '提醒内容不能为空' });
+  const parsed = new Date(remindAtRaw);
+  if (isNaN(parsed.getTime())) return res.status(400).json({ error: '时间格式无效' });
+  try {
+    const { data, error } = await supabase
+      .from('reminders')
+      .insert({ content, remind_at: parsed.toISOString(), status: 'pending' })
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, item: data?.[0] || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 取消闹钟（仅未触发的可取消）
+app.delete('/api/reminders/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'ID 无效' });
+  try {
+    const { error } = await supabase
+      .from('reminders')
+      .update({ status: 'cancelled' })
+      .eq('id', id)
+      .eq('status', 'pending');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 到点检查：每 20 秒扫一次未触发的闹钟
+let remindersCheckRunning = false;
+async function checkDueReminders() {
+  if (remindersCheckRunning) return;
+  remindersCheckRunning = true;
+  try {
+    const now = new Date().toISOString();
+    const { data: due, error } = await supabase
+      .from('reminders')
+      .select('*')
+      .eq('status', 'pending')
+      .lte('remind_at', now)
+      .limit(20);
+    if (error) {
+      console.error('闹钟查询失败:', error.message);
+      return;
+    }
+    if (!due || !due.length) return;
+    const subs = await getPushSubscriptions();
+    for (const r of due) {
+      const hasPush = PUSH_ENABLED && subs.length > 0;
+      try {
+        if (hasPush) await sendPushAll(subs, '⏰ 默的提醒', String(r.content || ''));
+        // 页面打开时也能看到（轮询通知）；已推送过的带 push_sent 标记避免重复弹
+        await supabase.from('notifications').insert({
+          title: '⏰ 默的提醒',
+          body: String(r.content || ''),
+          push_sent: hasPush
+        });
+        await supabase.from('reminders').update({ status: 'fired', fired_at: now }).eq('id', r.id);
+        console.log('⏰ 闹钟触发:', r.content, '| 推送数:', subs.length);
+      } catch (err) {
+        console.error('闹钟触发失败:', err.message);
+      }
+    }
+  } catch (err) {
+    console.error('闹钟调度异常:', err.message);
+  } finally {
+    remindersCheckRunning = false;
+  }
+}
+setInterval(checkDueReminders, 20000);
+checkDueReminders();
 
 // ================== 账本 & 日历 ==================
 
