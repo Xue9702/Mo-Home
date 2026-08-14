@@ -3105,8 +3105,7 @@
             if (json.content) {
               ensureMsg();
               fullReply += stripToyCmdTags(json.content);
-              currentBubble.textContent = fullReply;
-              messageList.scrollTop = messageList.scrollHeight;
+              throttledStreamRender(currentBubble, fullReply, true);
             }
             if (json.done) {
               if (!fullReply.trim() && !json.assistantMessageId && currentMsgDiv) {
@@ -5267,7 +5266,7 @@
                   fullReply = ''; fullThinking = '';
                   messageList.scrollTop = messageList.scrollHeight;
                 }
-                if (json.content) { fullReply += stripToyCmdTags(json.content); currentAssistantBubble.textContent = fullReply; }
+                if (json.content) { fullReply += stripToyCmdTags(json.content); throttledStreamRender(currentAssistantBubble, fullReply, true); }
                 if (json.done) {
                   // 收尾：有思考则补上折叠按钮+时间戳，无思考则移除空容器并在气泡上方补时间戳
                   finalizeStreamingMessage(currentMsgDiv, currentThinkingContainer, currentAssistantBubble, !!fullThinking || searchPhaseActive);
@@ -5768,8 +5767,7 @@
 
                 if (json.content) {
                   fullReply += stripToyCmdTags(json.content);
-                  currentBubble.textContent = fullReply;
-                  messageList.scrollTop = messageList.scrollHeight;
+                  throttledStreamRender(currentBubble, fullReply, true);
                 }
 
                 if (json.done) {
@@ -5920,7 +5918,7 @@
                   fullReply = ''; fullThinking = '';
                   messageList.scrollTop = messageList.scrollHeight;
                 }
-                if (json.content) { fullReply += stripToyCmdTags(json.content); currentBubble.textContent = fullReply; }
+                if (json.content) { fullReply += stripToyCmdTags(json.content); throttledStreamRender(currentBubble, fullReply, true); }
                 if (json.done && !json.assistantMessageId) {
                   // 第一轮消息完成（过渡语气泡）：收尾补上折叠按钮+时间戳
                   finalizeStreamingMessage(currentMsgDiv, currentThinkDiv, currentBubble, !!fullThinking);
@@ -6021,17 +6019,19 @@
         }
         setStatus('注册推送…');
         try {
-          const reg = await navigator.serviceWorker.register('/sw.js');
-          await navigator.serviceWorker.ready;
-          let sub = await reg.pushManager.getSubscription();
+          const reg = await withTimeout(navigator.serviceWorker.register('/sw.js'), 15000, '注册服务线程超时');
+          try { await withTimeout(reg.update(), 8000, '更新服务线程超时'); } catch (e) { /* 忽略更新失败 */ }
+          const activeReg = await withTimeout(waitForActiveSW(reg), 15000, '服务线程激活超时');
+          let sub = await withTimeout(activeReg.pushManager.getSubscription(), 10000, '读取订阅超时');
           if (!sub) {
             const keyRes = await fetch('/api/push/vapid-key');
             if (!keyRes.ok) { setStatus('⚠️ 推送未配置'); refreshNotifyState(); return false; }
             const keyData = await keyRes.json();
-            sub = await reg.pushManager.subscribe({
+            setStatus('创建订阅…');
+            sub = await withTimeout(activeReg.pushManager.subscribe({
               userVisibleOnly: true,
               applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
-            });
+            }), 20000, '订阅超时（浏览器未响应）');
           }
           setStatus('保存订阅…');
           const saveRes = await fetch('/api/push/subscribe', {
@@ -6051,6 +6051,34 @@
         }
       }
       window.enableNotifications = enableNotifications;
+
+      function withTimeout(promise, ms, label) {
+        return Promise.race([
+          Promise.resolve(promise),
+          new Promise((_, reject) => setTimeout(() => reject(new Error(label || '操作超时')), ms))
+        ]);
+      }
+
+      // 等 Service Worker 真正进入 active 状态（ready 可能被旧版本占住）
+      function waitForActiveSW(reg) {
+        return new Promise((resolve, reject) => {
+          if (!reg) return reject(new Error('无服务线程'));
+          if (reg.active) return resolve(reg);
+          const timer = setTimeout(() => reject(new Error('服务线程未激活')), 15000);
+          const check = () => {
+            if (reg.active) { clearTimeout(timer); return resolve(reg); }
+            const w = reg.waiting;
+            if (w) {
+              w.addEventListener('statechange', check);
+              return;
+            }
+            const i = reg.installing;
+            if (i) { i.addEventListener('statechange', check); return; }
+            setTimeout(check, 300);
+          };
+          check();
+        });
+      }
 
       async function toggleNotifications(on) {
         const sw = document.getElementById('notifySwitch');
@@ -6265,6 +6293,16 @@
         } catch (e) { /* ignore */ }
       }
 
+      // 流式气泡：节流渲染（最多约 40 次/秒），避免每块都整体重写文本导致手机卡顿
+      function throttledStreamRender(bubble, text, scrollList) {
+        if (!bubble) return;
+        clearTimeout(bubble._streamTimer);
+        bubble._streamTimer = setTimeout(() => {
+          try { bubble.textContent = text; } catch (e) { /* 气泡已被替换 */ }
+          if (scrollList) { try { messageList.scrollTop = messageList.scrollHeight; } catch (e) {} }
+        }, 24);
+      }
+
       // ============ 测试窗口（?mode=test）============
       function openTestPersonaEditor() {
         const modal = document.createElement('div');
@@ -6384,7 +6422,7 @@
               }
               if (json.content) {
                 fullReply += json.content;
-                m2.bubble.textContent = fullReply;
+                throttledStreamRender(m2.bubble, fullReply, false);
               }
             }
             messageList.scrollTop = messageList.scrollHeight;

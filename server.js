@@ -963,7 +963,7 @@ function buildAllTools() {
 // 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
 // 流式补发：为拦截 [SEARCH_QUERY] 标签缓存的内容，按小间隔逐段补发，
 // 让默的回复看起来是流式打出来的（思考内容仍实时转发）
-async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 24, delayMs = 40) {
+async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 40, delayMs = 12) {
   if (!contentBuffer) return;
   for (let i = 0; i < contentBuffer.length; i += chunkSize) {
     sendSSE({ content: contentBuffer.substring(i, i + chunkSize) });
@@ -1709,9 +1709,9 @@ app.post('/api/chat', async (req, res) => {
     // 纯工具调用轮（星露谷）没有正文是正常的：放行给后面的"农场行动"接续轮
     const stardewFirst = first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name));
 
-    // 检查是否收到了完整的回复（纯副作用工具调用如设置闹钟/发动态也算有效）
+    // 检查是否收到了完整的回复（工具调用轮没有正文是正常的：搜索/星露谷/闹钟/待办等后续都有接续轮）
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
     );
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
       console.error('未收到有效回复，完整响应体可能为空');
@@ -2194,7 +2194,12 @@ app.post('/api/regenerate', async (req, res) => {
     // 纯工具调用轮（星露谷）没有正文是正常的：放行给后面的"农场行动"接续轮
     const stardewFirst = first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name));
 
-    if (!fullReply && !stardewFirst) {
+    // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
+    const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
+    );
+
+    if (!fullReply && !stardewFirst && !sideEffectOnly) {
       if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, nextVersion, targetMsg.session_id);
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
@@ -6680,7 +6685,12 @@ app.post('/api/edit-message', async (req, res) => {
     // 纯工具调用轮（星露谷）没有正文是正常的：放行给后面的"农场行动"接续轮
     const stardewFirst = first.toolCalls && first.toolCalls.some(tc => isStardewToolName(tc.function?.name));
 
-    if (!fullReply && !stardewFirst) {
+    // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
+    const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
+    );
+
+    if (!fullReply && !stardewFirst && !sideEffectOnly) {
       if (first.fullThinking) await savePartialAssistantGrouped(first.fullReply, first.fullThinking, groupId, newVersion, originalMsg.session_id);
       console.error('未收到有效回复');
       sendSSE({ error: 'AI 服务未返回有效内容' });
