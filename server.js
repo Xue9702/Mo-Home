@@ -3491,10 +3491,12 @@ app.get('/api/diag/notifications', async (req, res) => {
     const unread = await supabase.from('notifications').select('*').eq('read', false).limit(5);
     const total = await supabase.from('notifications').select('id', { count: 'exact', head: true });
     const col = await supabase.from('notifications').select('push_sent').limit(1);
+    const recent = await supabase.from('notifications').select('id, title, body, read, push_sent, created_at').order('id', { ascending: false }).limit(5);
     res.json({
       unread: unread.error ? { error: unread.error.message } : unread.data,
       totalCount: total.count,
-      pushSentColumn: col.error ? { error: col.error.message } : 'exists'
+      pushSentColumn: col.error ? { error: col.error.message } : 'exists',
+      recent: recent.error ? { error: recent.error.message } : recent.data
     });
   } catch (e) {
     res.status(500).json({ err: e.message });
