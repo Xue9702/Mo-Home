@@ -763,7 +763,7 @@
     #inputArea .input-row {
       display: flex;
       gap: 10px;
-      align-items: flex-end;
+      align-items: center;
     }
 
     .attach-btn {
@@ -1033,14 +1033,11 @@
     }
 
     #inputArea {
-      margin: 0 10px 10px;
-      padding: 8px 10px;
-      border-radius: 24px;
-      background: var(--glass-bg);
-      backdrop-filter: blur(18px) saturate(160%);
-      -webkit-backdrop-filter: blur(18px) saturate(160%);
-      border: 1px solid var(--line);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 28px rgba(120, 110, 95, 0.1);
+      margin: 0;
+      padding: 8px 12px 12px;
+      background: transparent;
+      border: none;
+      box-shadow: none;
     }
 
     #userInput {
@@ -1101,47 +1098,51 @@
       box-shadow: 0 4px 16px rgba(126, 159, 179, 0.22);
     }
 
-    /* Kimi 式思考卡片 */
-    .thinking-header {
+    /* Kimi 式思考卡片（整卡一体：头部在框内） */
+    .thinking-content {
       background: var(--card);
       border: 1px solid var(--line);
-      border-bottom: none;
-      border-radius: 14px 14px 0 0;
-      color: #8F877D;
+      border-radius: 14px;
+      color: #9A928A;
+      margin-top: 6px;
+      overflow: hidden;
+      padding: 0;
     }
-    .thinking-header::after {
-      content: '▾';
-      color: #B4ACA1;
-      font-size: 10px;
-    }
-    .thinking-header:has(+ .thinking-content.open)::after {
-      transform: rotate(180deg);
-    }
-    .thinking-toggle {
-      display: inline-flex;
+    .thinking-header {
+      display: flex;
       align-items: center;
-      gap: 6px;
-      cursor: pointer;
+      gap: 8px;
+      padding: 9px 12px;
       color: #8F877D;
       font-size: 12.5px;
       user-select: none;
     }
-    .thinking-toggle::after {
-      content: '思考过程';
-      margin-left: 2px;
+    .thinking-header .th-bot {
+      display: flex;
+      color: var(--blue-deep);
     }
-    .thinking-toggle:hover {
-      background: transparent;
+    .thinking-header .th-time {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 11px;
     }
-    .thinking-content {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-top: none;
-      border-radius: 0 0 14px 14px;
+    .thinking-header .th-chev {
+      display: flex;
+      color: #B4ACA1;
+    }
+    .thinking-divider {
+      height: 1px;
+      background: var(--line);
+    }
+    .thinking-body {
+      padding: 8px 12px 12px;
       color: #9A928A;
-      padding: 6px 14px 12px;
-      margin-top: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-size: 13px;
     }
+    .thinking-content .search-status-line { margin: 8px 12px 0; }
+    .thinking-content .search-think-body { padding: 0 12px 12px; }
 
     .timestamp {
       color: var(--muted);
@@ -1541,8 +1542,8 @@
         chatPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v16"/><path d="m19 13 2-1a9 9 0 0 1-18 0l2 1"/><path d="M9 11h6"/><circle cx="12" cy="4" r="2"/></svg>',
         memoryPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>',
         xueHomePage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>',
-        toyPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>',
-        farmPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 20s1.5-2 4-2 4 2 4 2"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg>',
+        toyPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>',
+        farmPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>',
         settingsPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
       };
 
@@ -1961,8 +1962,8 @@
         const appTiles = [
           { label: '动态', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>', fn: () => { window.location.href = '/moments.html'; } },
           { label: '账本', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 3 5-6"/></svg>', fn: () => { window.location.href = '/ledger.html'; } },
-          { label: '玩具', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>', fn: () => { switchPage('toyPage'); } },
-          { label: '星露谷', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 20s1.5-2 4-2 4 2 4 2"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg>', fn: () => { switchPage('farmPage'); } }
+          { label: '玩具', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>', fn: () => { switchPage('toyPage'); } },
+          { label: '星露谷', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>', fn: () => { switchPage('farmPage'); } }
         ];
         const appGrid = document.createElement('div');
         appGrid.className = 'app-grid';
@@ -3304,7 +3305,8 @@
             if (json.thinking) {
               ensureMsg();
               fullThinking += json.thinking;
-              (currentThinkBody || currentThinkDiv).textContent = fullThinking;
+              const tbody = ensureThinkingStructure(currentThinkDiv, true);
+              if (tbody) tbody.textContent = fullThinking;
               currentThinkDiv.style.display = 'block';
               messageList.scrollTop = messageList.scrollHeight;
             }
@@ -4671,6 +4673,7 @@
         const path = document.createElementNS(svgNS, 'path');
         path.setAttribute('d', 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48');
         svg.appendChild(path);
+        svg.style.verticalAlign = 'middle';
         return svg;
       }
 
@@ -4731,6 +4734,46 @@
         bubble.className = 'bubble';
         msg.appendChild(bubble);
         return { msg, thinkDiv, bubble };
+      }
+
+      // 思考框头部：bot 图标 + 思考中.../已思考 + 时间戳 + 角标
+      function createBotIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path'); p1.setAttribute('d', 'M12 8V4H8'); svg.appendChild(p1);
+        const r1 = document.createElementNS(svgNS, 'rect'); r1.setAttribute('x', '4'); r1.setAttribute('y', '8'); r1.setAttribute('width', '16'); r1.setAttribute('height', '12'); r1.setAttribute('rx', '2'); svg.appendChild(r1);
+        const p2 = document.createElementNS(svgNS, 'path'); p2.setAttribute('d', 'M2 14h2'); svg.appendChild(p2);
+        const p3 = document.createElementNS(svgNS, 'path'); p3.setAttribute('d', 'M20 14h2'); svg.appendChild(p3);
+        const p4 = document.createElementNS(svgNS, 'path'); p4.setAttribute('d', 'M15 13v2'); svg.appendChild(p4);
+        const p5 = document.createElementNS(svgNS, 'path'); p5.setAttribute('d', 'M9 13v2'); svg.appendChild(p5);
+        return svg;
+      }
+
+      // 确保思考容器有「头部 + 正文」结构，返回正文元素
+      function ensureThinkingStructure(container, streaming) {
+        if (!container) return null;
+        let header = container.querySelector('.thinking-header');
+        if (!header) {
+          header = document.createElement('div');
+          header.className = 'thinking-header';
+          const bot = document.createElement('span'); bot.className = 'th-bot'; bot.appendChild(createBotIcon());
+          const label = document.createElement('span'); label.className = 'th-label'; label.textContent = streaming ? '思考中...' : '已思考';
+          const time = document.createElement('span'); time.className = 'th-time';
+          const chev = document.createElement('span'); chev.className = 'th-chev'; chev.appendChild(createChevronDownIcon());
+          header.appendChild(bot); header.appendChild(label); header.appendChild(time); header.appendChild(chev);
+          container.appendChild(header);
+        }
+        let body = container.querySelector('.thinking-body');
+        if (!body) {
+          body = document.createElement('div');
+          body.className = 'thinking-body';
+          container.appendChild(body);
+        }
+        return body;
       }
 
       // 把搜索状态行 + 思考正文容器挂进新消息的思考区（可随思考一起折叠）
@@ -5177,43 +5220,25 @@
       // 流式消息收尾：有思考时补上"折叠按钮+时间戳"行；无思考时在气泡上方补时间戳
       function finalizeStreamingMessage(msgDiv, thinkDiv, bubble, hasThinking) {
         if (hasThinking && thinkDiv) {
-          const row = document.createElement('div');
-          row.className = 'thinking-header';
-          row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--card);border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;margin-top:6px;';
-
-          const toggle = document.createElement('span');
-          toggle.className = 'thinking-toggle';
-          toggle.style.cssText = 'display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#8F877D;font-size:12.5px;user-select:none;';
-
-          // 默认展开，显示心跳线图标
-          toggle.appendChild(createActivityIcon());
-          toggle.title = '收起思考';
-
-          toggle.addEventListener('click', () => {
+          // 头部（在框内）：bot 图标 + 已思考 + 时间戳 + 角标
+          const header = thinkDiv.querySelector('.thinking-header') || ensureThinkingStructure(thinkDiv, false);
+          const label = header.querySelector('.th-label'); if (label) label.textContent = '已思考';
+          const time = header.querySelector('.th-time'); if (time) time.textContent = formatTime();
+          const chev = header.querySelector('.th-chev'); chev.innerHTML = ''; chev.appendChild(createChevronDownIcon());
+          // 分隔线（头部与正文之间，不太显眼）
+          if (!thinkDiv.querySelector('.thinking-divider')) {
+            const divider = document.createElement('div');
+            divider.className = 'thinking-divider';
+            const body = thinkDiv.querySelector('.thinking-body') || thinkDiv.querySelector('.search-think-body') || thinkDiv.lastElementChild;
+            if (body && body !== header) thinkDiv.insertBefore(divider, body);
+          }
+          header.style.cursor = 'pointer';
+          header.onclick = () => {
             const isOpen = thinkDiv.classList.toggle('open');
             thinkDiv.style.display = isOpen ? 'block' : 'none';
-            toggle.innerHTML = '';
-            if (isOpen) {
-              toggle.appendChild(createActivityIcon());
-              toggle.title = '收起思考';
-            } else {
-              toggle.appendChild(createHeartIcon());
-              toggle.title = '展开思考';
-            }
-          });
-          row.appendChild(toggle);
-
-          const timeSpan = document.createElement('span');
-          timeSpan.className = 'timestamp';
-          timeSpan.style.marginTop = '0';
-          timeSpan.style.padding = '0';
-          timeSpan.style.marginLeft = 'auto';
-          timeSpan.style.color = 'var(--muted)';
-          timeSpan.style.fontSize = '11px';
-          timeSpan.textContent = formatTime();
-          row.appendChild(timeSpan);
-
-          thinkDiv.parentNode.insertBefore(row, thinkDiv);
+            chev.innerHTML = '';
+            chev.appendChild(isOpen ? createChevronDownIcon() : createChevronRightIcon());
+          };
           thinkDiv.classList.add('open');
           thinkDiv.style.display = 'block';
         } else {
@@ -5443,7 +5468,8 @@
                     currentThinkingContainer.style.display = 'block';
                     newAssistantMsg.insertBefore(currentThinkingContainer, newBubble);
                   }
-                  (currentThinkBody || currentThinkingContainer).textContent = fullThinking;
+                  const tbody = ensureThinkingStructure(currentThinkingContainer, true);
+                  if (tbody) tbody.textContent = fullThinking;
                 }
                 if (json.searchStart) {
                   // 静默搜索：不新建气泡，把搜索状态行挂进当前思考区，同一气泡里直接回答
@@ -5912,7 +5938,8 @@
                 if (json.thinking) {
                   // 服务端已过滤重复分片，这里直接追加
                   fullThinking += json.thinking;
-                  (currentThinkBody || currentThinkDiv).textContent = fullThinking;
+                  const tbody = ensureThinkingStructure(currentThinkDiv, true);
+                  if (tbody) tbody.textContent = fullThinking;
                   currentThinkDiv.style.display = 'block'; // 有内容就显示
                   messageList.scrollTop = messageList.scrollHeight;
                 }
@@ -6100,7 +6127,8 @@
                   // 服务端已过滤重复分片，这里直接追加
                   fullThinking += json.thinking;
                   currentThinkDiv.style.display = 'block';
-                  (currentThinkBody || currentThinkDiv).textContent = fullThinking;
+                  const tbody = ensureThinkingStructure(currentThinkDiv, true);
+                  if (tbody) tbody.textContent = fullThinking;
                 }
                 if (json.searchStart) {
                   // 静默搜索：不新建气泡，同一气泡里继续（思考→搜索状态→回答）
@@ -6794,7 +6822,8 @@
               if (json.error) m2.bubble.textContent = '⚠️ ' + json.error;
               if (json.thinking) {
                 fullThinking += json.thinking;
-                m2.thinkDiv.textContent = fullThinking;
+                const tbody = ensureThinkingStructure(m2.thinkDiv, true);
+                if (tbody) tbody.textContent = fullThinking;
               }
               if (json.content) {
                 fullReply += json.content;
