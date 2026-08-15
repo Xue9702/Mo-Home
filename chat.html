@@ -3085,7 +3085,7 @@
             try { json = JSON.parse(trimmed.slice(6)); } catch (e) { continue; }
             if (json.thinking) {
               ensureMsg();
-              if (!fullThinking.endsWith(json.thinking)) fullThinking += json.thinking;
+              fullThinking += json.thinking;
               (currentThinkBody || currentThinkDiv).textContent = fullThinking;
               currentThinkDiv.style.display = 'block';
               messageList.scrollTop = messageList.scrollHeight;
@@ -5203,10 +5203,8 @@
                 const json = JSON.parse(payload);
                 if (json.userMessageId) { userMessageId = json.userMessageId; groupId = json.groupId; currentVersion = json.currentVersion; totalVersions = json.totalVersions; }
                 if (json.thinking) {
-                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
-                  if (!fullThinking.endsWith(json.thinking)) {
-                    fullThinking += json.thinking;
-                  }
+                  // 服务端已过滤重复分片，这里直接追加（endsWith 去重会误吞"1500"的第二个 0）
+                  fullThinking += json.thinking;
                   if (!currentThinkingContainer) {
                     currentThinkingContainer = document.createElement('div');
                     currentThinkingContainer.className = 'thinking-content';
@@ -5680,10 +5678,8 @@
                 const json = JSON.parse(payload);
 
                 if (json.thinking) {
-                  // 去重追加思考内容
-                  if (!fullThinking.endsWith(json.thinking)) {
-                    fullThinking += json.thinking;
-                  }
+                  // 服务端已过滤重复分片，这里直接追加
+                  fullThinking += json.thinking;
                   (currentThinkBody || currentThinkDiv).textContent = fullThinking;
                   currentThinkDiv.style.display = 'block'; // 有内容就显示
                   messageList.scrollTop = messageList.scrollHeight;
@@ -5868,10 +5864,8 @@
               try {
                 const json = JSON.parse(payload);
                 if (json.thinking) {
-                  // 去重：只有当收到的新内容不是已记录内容的尾部时才追加
-                  if (!fullThinking.endsWith(json.thinking)) {
-                    fullThinking += json.thinking;
-                  }
+                  // 服务端已过滤重复分片，这里直接追加
+                  fullThinking += json.thinking;
                   currentThinkDiv.style.display = 'block';
                   (currentThinkBody || currentThinkDiv).textContent = fullThinking;
                 }
@@ -6417,7 +6411,7 @@
               try { json = JSON.parse(t.slice(6)); } catch (e) { continue; }
               if (json.error) m2.bubble.textContent = '⚠️ ' + json.error;
               if (json.thinking) {
-                if (!fullThinking.endsWith(json.thinking)) fullThinking += json.thinking;
+                fullThinking += json.thinking;
                 m2.thinkDiv.textContent = fullThinking;
               }
               if (json.content) {

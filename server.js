@@ -681,6 +681,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
   let fullReply = '';
   let fullThinking = '';
   let contentBuffer = '';
+  let lastThinkingChunk = ''; // 只跳过完全重复的重发分片，避免 endsWith 把"1500"的第二个 0 误吞
   const toolCallsMap = new Map(); // 流式分片到达，按 index 累积工具调用
 
   const reader = response.body.getReader();
@@ -709,8 +710,10 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
 
           if (delta?.reasoning_content) {
             const t = delta.reasoning_content;
-            // 尾缀去重：模型偶尔会重发思考分片，避免思考内容重复
-            if (!fullThinking.endsWith(t)) {
+            // 去重：模型偶尔会完整重发同一个思考分片；只跳过完全相同的分片，
+            // 不再用 endsWith（会把"150"+"0"里第二个 0 误判成重复而吞掉）
+            if (t !== lastThinkingChunk) {
+              lastThinkingChunk = t;
               fullThinking += t;
               sendSSE({ thinking: t });
             }
@@ -4309,6 +4312,20 @@ async function ensureAevumEmbedding(id, content) {
   }
 }
 
+// 取一段文字的几个 30 字锚点（判断两段文字是否重合用）
+function textAnchors(text, size = 30) {
+  const t = String(text || '').replace(/\s+/g, '');
+  if (!t) return [];
+  if (t.length <= size) return t.length >= 20 ? [t] : [];
+  const anchors = [];
+  const positions = [0, Math.floor(t.length / 2), Math.floor(t.length * 0.8)];
+  for (const pos of positions) {
+    const a = t.slice(pos, pos + size);
+    if (a.length >= 20) anchors.push(a);
+  }
+  return anchors;
+}
+
 // 召回：向量相似度取活跃记忆；向量不可用时退回关键词匹配
 async function recallAevumMemories(text, limit = 5, excludeText = '', historyText = '') {
   const q = String(text || '').trim();
@@ -4359,19 +4376,26 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     }
     let items = [...merged.values()];
     if (!items || !items.length) return '';
-    // 重新生成场景：排除与旧版回复重合的记忆，避免默看到自己上一版的话
+    // 重新生成场景：排除与旧版回复重合的记忆（摘要和原文都查，避免旧版的话藏在原文里被召回）
     if (excludeNorm) {
-      items = items.filter(m => {
-        const mn = String(m.content || '').replace(/\s+/g, '');
-        return !(mn.includes(excludeNorm) || excludeNorm.includes(mn));
-      });
+      const anchors = textAnchors(excludeNorm);
+      if (anchors.length) {
+        items = items.filter(m => {
+          const hay = [String(m.content || ''), ...(Array.isArray(m.evidence) ? m.evidence : [])]
+            .map(s => String(s || '').replace(/\s+/g, ''));
+          return !anchors.some(a => hay.some(h => h.includes(a)));
+        });
+      }
     }
-    // 已在最近历史上下文里的内容不再重复召回（避免 5000 字历史 + 召回重复）
+    // 已在最近历史上下文里的内容不再重复召回（摘要与每条原文前 30 字都检查）
     if (historyNorm) {
       items = items.filter(m => {
-        const src = (Array.isArray(m.evidence) && m.evidence.length) ? String(m.evidence[0] || '') : String(m.content || '');
-        const anchor = src.replace(/\s+/g, '').slice(0, 30);
-        return anchor.length < 20 || !historyNorm.includes(anchor);
+        const hay = [String(m.content || ''), ...(Array.isArray(m.evidence) ? m.evidence : [])]
+          .map(s => String(s || '').replace(/\s+/g, ''));
+        return !hay.some(h => {
+          const anchor = h.slice(0, 30);
+          return anchor.length >= 20 && historyNorm.includes(anchor);
+        });
       });
     }
     if (!items.length) return '';
