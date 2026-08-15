@@ -44,7 +44,7 @@ jobs:
           code=$?
           if [ $code -ne 0 ]; then
             echo "::error::Gradle build failed (exit $code)"
-            tail -n 40 ../gradle.log | while IFS= read -r line; do echo "::error::$line"; done
+            tail -n 80 ../gradle.log | grep -aiE "FAILURE|What went wrong|Caused by|Exception|error:|failed|Could not|Unable|no sdk|license|not found" | tail -n 6 | while IFS= read -r line; do echo "::error::$line"; done
             exit $code
           fi
 
