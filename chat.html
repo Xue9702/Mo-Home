@@ -5264,7 +5264,7 @@
                   messageList.scrollTop = messageList.scrollHeight;
                 }
                 if (json.toyCmd) { toyExecuteCmd(json.toyCmd); }
-                if (json.remindSet) { showRemindToast('⏰ 闹钟已设置：' + (json.remindSet.content || '')); }
+                if (json.remindSet) { showRemindToast('⏰ 闹钟已设置：' + (json.remindSet.content || '')); syncLocalReminders(); }
                 if (json.toolEvent) { addToolEventLine(json.toolEvent); }
                 if (json.stardewCmd) {
                   farmHandleCmd(json.stardewCmd);
@@ -5758,6 +5758,7 @@
                 }
                 if (json.remindSet) {
                   showRemindToast('⏰ 闹钟已设置：' + (json.remindSet.content || ''));
+                  syncLocalReminders();
                 }
                 if (json.toolEvent) {
                   addToolEventLine(json.toolEvent);
@@ -6166,6 +6167,42 @@
       }
       setInterval(pollNotifications, 25000);
 
+      // ---------- APK 本地通知（不依赖 Google 服务，锁屏也能响） ----------
+      function isCapacitorApp() {
+        try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch (e) { return false; }
+      }
+
+      // 把服务端所有未触发的闹钟同步为手机本地通知（先清空再重排，幂等）
+      async function syncLocalReminders() {
+        if (!isCapacitorApp()) return;
+        try {
+          const L = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+          if (!L) return;
+          const perm = await L.checkPermissions();
+          if (perm.display !== 'granted') {
+            const req = await L.requestPermissions();
+            if (req.display !== 'granted') return;
+          }
+          await L.cancelAll();
+          const res = await fetch('/api/reminders');
+          const data = await res.json();
+          const pending = (data.items || []).filter(r => r.status === 'pending');
+          if (!pending.length) return;
+          const notifications = pending.map(r => ({
+            id: (Number(r.id) % 2000000000) + 1,
+            title: '⏰ 默的提醒',
+            body: String(r.content || '').slice(0, 120),
+            schedule: { at: new Date(r.remind_at) },
+            extra: { reminderId: r.id }
+          }));
+          await L.schedule({ notifications });
+          console.log('✅ 本地闹钟已同步', notifications.length, '条');
+        } catch (e) {
+          console.error('本地闹钟同步失败:', e);
+        }
+      }
+      window.syncLocalReminders = syncLocalReminders;
+
       // ---------- 闹钟提醒（可手动添加/取消；默也能通过工具设置） ----------
       function createClockIcon() {
         const svgNS = 'http://www.w3.org/2000/svg';
@@ -6247,7 +6284,7 @@
                 const del = document.createElement('button');
                 del.textContent = '取消';
                 del.style.cssText = 'padding:4px 10px;border:none;border-radius:8px;background:#ffe3e3;color:#c0392b;font-size:12px;cursor:pointer;';
-                del.onclick = async () => { await fetch('/api/reminders/' + r.id, { method: 'DELETE' }); loadList(); };
+                del.onclick = async () => { await fetch('/api/reminders/' + r.id, { method: 'DELETE' }); loadList(); syncLocalReminders(); };
                 rowEl.appendChild(del);
               }
               list.appendChild(rowEl);
@@ -6266,7 +6303,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content, remind_at: new Date(remindAt).toISOString() })
           });
-          if (res.ok) { contentInput.value = ''; timeInput.value = ''; loadList(); }
+          if (res.ok) { contentInput.value = ''; timeInput.value = ''; loadList(); syncLocalReminders(); }
           else { alert('添加失败，请重试'); }
         };
         closeBtn.onclick = () => modal.remove();
@@ -6494,10 +6531,10 @@
         headerSettingsBtn.appendChild(createMenuIcon());
       }
 
-      unlockBtn.addEventListener('click', () => {
-        if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; if (TEST_MODE) loadTestHistory(); else loadHistory(); userInput.focus(); loginError.style.display = 'none'; setInterval(pollNotifications, 25000); setTimeout(() => updateTabIndicator(), 80); }
-        else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
-      });
+        unlockBtn.addEventListener('click', () => {
+          if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; if (TEST_MODE) loadTestHistory(); else { loadHistory(); setTimeout(syncLocalReminders, 1500); } userInput.focus(); loginError.style.display = 'none'; setInterval(pollNotifications, 25000); setTimeout(() => updateTabIndicator(), 80); }
+          else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
+        });
       passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); } });
       sendBtn.addEventListener('click', () => { if (TEST_MODE) sendTestMessage(); else sendMessage(); });
       userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (TEST_MODE) sendTestMessage(); else sendMessage(); } });

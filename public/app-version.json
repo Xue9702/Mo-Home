@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "默的小屋首个 APK 版本：原生外壳 + 线上网页，无浏览器角标"
+  "notes": "新增本地闹钟：锁屏也能响，不依赖 Google 服务"
 }
