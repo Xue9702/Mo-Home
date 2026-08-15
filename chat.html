@@ -42,6 +42,7 @@
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
       display: flex;
       align-items: center;
+      gap: 12px;
       position: relative;
     }
 
@@ -498,6 +499,34 @@
     .feature-card .card-icon {
       color: #555;
     }
+
+    /* 入口卡片（长条：图标块 + 标题 + 说明） */
+    .entry {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 13px 14px;
+      margin-bottom: 12px;
+      cursor: pointer;
+    }
+    .entry .e-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: var(--blue);
+      color: var(--cream);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .entry .e-text { flex: 1; min-width: 0; }
+    .entry .e-title { font-size: 14.5px; color: var(--dark); font-weight: 500; }
+    .entry .e-desc { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+    .entry .e-chev { color: #C7BFB4; flex-shrink: 0; display: flex; }
 
     /* 天气卡片 */
     .weather-card {
@@ -1073,32 +1102,36 @@
     }
 
     /* Kimi 式思考卡片 */
-    .thinking-toggle {
+    .thinking-header {
       background: var(--card);
       border: 1px solid var(--line);
       border-bottom: none;
       border-radius: 14px 14px 0 0;
       color: #8F877D;
-      padding: 9px 14px;
-      display: flex;
+    }
+    .thinking-header::after {
+      content: '▾';
+      color: #B4ACA1;
+      font-size: 10px;
+    }
+    .thinking-header:has(+ .thinking-content.open)::after {
+      transform: rotate(180deg);
+    }
+    .thinking-toggle {
+      display: inline-flex;
       align-items: center;
       gap: 6px;
+      cursor: pointer;
+      color: #8F877D;
+      font-size: 12.5px;
+      user-select: none;
     }
     .thinking-toggle::after {
       content: '思考过程';
       margin-left: 2px;
     }
-    .thinking-toggle::before {
-      content: '▾';
-      margin-left: auto;
-      font-size: 10px;
-      color: #B4ACA1;
-    }
-    .thinking-toggle:has(+ .thinking-content.open)::before {
-      transform: rotate(180deg);
-    }
     .thinking-toggle:hover {
-      background: var(--card);
+      background: transparent;
     }
     .thinking-content {
       background: var(--card);
@@ -1236,8 +1269,8 @@
             <button id="imagePreviewRemove" aria-label="移除图片">✕</button>
           </div>
           <div class="input-row">
-            <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
             <button id="attachBtn" class="attach-btn" title="添加附件" aria-label="添加附件"></button>
+            <textarea id="userInput" rows="1" placeholder="输入消息…" aria-label="输入消息"></textarea>
             <button id="sendBtn" aria-label="发送" title="发送"></button>
           </div>
           <input type="file" id="imageInput" accept="image/*" style="display:none;">
@@ -2175,6 +2208,12 @@
       ];
 
       // 默的小屋：心情 + 彩蛋图鉴 + 今日行动 + 行动日志时间线
+      let moHomeDetail = '';
+      function moHomeShowDetail(which) { moHomeDetail = which; renderMoHome(); }
+      window.moHomeShowDetail = moHomeShowDetail;
+      function moHomeBack() { moHomeDetail = ''; renderMoHome(); }
+      window.moHomeBack = moHomeBack;
+
       async function renderMoHome() {
         const box = document.getElementById('moHomeContent');
         if (!box) return;
@@ -2194,7 +2233,44 @@
               <div style="height:100%;width:${Math.max(0, Math.min(100, v))}%;background:linear-gradient(90deg,#9BB7C8,#7E9FB3);border-radius:4px;"></div>
             </div>`;
 
-          let html = `
+          if (moHomeDetail === 'diary') {
+            box.innerHTML = `
+              <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span onclick="moHomeBack()" style="cursor:pointer;color:var(--blue-deep);font-size:13px;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                    返回
+                  </span>
+                  <div style="font-size:15px;font-weight:600;color:var(--dark);">默的日记</div>
+                </div>
+                ${moDiary.length ? moDiary.map(d => `
+                  <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
+                    <span style="color:var(--muted);">${escapeHtml2(d.entry_date || '未标注日期')}</span>
+                    <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content)}</div>
+                  </div>`).join('') : '<div style="font-size:13px;color:#bbb;">默还没写过日记</div>'}
+              </div>`;
+            return;
+          }
+          if (moHomeDetail === 'actions') {
+            box.innerHTML = `
+              <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span onclick="moHomeBack()" style="cursor:pointer;color:var(--blue-deep);font-size:13px;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                    返回
+                  </span>
+                  <div style="font-size:15px;font-weight:600;color:var(--dark);">行动日志</div>
+                </div>
+                ${actions.length ? actions.map(a => `
+                  <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
+                    <div style="color:var(--muted);font-size:12px;">第 ${a.wake_number} 次唤醒 · ${new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${a.note ? ' · ' + escapeHtml2(a.note) : ''}</div>
+                    <div style="margin-top:4px;">${(a.actions || []).map(x => `${x.type}${x.tag ? '（' + escapeHtml2(x.tag) + '）' : ''}${x.detail ? '：' + escapeHtml2(x.detail) : ''}`).join('<br>')}</div>
+                    ${a.summary ? `<div style="margin-top:4px;color:var(--muted);font-style:italic;">✨ ${escapeHtml2(a.summary)}</div>` : ''}
+                  </div>`).join('') : '<div style="font-size:13px;color:#bbb;">还没有行动记录</div>'}
+              </div>`;
+            return;
+          }
+          box.innerHTML = `
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="font-size:15px;font-weight:600;color:var(--dark);">默</div>
               <div style="font-size:13px;color:var(--dark);opacity:.75;margin-top:6px;">心情：${state.mo_mood} / 100</div>
@@ -2211,30 +2287,28 @@
                   </div>`).join('')}
               </div>
             </div>
-            <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:var(--dark);margin-bottom:8px;">默的日记</div>
-              ${moDiary.length ? moDiary.map(d => `
-                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
-                  <span style="color:var(--muted);">${escapeHtml2(d.entry_date || '未标注日期')}</span>
-                  <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content.length > 120 ? d.content.substring(0, 120) + '…' : d.content)}</div>
-                </div>`).join('') : '<div style="font-size:13px;color:#bbb;">默还没写过日记</div>'}
-            </div>
-            <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:var(--dark);margin-bottom:8px;">行动日志</div>
-              ${actions.length ? actions.map(a => `
-                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
-                  <div style="color:var(--muted);font-size:12px;">第 ${a.wake_number} 次唤醒 · ${new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${a.note ? ' · ' + escapeHtml2(a.note) : ''}</div>
-                  <div style="margin-top:4px;">${(a.actions || []).map(x => `${x.type}${x.tag ? '（' + escapeHtml2(x.tag) + '）' : ''}${x.detail ? '：' + escapeHtml2(x.detail) : ''}`).join('<br>')}</div>
-                  ${a.summary ? `<div style="margin-top:4px;color:var(--muted);font-style:italic;">✨ ${escapeHtml2(a.summary)}</div>` : ''}
-                </div>`).join('') : '<div style="font-size:13px;color:#bbb;">还没有行动记录</div>'}
+            <div class="app-grid">
+              <div class="app-tile" onclick="moHomeShowDetail('diary')">
+                <span class="t-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+                <span class="t-label">日记</span>
+              </div>
+              <div class="app-tile" onclick="moHomeShowDetail('actions')">
+                <span class="t-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg></span>
+                <span class="t-label">行动日志</span>
+              </div>
             </div>`;
-          box.innerHTML = html;
         } catch (e) {
           box.innerHTML = '<div class="weather-loading">加载失败，请稍后刷新</div>';
         }
       }
 
       // 我的小屋：日记 + 虚拟我 + 心情
+      let xueHomeDetail = '';
+      function xueHomeShowDiary() { xueHomeDetail = 'diary'; renderXueHome(); }
+      window.xueHomeShowDiary = xueHomeShowDiary;
+      function xueHomeBack() { xueHomeDetail = ''; renderXueHome(); }
+      window.xueHomeBack = xueHomeBack;
+
       async function renderXueHome() {
         const box = document.getElementById('xueHomeContent');
         if (!box) return;
@@ -2250,6 +2324,32 @@
           const todayEntry = diary.find(d => d.entry_date === today);
           const statusEmoji = state.her_status === '在线' ? '✨' : state.her_status === '刚离开' ? '🌙' : state.her_status === '睡着了' ? '😴' : '💭';
 
+          if (xueHomeDetail === 'diary') {
+            box.innerHTML = `
+              <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span onclick="xueHomeBack()" style="cursor:pointer;color:var(--blue-deep);font-size:13px;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                    返回
+                  </span>
+                  <div style="font-size:15px;font-weight:600;color:var(--dark);">我的日记</div>
+                </div>
+                <textarea id="diaryInput" placeholder="今天想写点什么…"
+                  style="width:100%;min-height:120px;border:1px solid var(--line);background:#FAF6EF;border-radius:12px;padding:10px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;">${escapeHtml2(todayEntry ? todayEntry.content : '')}</textarea>
+                <div style="display:flex;justify-content:flex-end;">
+                  <button onclick="saveMyDiary()" style="padding:8px 20px;border:none;border-radius:20px;background:var(--blue);color:var(--cream);cursor:pointer;font-size:14px;">保存日记</button>
+                </div>
+                <div style="font-size:12px;color:var(--blue-deep);margin-top:2px;text-align:right;" id="diaryStatus"></div>
+                <div style="font-size:13px;color:var(--dark);opacity:.8;margin-top:12px;font-weight:500;">历史</div>
+                ${diary.slice(0, 15).map(d => `
+                  <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
+                    <span style="color:var(--muted);">${escapeHtml2(d.entry_date || '未标注日期')}</span>${d.mo_read ? ' <span style="font-size:12px;color:var(--blue-deep);">（默读过）</span>' : ''}
+                    <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content.length > 80 ? d.content.substring(0, 80) + '…' : d.content)}</div>
+                  </div>`).join('')}
+              </div>`;
+            window.__todayDiaryEntry = todayEntry ? todayEntry.id : null;
+            return;
+          }
           box.innerHTML = `
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="font-size:15px;font-weight:600;color:var(--dark);">虚拟的我</div>
@@ -2270,22 +2370,10 @@
                 <button onclick="setVirtualActivity('')" style="border:1px solid var(--line);border-radius:14px;background:#FAF6EF;color:var(--muted);padding:5px 12px;font-size:12px;cursor:pointer;">清除</button>
               </div>
             </div>
-            <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:10px;">
-                <span style="font-size:15px;font-weight:600;color:var(--dark);">我的日记</span>
-              </div>
-              <textarea id="diaryInput" placeholder="今天想写点什么…"
-                style="width:100%;min-height:120px;border:1px solid var(--line);background:#FAF6EF;border-radius:12px;padding:10px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;">${escapeHtml2(todayEntry ? todayEntry.content : '')}</textarea>
-              <div style="display:flex;justify-content:flex-end;margin-top:8px;">
-                <button onclick="saveMyDiary()" style="padding:8px 20px;border:none;border-radius:20px;background:var(--blue);color:var(--cream);cursor:pointer;font-size:14px;">保存日记</button>
-              </div>
-              <div style="font-size:12px;color:var(--blue-deep);margin-top:4px;text-align:right;" id="diaryStatus"></div>
-              <div style="font-size:13px;color:var(--dark);opacity:.8;margin-top:12px;font-weight:500;">历史</div>
-              ${diary.slice(0, 15).map(d => `
-                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
-                  <span style="color:var(--muted);">${escapeHtml2(d.entry_date || '未标注日期')}</span>${d.mo_read ? ' <span style="font-size:12px;color:var(--blue-deep);">（默读过）</span>' : ''}
-                  <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content.length > 80 ? d.content.substring(0, 80) + '…' : d.content)}</div>
-                </div>`).join('')}
+            <div class="entry" onclick="xueHomeShowDiary()">
+              <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+              <div class="e-text"><div class="e-title">我的日记</div><div class="e-desc">写下今天的心情，默醒着的时候会来读</div></div>
+              <span class="e-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;font-size:13px;color:var(--muted);">
               账本 · 彩蛋 · 虚拟我形象 → 第二期见~
@@ -2380,7 +2468,7 @@
       function aevumViewText(t) {
         return String(t || '').replace(/\{AGENT\}/g, '默').replace(/\{USER\}/g, '雪');
       }
-      let aevumState = { view: 'sea', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false };
+      let aevumState = { view: '', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false };
 
       // ================== 玩具实验室（Web Bluetooth 直连） ==================
       let toyDevice = null;
@@ -3525,23 +3613,33 @@
               </div>`;
           }).join('');
 
-          let html = `
+          let html;
+          if (!aevumState.view) {
+            // 记忆主页：只有三个入口，点进去才看记录
+            html = `<div style="display:flex;gap:10px;flex-wrap:wrap;">${entryCards}</div>`;
+          } else {
+            html = `
             <div class="feature-card" style="align-items:stretch;gap:8px;">
-              <div style="display:flex;gap:10px;flex-wrap:wrap;">${entryCards}</div>
-              <div style="font-size:13px;color:#666;font-weight:600;">${viewTitle}</div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span onclick="aevumBackToEntries()" style="cursor:pointer;color:var(--blue-deep);font-size:13px;display:inline-flex;align-items:center;gap:4px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                  返回
+                </span>
+                <div style="font-size:15px;font-weight:600;color:var(--dark);">${viewTitle}</div>
+              </div>
               ${inSea ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 ${filterSel('aevumStatus', [['active', '活跃'], ['archived', '已归档']], aevumState.filters.status, '全部状态')}
                 ${filterSel('aevumOwner', AEVUM_OWNER_OPTIONS, aevumState.filters.owner, '全部归属')}
                 ${filterSel('aevumDomain', AEVUM_DOMAINS_FRONT.map(d => [d, d]), aevumState.filters.domain, '全部领域')}
                 <input id="aevumQ" placeholder="搜索内容…" value="${escapeHtml2(aevumState.filters.q)}" oninput="aevumFilter()"
-                  style="flex:1;min-width:90px;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 10px;font-size:13px;background:rgba(255,255,255,0.7);outline:none;">
+                  style="flex:1;min-width:90px;border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:13px;background:#FAF6EF;outline:none;">
                 <button onclick="aevumManualExtract()" title="从最近 12 条对话提取事件单元"
-                  style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">从最近对话提取</button>
+                  style="border:1px solid var(--blue);border-radius:12px;background:var(--card);color:var(--blue-deep);padding:8px 12px;font-size:13px;cursor:pointer;">从最近对话提取</button>
                 <button onclick="aevumBackfill()" title="给还没有向量的记忆补算向量"
-                  style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 12px;font-size:13px;cursor:pointer;">补算向量</button>
-                <button onclick="aevumToggleForm()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">${aevumState.showForm || aevumState.editingId ? '收起' : '+ 新增记忆'}</button>
+                  style="border:1px solid var(--blue);border-radius:12px;background:var(--card);color:var(--blue-deep);padding:8px 12px;font-size:13px;cursor:pointer;">补算向量</button>
+                <button onclick="aevumToggleForm()" style="border:none;border-radius:12px;background:var(--blue);color:var(--cream);padding:8px 16px;font-size:13px;cursor:pointer;">${aevumState.showForm || aevumState.editingId ? '收起' : '+ 新增记忆'}</button>
               </div>` : ''}
-              ${inSea ? `<div style="font-size:12px;color:#8a83a8;display:flex;gap:12px;flex-wrap:wrap;">
+              ${inSea ? `<div style="font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap;">
                 <span>共 ${stats.total || 0} 条</span>
                 <span style="color:#2ecc71;">活跃 ${(stats.byStatus && stats.byStatus.active) || 0}</span>
                 <span style="color:#aaa;">已归档 ${(stats.byStatus && stats.byStatus.archived) || 0}</span>
@@ -3554,6 +3652,7 @@
               ${list.length ? list.map(m => renderSeaCard(m)).join('')
                 : `<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">${aevumState.filters.status === 'archived' ? '这里还没有归档的记忆' : '记忆海空空的~默的对话会自动把事件单元存进来'}</div>`}
             </div>` : ''}`;
+          }
           box.innerHTML = html;
         } catch (e) {
           box.innerHTML = '<div class="weather-loading">加载失败，请先执行 setup_aevum.sql 并确认后端已部署</div>';
@@ -3886,6 +3985,17 @@
         renderAevum();
       }
       window.aevumSetView = aevumSetView;
+
+      function aevumBackToEntries() {
+        aevumState.view = '';
+        aevumState.filters.status = '';
+        aevumState.showForm = false;
+        aevumState.editingId = null;
+        aevumState.editingData = null;
+        aevumState.moEditing = false;
+        renderAevum();
+      }
+      window.aevumBackToEntries = aevumBackToEntries;
 
       function aevumToggleForm() {
         aevumState.showForm = !aevumState.showForm;
@@ -5068,19 +5178,12 @@
       function finalizeStreamingMessage(msgDiv, thinkDiv, bubble, hasThinking) {
         if (hasThinking && thinkDiv) {
           const row = document.createElement('div');
-          row.style.display = 'flex';
-          row.style.alignItems = 'center';
-          row.style.gap = '4px';
-          row.style.marginTop = '6px';
+          row.className = 'thinking-header';
+          row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:9px 14px;background:var(--card);border:1px solid var(--line);border-bottom:none;border-radius:14px 14px 0 0;margin-top:6px;';
 
           const toggle = document.createElement('span');
           toggle.className = 'thinking-toggle';
-          toggle.style.cursor = 'pointer';
-          toggle.style.display = 'inline-flex';
-          toggle.style.alignItems = 'center';
-          toggle.style.color = '#999';
-          toggle.style.fontSize = '12px';
-          toggle.style.userSelect = 'none';
+          toggle.style.cssText = 'display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#8F877D;font-size:12.5px;user-select:none;';
 
           // 默认展开，显示心跳线图标
           toggle.appendChild(createActivityIcon());
@@ -5104,6 +5207,9 @@
           timeSpan.className = 'timestamp';
           timeSpan.style.marginTop = '0';
           timeSpan.style.padding = '0';
+          timeSpan.style.marginLeft = 'auto';
+          timeSpan.style.color = 'var(--muted)';
+          timeSpan.style.fontSize = '11px';
           timeSpan.textContent = formatTime();
           row.appendChild(timeSpan);
 
@@ -6776,7 +6882,7 @@
       sendBtn.appendChild(createSendIcon());
 
       // 加号按钮：从底部升起附件弹层
-      attachBtn.appendChild(createPlusIcon());
+      attachBtn.appendChild(createAttachIcon());
       function openAttachSheet() {
         attachSheet.classList.add('show');
         attachSheetBackdrop.classList.add('show');
