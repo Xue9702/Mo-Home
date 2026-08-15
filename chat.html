@@ -1129,6 +1129,9 @@
       <div class="login-sub">请输入密码以进入</div>
       <input type="password" id="passwordInput" placeholder="输入密码…">
       <button class="login-btn" id="unlockBtn">进入</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#8a83a8;margin-top:10px;cursor:pointer;">
+        <input type="checkbox" id="rememberPass" style="accent-color:#e1789a;"> 记住密码（本机免登录）
+      </label>
       <div class="login-error" id="loginError">密码错误，请重试</div>
     </div>
   </div>
@@ -6242,12 +6245,54 @@
         row.appendChild(contentInput); row.appendChild(timeInput); row.appendChild(addBtn);
         const list = document.createElement('div');
         list.style.cssText = 'overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:13px;color:#333;';
+        const localLine = document.createElement('div');
+        localLine.style.cssText = 'font-size:12px;color:#8a83a8;display:flex;align-items:center;gap:8px;';
+        const authBtn = document.createElement('button');
+        authBtn.textContent = '授权通知';
+        authBtn.style.cssText = 'border:1px solid #ffd3de;border-radius:10px;background:#fff;color:#e1789a;padding:4px 10px;font-size:12px;cursor:pointer;';
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '关闭';
         closeBtn.style.cssText = 'padding:8px;border:none;border-radius:8px;background:#eee;color:#555;font-size:13px;cursor:pointer;';
-        box.appendChild(title); box.appendChild(row); box.appendChild(list); box.appendChild(closeBtn);
+        box.appendChild(title); box.appendChild(row);
+        box.appendChild(localLine); box.appendChild(authBtn);
+        box.appendChild(list); box.appendChild(closeBtn);
         modal.appendChild(box);
         document.body.appendChild(modal);
+
+        async function refreshLocalLine() {
+          if (!isCapacitorApp()) {
+            localLine.innerHTML = '本地通知：<span>浏览器模式（页面开着才有提醒）</span>';
+            authBtn.style.display = 'none';
+            return;
+          }
+          try {
+            const L = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+            if (!L) {
+              localLine.innerHTML = '本地通知：<span style="color:#c0392b;">未接入插件</span>';
+              authBtn.style.display = 'none';
+              return;
+            }
+            const perm = await L.checkPermissions();
+            const ok = perm.display === 'granted';
+            localLine.innerHTML = '本地通知：' + (ok ? '<span style="color:#27ae60;">已授权 · 锁屏可响</span>' : '<span style="color:#e67e22;">未授权</span>');
+            authBtn.style.display = ok ? 'none' : 'inline-block';
+          } catch (e) {
+            localLine.innerHTML = '本地通知：<span style="color:#c0392b;">' + String((e && e.message) || e).slice(0, 30) + '</span>';
+            authBtn.style.display = 'none';
+          }
+        }
+        authBtn.onclick = async () => {
+          try {
+            const L = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+            const req = await L.requestPermissions();
+            await syncLocalReminders();
+            refreshLocalLine();
+            if (req.display !== 'granted') alert('通知授权未通过，闹钟只能在小屋打开时提醒。可去手机系统设置里手动允许通知。');
+          } catch (e) {
+            alert('授权失败：' + String((e && e.message) || e).slice(0, 60));
+          }
+        };
+        refreshLocalLine();
 
         const fmt = (iso) => {
           if (!iso) return '';
@@ -6531,10 +6576,32 @@
         headerSettingsBtn.appendChild(createMenuIcon());
       }
 
-        unlockBtn.addEventListener('click', () => {
-          if (passwordInput.value.trim() === CORRECT_PASSWORD) { loginBox.style.display = 'none'; chatApp.style.display = 'flex'; if (TEST_MODE) loadTestHistory(); else { loadHistory(); setTimeout(syncLocalReminders, 1500); } userInput.focus(); loginError.style.display = 'none'; setInterval(pollNotifications, 25000); setTimeout(() => updateTabIndicator(), 80); }
-          else { loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus(); }
-        });
+        function doUnlock() {
+          if (passwordInput.value.trim() === CORRECT_PASSWORD) {
+            loginBox.style.display = 'none';
+            chatApp.style.display = 'flex';
+            const rm = document.getElementById('rememberPass');
+            if (rm && rm.checked) { localStorage.setItem('moPass', passwordInput.value.trim()); localStorage.setItem('moRemember', '1'); }
+            else { localStorage.removeItem('moPass'); localStorage.removeItem('moRemember'); }
+            if (TEST_MODE) loadTestHistory();
+            else { loadHistory(); setTimeout(syncLocalReminders, 1500); }
+            userInput.focus(); loginError.style.display = 'none';
+            if (!window._pollStarted) { window._pollStarted = true; setInterval(pollNotifications, 25000); }
+            setTimeout(() => updateTabIndicator(), 80);
+          } else {
+            loginError.style.display = 'block'; passwordInput.value = ''; passwordInput.focus();
+          }
+        }
+        window.doUnlock = doUnlock;
+        unlockBtn.addEventListener('click', doUnlock);
+        // 自动登录：本机勾选过"记住密码"就直接进入
+        try {
+          if (localStorage.getItem('moRemember') === '1' && localStorage.getItem('moPass') === CORRECT_PASSWORD) {
+            const rm = document.getElementById('rememberPass'); if (rm) rm.checked = true;
+            passwordInput.value = CORRECT_PASSWORD;
+            setTimeout(doUnlock, 60);
+          }
+        } catch (e) { /* 隐私模式等场景忽略 */ }
       passwordInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); unlockBtn.click(); } });
       sendBtn.addEventListener('click', () => { if (TEST_MODE) sendTestMessage(); else sendMessage(); });
       userInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (TEST_MODE) sendTestMessage(); else sendMessage(); } });
