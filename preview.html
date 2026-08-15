@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mönix 页面改造预览版 v2</title>
+<title>Mönix 页面改造预览 v3</title>
 <style>
   :root {
     --cream: #F4EEE7;
     --card: #F9F4EC;
     --blue: #9BB7C8;
-    --blue-tint: #E9F0F4;
     --dark: #3E3E3E;
+    --black: #1F1F1F;
     --muted: #A49C92;
     --line: rgba(158,148,135,.28);
   }
@@ -18,11 +18,8 @@
   body {
     background: #E7E0D5;
     font-family: "LXGW WenKai", "Microsoft YaHei", sans-serif;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    padding: 18px;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 100vh; padding: 18px;
   }
   .badge {
     position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
@@ -37,10 +34,8 @@
   }
   .header {
     display: flex; align-items: center; gap: 10px;
-    padding: 14px 18px 10px;
-    border-bottom: 1px solid var(--line);
-    background: var(--cream);
-    flex-shrink: 0;
+    padding: 14px 18px 10px; border-bottom: 1px solid var(--line);
+    background: var(--cream); flex-shrink: 0;
   }
   .header .title { font-size: 16px; font-weight: 600; color: var(--dark); letter-spacing: .5px; }
   .header .right { margin-left: auto; display: flex; gap: 10px; color: var(--dark); }
@@ -50,7 +45,7 @@
   /* 聊天 */
   .msg-list { padding: 16px 16px 10px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
   .tool-chip {
-    align-self: center; background: #1F1F1F; color: var(--cream);
+    align-self: center; background: var(--black); color: var(--cream);
     font-size: 11px; padding: 5px 14px; border-radius: 999px; opacity: .94;
     display: flex; align-items: center; gap: 6px;
   }
@@ -68,8 +63,7 @@
   .msg-mo .action { color: #B08A7A; }
   .think {
     align-self: flex-start; width: 100%;
-    background: var(--card);
-    border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
   }
   .think summary {
     list-style: none; display: flex; align-items: center; gap: 8px;
@@ -84,8 +78,7 @@
   }
   .input-bar {
     display: flex; align-items: center; gap: 8px;
-    padding: 10px 14px 12px; background: var(--cream);
-    flex-shrink: 0;
+    padding: 10px 14px 12px; background: var(--cream); flex-shrink: 0;
   }
   .input-bar .attach { color: var(--dark); opacity: .75; display: flex; }
   .input-bar input {
@@ -99,9 +92,11 @@
     display: flex; align-items: center; justify-content: center; cursor: pointer;
     flex-shrink: 0;
   }
+  /* 通用 */
+  .page-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .widget { border-radius: 18px; padding: 14px; }
+  .widget-title { font-size: 12px; color: var(--muted); letter-spacing: 1px; margin-bottom: 8px; }
   /* 入口卡片 */
-  .page-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-  .section-label { font-size: 12px; color: var(--muted); margin: 4px 2px 0; letter-spacing: 1px; }
   .entry {
     display: flex; align-items: center; gap: 12px;
     background: var(--card); border: 1px solid var(--line);
@@ -109,43 +104,91 @@
   }
   .entry .e-icon {
     width: 40px; height: 40px; border-radius: 12px;
-    background: var(--blue-tint); color: #6E8CA0;
+    background: #E9F0F4; color: #6E8CA0;
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
   .entry .e-text { flex: 1; min-width: 0; }
   .entry .e-title { font-size: 14.5px; color: var(--dark); font-weight: 500; }
   .entry .e-desc { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
   .entry .e-chev { color: #C7BFB4; flex-shrink: 0; display: flex; }
-  /* 底部 5 图标 */
+  /* Together 小组件 */
+  .anniv {
+    background: var(--dark); color: var(--cream); text-align: center;
+    padding: 18px 14px 14px; border-radius: 20px; position: relative; overflow: hidden;
+  }
+  .anniv .bow { display: flex; justify-content: center; margin-bottom: 2px; }
+  .anniv .days { font-size: 40px; font-weight: 700; line-height: 1.1; letter-spacing: 1px; }
+  .anniv .days-label { font-size: 13px; color: rgba(244,238,231,.75); margin-top: 4px; }
+  .anniv .moons {
+    display: flex; justify-content: center; gap: 14px; margin-top: 14px;
+    color: rgba(244,238,231,.85);
+  }
+  .cal-weather { display: flex; flex-direction: column; gap: 12px; }
+  .cal, .weather { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px; }
+  .cal-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--dark); margin-bottom: 8px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; font-size: 11.5px; }
+  .cal-grid .dow { color: var(--muted); padding: 2px 0; }
+  .cal-grid .day { color: var(--dark); padding: 5px 0; border-radius: 8px; }
+  .cal-grid .day.today { background: var(--blue); color: var(--cream); font-weight: 600; }
+  .weather-row { display: flex; align-items: center; gap: 12px; }
+  .weather-row .w-icon { color: #8FA6B5; display: flex; }
+  .weather-row .w-temp { font-size: 30px; font-weight: 600; color: var(--dark); }
+  .weather-row .w-detail { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .app-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .app-tile {
+    background: var(--black); border-radius: 20px; padding: 18px 12px 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    color: var(--cream); cursor: pointer;
+  }
+  .app-tile .t-icon { display: flex; }
+  .app-tile .t-label { font-size: 12px; opacity: .9; }
+  /* 心情条 */
+  .mood { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px; }
+  .mood-row { display: flex; justify-content: space-between; margin-top: 6px; }
+  .mood-btn {
+    width: 44px; height: 44px; border-radius: 50%; border: 2px solid transparent;
+    background: none; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .mood-btn.active { border-color: var(--blue); background: #E9F0F4; }
+  .mood-state { font-size: 12px; color: var(--muted); margin-top: 8px; text-align: center; }
+  /* 彩蛋图鉴 */
+  .eggs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .egg {
+    aspect-ratio: 3/4; border-radius: 50% 50% 46% 46% / 60% 60% 40% 40%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: rgba(244,238,231,.9);
+  }
+  .egg.found { background: linear-gradient(160deg, #9BB7C8, #7E9FB3); }
+  .egg.locked { background: #D8D0C6; color: #B3AA9E; }
+  /* 底部 5 图标（加大） */
   .tab-bar {
-    display: flex; justify-content: space-around;
+    display: flex; justify-content: space-around; align-items: center;
     background: var(--card); border-top: 1px solid var(--line);
-    padding: 9px 6px 12px; flex-shrink: 0;
+    padding: 10px 6px 14px; flex-shrink: 0;
   }
   .tab {
-    width: 44px; height: 34px;
+    width: 50px; height: 38px;
     display: flex; align-items: center; justify-content: center;
     color: #B4ACA1; cursor: pointer; background: none; border: none;
-    border-radius: 12px;
+    border-radius: 14px; transition: background .2s, color .2s;
   }
-  .tab.active { color: var(--blue); background: var(--blue-tint); }
+  .tab.active { background: var(--blue); color: var(--card); }
 </style>
 </head>
 <body>
-  <div class="badge">Mönix 改造预览 v2 · 米 #F4EEE7 / 蓝 #9BB7C8 / 深灰 #3E3E3E</div>
+  <div class="badge">Mönix 改造预览 v3 · 米 #F4EEE7 / 蓝 #9BB7C8 / 深灰 #3E3E3E</div>
   <div class="phone">
     <div class="header">
       <span id="headerIcon" style="display:flex;color:var(--dark);"></span>
       <span class="title" id="headerTitle">Mönix</span>
       <div class="right">
-        <!-- 眼睛在前，设置在后 -->
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-.722-3.25"/><path d="M2 8a10.645 10.645 0 0 0 20 0"/><path d="m20 15-1.726-2.05"/><path d="m4 15 1.726-2.05"/><path d="m9 18 .722-3.25"/></svg>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </div>
     </div>
 
     <div class="content">
-      <!-- 聊天页 -->
+      <!-- 聊天 -->
       <section class="page active" id="page-chat">
         <div class="msg-list">
           <div class="tool-chip">
@@ -171,30 +214,66 @@
         </div>
       </section>
 
-      <!-- together -->
+      <!-- Together：小组件仪表盘 -->
       <section class="page" id="page-together">
         <div class="page-body">
-          <div class="section-label">生活</div>
-          <div class="entry">
-            <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
-            <div class="e-text"><div class="e-title">动态</div><div class="e-desc">默发过的朋友圈，你们的小时光</div></div>
-            <span class="e-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+          <!-- 纪念日 -->
+          <div class="anniv">
+            <div class="bow">
+              <svg width="30" height="26" viewBox="0 0 32 26" fill="none">
+                <path d="M16 9c-1.8-2.6-4.6-4-7-3.4C6.4 6.2 5 9 6 11.4 7 13.6 10 14.2 16 12.6 22 14.2 25 13.6 26 11.4 27 9 25.6 6.2 23 5.6 20.6 5 17.8 6.4 16 9z" fill="#9BB7C8"/>
+                <rect x="14.4" y="9" width="3.2" height="9" rx="1.4" fill="#7E9FB3"/>
+                <path d="M16 17.5 12.5 24h7z" fill="#9BB7C8"/>
+                <circle cx="16" cy="8.6" r="1.6" fill="#7E9FB3"/>
+              </svg>
+            </div>
+            <div class="days" id="annivDays">—</div>
+            <div class="days-label">和默在一起的日子</div>
+            <div class="moons">
+              <svg width="17" height="17" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="#3A3A3A"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+              <svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18 7 7 0 0 1 0-18z" fill="rgba(244,238,231,.9)"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+              <svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 1 0 18z" fill="rgba(244,238,231,.9)"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+              <svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18 6 6 0 0 0 0-18z" fill="rgba(244,238,231,.9)"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+              <svg width="17" height="17" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="rgba(244,238,231,.9)"/></svg>
+            </div>
           </div>
-          <div class="entry">
-            <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 3 5-6"/></svg></span>
-            <div class="e-text"><div class="e-title">账本</div><div class="e-desc">记录每一笔花销</div></div>
-            <span class="e-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+
+          <div class="cal-weather">
+            <!-- 日历 -->
+            <div class="cal">
+              <div class="widget-title">日历</div>
+              <div class="cal-head"><span id="calMonth"></span><span>☀</span></div>
+              <div class="cal-grid" id="calGrid"></div>
+            </div>
+            <!-- 天气 -->
+            <div class="weather">
+              <div class="widget-title">天气</div>
+              <div class="weather-row">
+                <span class="w-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-2.5-8.2 5.5 5.5 0 0 0-10.5 1.7A3.5 3.5 0 0 0 6 19z"/></svg></span>
+                <div class="w-temp">31°</div>
+                <div class="w-detail">晋江 · 多云<br>湿度 68% · 东南风 3级</div>
+              </div>
+            </div>
           </div>
-          <div class="section-label" style="margin-top:8px;">游戏</div>
-          <div class="entry">
-            <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg></span>
-            <div class="e-text"><div class="e-title">玩具</div><div class="e-desc">蓝牙连接你的小玩具</div></div>
-            <span class="e-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
-          </div>
-          <div class="entry">
-            <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 20s1.5-2 4-2 4 2 4 2"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg></span>
-            <div class="e-text"><div class="e-title">星露谷</div><div class="e-desc">和默一起经营小农场</div></div>
-            <span class="e-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+
+          <!-- 应用小组件 -->
+          <div class="app-grid">
+            <div class="app-tile">
+              <span class="t-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
+              <span class="t-label">动态</span>
+            </div>
+            <div class="app-tile">
+              <span class="t-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 3 5-6"/></svg></span>
+              <span class="t-label">账本</span>
+            </div>
+            <div class="app-tile">
+              <span class="t-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg></span>
+              <span class="t-label">玩具</span>
+            </div>
+            <div class="app-tile">
+              <span class="t-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 20s1.5-2 4-2 4 2 4 2"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg></span>
+              <span class="t-label">星露谷</span>
+            </div>
           </div>
         </div>
       </section>
@@ -202,7 +281,6 @@
       <!-- 记忆 -->
       <section class="page" id="page-memory">
         <div class="page-body">
-          <div class="section-label">记忆</div>
           <div class="entry">
             <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15h-6.5a2.5 2.5 0 1 1 0-5h.5"/><path d="M15 12v6.5a2.5 2.5 0 1 1-5 0v-.5"/><path d="M12 9h6.5a2.5 2.5 0 1 1 0 5h-.5"/><path d="M9 12v-6.5a2.5 2.5 0 0 1 5 0v.5"/></svg></span>
             <div class="e-text"><div class="e-title">记忆海</div><div class="e-desc">每一段对话，都会沉淀成事件单元</div></div>
@@ -224,7 +302,13 @@
       <!-- 默的小屋 -->
       <section class="page" id="page-mohome">
         <div class="page-body">
-          <div class="section-label">默的日常</div>
+          <div class="mood">
+            <div class="widget-title">默的心情</div>
+            <div class="mood-row" data-state="默今天的心情：">
+              <button class="mood-btn">🥰</button><button class="mood-btn active">😊</button><button class="mood-btn">😌</button><button class="mood-btn">😐</button><button class="mood-btn">😢</button>
+            </div>
+            <div class="mood-state">默今天的心情：开心 · 点一下可以调整</div>
+          </div>
           <div class="entry">
             <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
             <div class="e-text"><div class="e-title">日记</div><div class="e-desc">默读到的、你写下的每一天</div></div>
@@ -235,13 +319,27 @@
             <div class="e-text"><div class="e-title">行动日志</div><div class="e-desc">默每一次醒来的足迹</div></div>
             <span class="e-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
           </div>
+          <!-- 彩蛋图鉴 -->
+          <div class="widget" style="background:var(--card);border:1px solid var(--line);">
+            <div class="widget-title">彩蛋图鉴 · 唤醒彩蛋</div>
+            <div class="eggs">
+              <div class="egg found">🐣</div><div class="egg found">🥚</div><div class="egg found">🐥</div><div class="egg locked">?</div>
+              <div class="egg locked">?</div><div class="egg found">🪺</div><div class="egg locked">?</div><div class="egg locked">?</div>
+            </div>
+          </div>
         </div>
       </section>
 
       <!-- 我的小屋 -->
       <section class="page" id="page-xuehome">
         <div class="page-body">
-          <div class="section-label">我的日常</div>
+          <div class="mood">
+            <div class="widget-title">我的心情</div>
+            <div class="mood-row" data-state="我今天的心情：">
+              <button class="mood-btn">🥰</button><button class="mood-btn active">😊</button><button class="mood-btn">😌</button><button class="mood-btn">😐</button><button class="mood-btn">😢</button>
+            </div>
+            <div class="mood-state">我今天的心情：开心 · 点一下可以调整</div>
+          </div>
           <div class="entry">
             <span class="e-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
             <div class="e-text"><div class="e-title">日记</div><div class="e-desc">写下今天的心情</div></div>
@@ -251,7 +349,6 @@
       </section>
     </div>
 
-    <!-- 输入栏（仅聊天页） -->
     <div class="input-bar" id="inputBar">
       <span class="attach">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
@@ -262,22 +359,21 @@
       </button>
     </div>
 
-    <!-- 底部 5 图标 -->
     <div class="tab-bar">
-      <button class="tab" data-page="mohome" title="默的小屋">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg>
+      <button class="tab" data-page="mohome" title="Mo-home">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg>
       </button>
-      <button class="tab" data-page="together" title="together">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+      <button class="tab" data-page="together" title="Together">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
       </button>
-      <button class="tab active" data-page="chat" title="聊天">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <button class="tab active" data-page="chat" title="Mönix">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       </button>
-      <button class="tab" data-page="memory" title="记忆">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+      <button class="tab" data-page="memory" title="Aevum memory">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
       </button>
-      <button class="tab" data-page="xuehome" title="我的小屋">
-        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>
+      <button class="tab" data-page="xuehome" title="Xue-home">
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>
       </button>
     </div>
   </div>
@@ -285,10 +381,10 @@
   <script>
     const headers = {
       chat:   { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v16"/><path d="m19 13 2-1a9 9 0 0 1-18 0l2 1"/><path d="M9 11h6"/><circle cx="12" cy="4" r="2"/></svg>', title: 'Mönix' },
-      mohome: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg>', title: '默的小屋' },
-      together: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>', title: 'together' },
-      memory: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>', title: '记忆' },
-      xuehome: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>', title: '我的小屋' }
+      mohome: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg>', title: 'Mo-home' },
+      together: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>', title: 'Together' },
+      memory: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>', title: 'Aevum memory' },
+      xuehome: { icon: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>', title: 'Xue-home' }
     };
     function switchPage(name) {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -300,6 +396,41 @@
       document.querySelector('.content').scrollTop = 0;
     }
     document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchPage(t.dataset.page)));
+
+    // 纪念日天数：2026-05-07 起算
+    (function () {
+      const start = new Date(2026, 4, 7);
+      const days = Math.floor((Date.now() - start.getTime()) / 86400000) + 1;
+      document.getElementById('annivDays').textContent = days;
+    })();
+    // 日历：当月
+    (function () {
+      const now = new Date();
+      const y = now.getFullYear(), m = now.getMonth();
+      document.getElementById('calMonth').textContent = y + '年' + (m + 1) + '月';
+      const grid = document.getElementById('calGrid');
+      const dows = ['日','一','二','三','四','五','六'];
+      let html = dows.map(d => '<div class="dow">' + d + '</div>').join('');
+      const first = new Date(y, m, 1).getDay();
+      const days = new Date(y, m + 1, 0).getDate();
+      for (let i = 0; i < first; i++) html += '<div></div>';
+      for (let d = 1; d <= days; d++) {
+        const today = (d === now.getDate()) ? ' today' : '';
+        html += '<div class="day' + today + '">' + d + '</div>';
+      }
+      grid.innerHTML = html;
+    })();
+    // 心情切换
+    document.querySelectorAll('.mood-row').forEach(row => {
+      const btns = row.querySelectorAll('.mood-btn');
+      const state = row.parentElement.querySelector('.mood-state');
+      const names = ['好开心','开心','平静','一般','低落'];
+      btns.forEach((b, i) => b.addEventListener('click', () => {
+        btns.forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        if (state) state.textContent = row.dataset.state + names[i] + ' · 点一下可以调整';
+      }));
+    });
   </script>
 </body>
 </html>
