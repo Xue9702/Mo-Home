@@ -35,12 +35,27 @@ jobs:
           npm install || { echo "::error::npm install failed"; exit 1; }
           npx cap sync android || { echo "::error::cap sync android failed"; exit 1; }
 
-      - name: Build APK
+      - name: Ensure release keystore
+        working-directory: mobile
+        run: |
+          if [ ! -f keystore/mo-home.keystore ]; then
+            mkdir -p keystore
+            keytool -genkeypair -v -keystore keystore/mo-home.keystore -alias mo-home -keyalg RSA -keysize 2048 -validity 10000 -storepass mo-home-2026 -keypass mo-home-2026 -dname "CN=Mo-Home, OU=Personal, O=Mo-Home, L=Home, ST=Home, C=CN"
+            git config user.name "github-actions-bot"
+            git config user.email "actions@github.com"
+            git add keystore/mo-home.keystore
+            git commit -m "chore: init release keystore [skip ci]" || true
+            git push origin main || true
+          else
+            echo "keystore exists"
+          fi
+
+      - name: Build APK (release)
         working-directory: mobile/android
         run: |
           chmod +x gradlew
           set +e
-          ./gradlew assembleDebug > ../gradle.log 2>&1
+          ./gradlew assembleRelease > ../gradle.log 2>&1
           code=$?
           if [ $code -ne 0 ]; then
             echo "::error::Gradle build failed (exit $code)"
@@ -49,7 +64,7 @@ jobs:
           fi
 
       - name: Rename APK
-        run: cp mobile/android/app/build/outputs/apk/debug/app-debug.apk mo-home.apk
+        run: cp mobile/android/app/build/outputs/apk/release/app-release.apk mo-home.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

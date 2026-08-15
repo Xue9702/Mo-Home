@@ -1,5 +1,5 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "新增本地闹钟：锁屏也能响，不依赖 Google 服务"
+  "notes": "正式签名版：本地闹钟修复（含原生通知插件），以后升级不用卸载重装"
 }
