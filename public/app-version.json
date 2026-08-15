@@ -1,5 +1,5 @@
 {
-  "version": "0.4.0",
+  "version": "0.4.1",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "小屋改造：新图标（冰蓝罗盘）+ 更名 Mönix"
+  "notes": "图标换新版：雪花+莫比乌斯环（环颜色调淡，视觉更聚焦）"
 }
