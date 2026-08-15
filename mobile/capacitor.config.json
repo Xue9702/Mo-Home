@@ -1,0 +1,12 @@
+{
+  "appId": "com.mohome.app",
+  "appName": "默的小屋",
+  "webDir": "www",
+  "server": {
+    "url": "https://mo-home.onrender.com",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

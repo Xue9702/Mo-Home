@@ -1279,6 +1279,16 @@
               <span id="reminderStatus" style="margin-left:auto;font-size:12px;color:#999;">设置/管理</span>
             </div>
 
+            <!-- 检查更新 -->
+            <div class="setting-card" onclick="checkAppUpdate()">
+              <span id="updateIcon"></span>
+              <div style="flex:1;min-width:0;">
+                <div class="card-title">检查更新</div>
+                <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">APK 新版本从这里下载安装</div>
+              </div>
+              <span id="updateStatus" style="font-size:12px;color:#999;">点击检查</span>
+            </div>
+
           </div>
         </div>
       </div>
@@ -1564,6 +1574,10 @@
         const reminderIconSpan = document.getElementById('reminderIcon');
         if (reminderIconSpan && !reminderIconSpan.hasChildNodes()) {
           reminderIconSpan.appendChild(createClockIcon());
+        }
+        const updateIconSpan = document.getElementById('updateIcon');
+        if (updateIconSpan && !updateIconSpan.hasChildNodes()) {
+          updateIconSpan.appendChild(createDownloadIcon());
         }
         refreshNotifyState();
         const testWindowIconSpan = document.getElementById('testWindowIcon');
@@ -6271,6 +6285,49 @@
           setTimeout(() => t.remove(), 3100);
         } catch (e) { /* ignore */ }
       }
+
+      // ---------- 检查更新（APK 原生壳版本） ----------
+      function createDownloadIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path'); p1.setAttribute('d', 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'); svg.appendChild(p1);
+        const p2 = document.createElementNS(svgNS, 'polyline'); p2.setAttribute('points', '7 10 12 15 17 10'); svg.appendChild(p2);
+        const p3 = document.createElementNS(svgNS, 'line'); p3.setAttribute('x1', '12'); p3.setAttribute('y1', '15'); p3.setAttribute('x2', '12'); p3.setAttribute('y2', '3'); svg.appendChild(p3);
+        return svg;
+      }
+
+      async function checkAppUpdate() {
+        const statusEl = document.getElementById('updateStatus');
+        if (statusEl) statusEl.textContent = '检查中…';
+        try {
+          const res = await fetch('/app-version.json?t=' + Date.now());
+          if (!res.ok) throw new Error('no version file');
+          const data = await res.json();
+          const latest = String(data.version || '0.0.0');
+          const current = localStorage.getItem('moAppVersion');
+          if (!current) {
+            // 首次访问：静默记录当前版本，不打扰
+            localStorage.setItem('moAppVersion', latest);
+            if (statusEl) statusEl.textContent = '已是最新 v' + latest;
+            return;
+          }
+          if (latest !== current) {
+            localStorage.setItem('moAppVersion', latest);
+            if (statusEl) statusEl.textContent = '发现 v' + latest;
+            const ok = confirm('发现新版本 v' + latest + (data.notes ? '\n\n' + data.notes : '') + '\n\n要下载安装吗？');
+            if (ok && data.apkUrl) window.open(data.apkUrl, '_blank');
+          } else {
+            if (statusEl) statusEl.textContent = '已是最新 v' + latest;
+          }
+        } catch (e) {
+          if (statusEl) statusEl.textContent = '检查失败';
+        }
+      }
+      window.checkAppUpdate = checkAppUpdate;
 
       // 工具事件：聊天页里的"拍一拍"样式小字（不进气泡，独立一行）
       function makeToolEventElement(text) {

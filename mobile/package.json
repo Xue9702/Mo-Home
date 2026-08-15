@@ -1,0 +1,14 @@
+{
+  "name": "mo-home-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "默的小屋 - 移动端 APK 外壳",
+  "scripts": {
+    "sync": "cap sync"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0"
+  }
+}
