@@ -19,7 +19,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
@@ -32,8 +32,8 @@ jobs:
       - name: Install Capacitor
         working-directory: mobile
         run: |
-          npm install
-          npx cap sync android
+          npm install || { echo "::error::npm install failed"; exit 1; }
+          npx cap sync android || { echo "::error::cap sync android failed"; exit 1; }
 
       - name: Build APK
         working-directory: mobile/android
