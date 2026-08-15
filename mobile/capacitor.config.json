@@ -1,6 +1,6 @@
 {
   "appId": "com.mohome.app",
-  "appName": "默的小屋",
+  "appName": "Mönix",
   "webDir": "www",
   "server": {
     "url": "https://mo-home.onrender.com",

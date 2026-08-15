@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "正式签名版：本地闹钟修复（含原生通知插件），以后升级不用卸载重装"
+  "notes": "小屋改造：新图标（冰蓝罗盘）+ 更名 Mönix"
 }

@@ -1,11 +1,11 @@
 {
-  "name": "Mo-Home",
-  "short_name": "Mo-Home",
-  "description": "与默的聊天小屋",
+  "name": "Mönix",
+  "short_name": "Mönix",
+  "description": "Mönix · 默的聊天小屋",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f5f5f5",
-  "theme_color": "#1e90ff",
+  "background_color": "#F4EFE6",
+  "theme_color": "#E1789A",
   "icons": [
     {
       "src": "/icon-192.png",
