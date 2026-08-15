@@ -6175,10 +6175,34 @@
         try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch (e) { return false; }
       }
 
+      // APK 是"远程网页"模式，原生桥只注入了核心，插件注册 JS 需要网页自己加载
+      let capPluginsLoading = null;
+      function loadCapacitorPlugins() {
+        if (!isCapacitorApp()) return Promise.resolve(false);
+        const L = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+        if (L) return Promise.resolve(true);
+        if (capPluginsLoading) return capPluginsLoading;
+        capPluginsLoading = new Promise((resolve) => {
+          const core = document.createElement('script');
+          core.src = '/capacitor/core.js';
+          core.onload = () => {
+            const plugin = document.createElement('script');
+            plugin.src = '/capacitor/local-notifications.js';
+            plugin.onload = () => { console.log('✅ Capacitor 插件已加载'); resolve(true); };
+            plugin.onerror = () => { console.error('插件 JS 加载失败'); resolve(false); };
+            document.head.appendChild(plugin);
+          };
+          core.onerror = () => { console.error('Capacitor core JS 加载失败'); resolve(false); };
+          document.head.appendChild(core);
+        });
+        return capPluginsLoading;
+      }
+
       // 把服务端所有未触发的闹钟同步为手机本地通知（先清空再重排，幂等）
       async function syncLocalReminders() {
         if (!isCapacitorApp()) return;
         try {
+          await loadCapacitorPlugins();
           const L = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
           if (!L) return;
           const perm = await L.checkPermissions();
@@ -6265,16 +6289,19 @@
             authBtn.style.display = 'none';
             return;
           }
+          await loadCapacitorPlugins();
           try {
             const L = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
             if (!L) {
-              localLine.innerHTML = '本地通知：<span style="color:#c0392b;">未接入插件</span>';
-              authBtn.style.display = 'none';
+              localLine.innerHTML = '本地通知：<span style="color:#c0392b;">插件加载失败</span>';
+              authBtn.textContent = '重试';
+              authBtn.style.display = 'inline-block';
               return;
             }
             const perm = await L.checkPermissions();
             const ok = perm.display === 'granted';
             localLine.innerHTML = '本地通知：' + (ok ? '<span style="color:#27ae60;">已授权 · 锁屏可响</span>' : '<span style="color:#e67e22;">未授权</span>');
+            authBtn.textContent = '授权通知';
             authBtn.style.display = ok ? 'none' : 'inline-block';
           } catch (e) {
             localLine.innerHTML = '本地通知：<span style="color:#c0392b;">' + String((e && e.message) || e).slice(0, 30) + '</span>';
@@ -6283,6 +6310,7 @@
         }
         authBtn.onclick = async () => {
           try {
+            await loadCapacitorPlugins();
             const L = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
             const req = await L.requestPermissions();
             await syncLocalReminders();
