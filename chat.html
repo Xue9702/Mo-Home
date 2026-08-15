@@ -15,6 +15,14 @@
     :root {
       --font-en: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       --font-cn: "PingFang SC", "Microsoft YaHei", sans-serif;
+      --cream: #F4EEE7;
+      --card: #F9F4EC;
+      --blue: #9BB7C8;
+      --blue-deep: #7E9FB3;
+      --dark: #3E3E3E;
+      --black: #1F1F1F;
+      --muted: #A49C92;
+      --line: rgba(158, 148, 135, 0.28);
     }
 
     body {
@@ -48,13 +56,11 @@
     }
 
     .header .header-title {
-      position: absolute;
-      left: 0;
-      right: 0;
-      text-align: center;
-      font-size: 18px;
+      position: static;
+      text-align: left;
+      font-size: 16px;
       font-weight: 500;
-      color: #333;
+      color: var(--dark);
       letter-spacing: 0.5px;
       pointer-events: none;
     }
@@ -66,7 +72,7 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
-      background-color: #ffffff;
+      background-color: var(--cream);
     }
 
     .message {
@@ -84,7 +90,7 @@
     .message.assistant {
       align-self: flex-start;
       align-items: flex-start;
-      max-width: 88%;
+      max-width: 100%;
     }
 
     .bubble {
@@ -153,9 +159,9 @@
 
     .input-area {
       flex-shrink: 0;
-      background-color: #ffffff;
+      background-color: var(--cream);
       padding: 12px 16px 14px;
-      border-top: 1px solid #e9e9e9;
+      border-top: 1px solid var(--line);
       display: flex;
       gap: 10px;
       align-items: flex-end;
@@ -165,7 +171,7 @@
 
     .input-area textarea {
       flex: 1;
-      border: 1px solid #ddd;
+      border: 1px solid var(--line);
       border-radius: 20px;
       padding: 10px 16px;
       font-size: 15px;
@@ -176,12 +182,12 @@
       min-height: 44px;
       max-height: 120px;
       line-height: 1.5;
-      background-color: #fafafa;
+      background-color: #FAF6EF;
     }
 
     .input-area textarea:focus {
-      border-color: #a0c4ff;
-      background-color: #ffffff;
+      border-color: var(--blue);
+      background-color: #FFFFFF;
     }
 
     .input-area button {
@@ -263,11 +269,11 @@
     }
 
     .message-list::-webkit-scrollbar-track {
-      background: #f0f0f0;
+      background: var(--cream);
     }
 
     .message-list::-webkit-scrollbar-thumb {
-      background: #d0d0d0;
+      background: rgba(126, 159, 179, 0.55);
       border-radius: 4px;
     }
 
@@ -510,6 +516,42 @@
       padding: 8px 0;
     }
 
+    /* Together 小组件：纪念日卡 */
+    .anniv-card {
+      background: var(--dark);
+      color: var(--cream);
+      text-align: center;
+      padding: 18px 14px 14px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .anniv-bow { display: flex; justify-content: center; margin-bottom: 2px; }
+    .anniv-days { font-size: 40px; font-weight: 700; line-height: 1.1; letter-spacing: 1px; }
+    .anniv-label { font-size: 13px; color: rgba(244, 238, 231, 0.75); margin-top: 4px; }
+    .anniv-moons { display: flex; justify-content: center; gap: 14px; margin-top: 14px; }
+
+    /* Together 应用小组件（黑色圆角方块） */
+    .app-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .app-tile {
+      background: var(--black);
+      border-radius: 20px;
+      padding: 18px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--cream);
+      cursor: pointer;
+    }
+    .app-tile .t-icon { display: flex; }
+    .app-tile .t-label { font-size: 12px; opacity: 0.9; }
+
     .weather-city {
       display: flex;
       align-items: center;
@@ -523,9 +565,9 @@
 
     .weather-switch {
       font-size: 12px;
-      color: #1e90ff;
+      color: var(--blue-deep);
       font-weight: 400;
-      border: 1px solid #1e90ff;
+      border: 1px solid var(--blue-deep);
       border-radius: 12px;
       padding: 1px 8px;
     }
@@ -544,7 +586,7 @@
     .weather-temp {
       font-size: 36px;
       font-weight: 600;
-      color: #1e90ff;
+      color: var(--blue-deep);
     }
 
     .weather-info {
@@ -668,8 +710,8 @@
     }
 
     .font-row.selected {
-      background: #eaf4ff;
-      color: #1e90ff;
+      background: rgba(155, 183, 200, 0.18);
+      color: var(--blue-deep);
     }
 
     /* 图片消息与发送区 */
@@ -850,44 +892,19 @@
       margin-bottom: 6px;
       word-break: break-all;
     }
-    /* ========== 粉蓝玻璃风（第一版） ========== */
+    /* ========== Mönix 米色主题 ========== */
     :root {
-      --pb-pink: #ff9eb5;
-      --pb-blue: #8ec5ff;
-      --pb-grad: linear-gradient(135deg, #ff9db4, #7fb8ff);
-      --pb-grad-soft: linear-gradient(135deg, #ffe3ec, #dcebff);
-      --glass-bg: rgba(255, 255, 255, 0.32);
-      --glass-border: rgba(255, 255, 255, 0.92);
-      --glass-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.85), 0 8px 28px rgba(180, 140, 190, 0.12);
+      --pb-pink: #9BB7C8;
+      --pb-blue: #7E9FB3;
+      --pb-grad: linear-gradient(135deg, #9BB7C8, #7E9FB3);
+      --pb-grad-soft: linear-gradient(135deg, #F9F4EC, #F1E9DE);
+      --glass-bg: rgba(249, 244, 236, 0.92);
+      --glass-border: rgba(158, 148, 135, 0.25);
+      --glass-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 6px 20px rgba(120, 110, 95, 0.08);
     }
 
     body {
-      background: linear-gradient(165deg, #fdf0f4 0%, #f4f6ff 45%, #eaf1ff 100%) fixed;
-    }
-
-    body::before,
-    body::after {
-      content: '';
-      position: fixed;
-      width: 420px;
-      height: 420px;
-      border-radius: 50%;
-      filter: blur(100px);
-      opacity: 0.5;
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    body::before {
-      background: #ffc3d4;
-      top: -140px;
-      right: -110px;
-    }
-
-    body::after {
-      background: #a9cdff;
-      bottom: -160px;
-      left: -120px;
+      background: var(--cream) fixed;
     }
 
     #loginBox,
@@ -897,23 +914,20 @@
     }
 
     .header {
-      background: rgba(255, 255, 255, 0.55);
+      background: var(--glass-bg);
       backdrop-filter: blur(18px) saturate(160%);
       -webkit-backdrop-filter: blur(18px) saturate(160%);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.7);
-      box-shadow: 0 4px 20px rgba(180, 140, 190, 0.08);
+      border-bottom: 1px solid var(--line);
+      box-shadow: none;
     }
 
     .header-title {
-      background: linear-gradient(135deg, #e1789a, #7fb8ff);
-      -webkit-background-clip: text;
-      background-clip: text;
-      -webkit-text-fill-color: transparent;
-      color: transparent;
+      color: var(--dark);
     }
 
     .header .header-settings-btn {
-      color: #c98bab;
+      color: var(--dark);
+      opacity: 0.8;
     }
 
     .login-card {
@@ -926,28 +940,28 @@
 
     .tab-bar {
       position: relative;
-      background: rgba(255, 255, 255, 0.5);
+      background: var(--card);
       backdrop-filter: blur(20px) saturate(170%);
       -webkit-backdrop-filter: blur(20px) saturate(170%);
       border: none;
-      border-top: 1px solid rgba(255, 255, 255, 0.75);
+      border-top: 1px solid var(--line);
       border-radius: 0;
       margin: 0;
-      padding: 8px 0;
-      box-shadow: 0 -4px 20px rgba(180, 140, 190, 0.08);
+      padding: 10px 6px 12px;
+      box-shadow: 0 -4px 20px rgba(120, 110, 95, 0.06);
       width: auto;
     }
 
-    /* 底部导航滑动粉色底框 */
+    /* 底部导航滑动蓝色底框 */
     #tabIndicator {
       position: absolute;
       top: 50%;
       left: 0;
       transform: translateY(-50%);
-      height: 40px;
-      border-radius: 20px;
-      background: #ffd3de;
-      box-shadow: 0 4px 14px rgba(255, 158, 181, 0.4);
+      height: 44px;
+      border-radius: 22px;
+      background: var(--blue);
+      box-shadow: 0 4px 14px rgba(126, 159, 179, 0.4);
       transition: transform 0.28s ease, width 0.28s ease;
       z-index: 0;
     }
@@ -957,7 +971,7 @@
     }
 
     .tab-btn.active .tab-icon {
-      color: #ffffff;
+      color: var(--cream);
     }
 
     .feature-card,
@@ -993,36 +1007,45 @@
       margin: 0 10px 10px;
       padding: 8px 10px;
       border-radius: 24px;
-      background: rgba(255, 255, 255, 0.5);
+      background: var(--glass-bg);
       backdrop-filter: blur(18px) saturate(160%);
       -webkit-backdrop-filter: blur(18px) saturate(160%);
-      border: 1px solid rgba(255, 255, 255, 0.92);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7), 0 8px 28px rgba(180, 140, 190, 0.12);
+      border: 1px solid var(--line);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 28px rgba(120, 110, 95, 0.1);
     }
 
     #userInput {
-      background: rgba(255, 255, 255, 0.75);
-      border: 1px solid rgba(255, 255, 255, 0.9);
+      background: #FAF6EF;
+      border: 1px solid var(--line);
       border-radius: 20px;
-      box-shadow: inset 0 1px 3px rgba(180, 140, 190, 0.08);
+      box-shadow: none;
     }
 
     #attachBtn,
     #sendBtn {
-      background: #ffdde6;
-      box-shadow: 0 4px 14px rgba(240, 170, 190, 0.28);
-    }
-
-    #sendBtn {
-      color: #ffffff;
+      background: var(--blue);
+      color: var(--cream);
+      box-shadow: 0 4px 14px rgba(126, 159, 179, 0.28);
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     #attachBtn {
-      color: #ffffff;
+      background: transparent;
+      box-shadow: none;
+      width: 36px;
+      height: 36px;
+      color: var(--dark);
+      opacity: 0.75;
     }
 
     #sendBtn:active {
-      background: #ffc9d8;
+      background: var(--blue-deep);
     }
 
     #sendBtn:active svg {
@@ -1030,59 +1053,94 @@
     }
 
     .message.assistant .bubble {
-      background: #ffffff;
-      color: #2b2438;
-      border: 1px solid rgba(255, 255, 255, 0.9);
-      box-shadow: 0 4px 16px rgba(180, 140, 190, 0.1);
+      background: transparent;
+      color: var(--dark);
+      border: none;
+      box-shadow: none;
+      padding: 4px 8px;
     }
 
-    /* 聊天区背景透明，让粉蓝渐变透出来 */
+    /* 聊天区米色底 */
     .message-list {
-      background: transparent;
+      background: var(--cream);
     }
 
     .message.user .bubble {
-      background: #ffdde6;
-      color: #8a4a58;
-      box-shadow: 0 4px 16px rgba(240, 170, 190, 0.22);
+      background: var(--blue);
+      color: var(--cream);
+      border: none;
+      box-shadow: 0 4px 16px rgba(126, 159, 179, 0.22);
     }
 
+    /* Kimi 式思考卡片 */
+    .thinking-toggle {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-bottom: none;
+      border-radius: 14px 14px 0 0;
+      color: #8F877D;
+      padding: 9px 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .thinking-toggle::after {
+      content: '思考过程';
+      margin-left: 2px;
+    }
+    .thinking-toggle::before {
+      content: '▾';
+      margin-left: auto;
+      font-size: 10px;
+      color: #B4ACA1;
+    }
+    .thinking-toggle:has(+ .thinking-content.open)::before {
+      transform: rotate(180deg);
+    }
+    .thinking-toggle:hover {
+      background: var(--card);
+    }
     .thinking-content {
-      background: transparent;
-      border: none;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-top: none;
+      border-radius: 0 0 14px 14px;
+      color: #9A928A;
+      padding: 6px 14px 12px;
+      margin-top: 0;
     }
 
     .timestamp {
-      color: #b0a6c4;
+      color: var(--muted);
     }
 
     .file-tag,
     .image-preview {
-      background: rgba(255, 255, 255, 0.6);
+      background: rgba(249, 244, 236, 0.8);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.8);
+      border: 1px solid var(--line);
     }
 
     #attachSheet {
-      background: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.9);
+      background: var(--card);
+      border: 1px solid var(--line);
     }
 
     .attach-sheet-item {
-      background: #fdf4f7;
+      background: #FAF6EF;
     }
 
     .attach-sheet-item .menu-icon {
-      color: #e1789a;
+      color: var(--blue-deep);
     }
 
     .version-nav {
-      color: #b0a6c4;
+      color: var(--muted);
     }
 
     .weather-loading {
-      color: #b0a6c4;
+      color: var(--muted);
     }
 
     /* 主要蓝色按钮/文字统一换成粉蓝渐变与粉调强调色 */
@@ -1094,7 +1152,25 @@
 
     [style*="color: #1e90ff"],
     [style*="color:#1e90ff"] {
-      color: #e1789a !important;
+      color: var(--blue-deep) !important;
+    }
+
+    /* 粉调一律改蓝（Mönix 米蓝主题） */
+    [style*="background: #ffd3de"],
+    [style*="background:#ffd3de"],
+    [style*="background: #ffdde6"],
+    [style*="background:#ffdde6"] {
+      background: var(--blue) !important;
+      border-color: var(--blue) !important;
+    }
+    [style*="color: #e1789a"],
+    [style*="color:#e1789a"] {
+      color: var(--blue-deep) !important;
+    }
+    [style*="border: 1px solid #ffd3de"],
+    [style*="border:1px solid #ffd3de"] {
+      border-color: var(--blue) !important;
+      color: var(--blue-deep) !important;
     }
 
     ::-webkit-scrollbar {
@@ -1102,7 +1178,7 @@
     }
 
     ::-webkit-scrollbar-thumb {
-      background: rgba(225, 120, 154, 0.35);
+      background: rgba(126, 159, 179, 0.5);
       border-radius: 8px;
     }
 
@@ -1140,9 +1216,12 @@
     <div id="appVersion" style="position:fixed;left:8px;bottom:8px;font-size:10px;color:#ccc;z-index:50;pointer-events:none;">Mönix · v3.0</div>
     <!-- 顶部标题栏（左上角设置入口） -->
     <div class="header" id="headerBar">
-      <button id="headerSettingsBtn" class="header-settings-btn" aria-label="设置" title="设置"></button>
-      <button id="headerContextBtn" class="header-settings-btn" style="margin-left:auto;" aria-label="查看默的上下文" title="查看默每轮收到的上下文"></button>
-      <div class="header-title" id="headerTitle">默</div>
+      <span id="headerIcon" style="display:flex;align-items:center;color:var(--dark);"></span>
+      <div class="header-title" id="headerTitle">Mönix</div>
+      <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+        <button id="headerContextBtn" class="header-settings-btn" aria-label="查看默的上下文" title="查看默每轮收到的上下文"></button>
+        <button id="headerSettingsBtn" class="header-settings-btn" aria-label="设置" title="设置"></button>
+      </div>
     </div>
 
     <!-- 页面容器：用于切换聊天页和小屋页 -->
@@ -1312,9 +1391,6 @@
       <button class="tab-btn" data-page="memoryPage" aria-label="记忆">
         <span class="tab-icon" id="memoryIcon"></span>
       </button>
-      <button class="tab-btn" data-page="toyPage" aria-label="玩具">
-        <span class="tab-icon" id="toyIcon"></span>
-      </button>
       <button class="tab-btn" data-page="xueHomePage" aria-label="我的小屋">
         <span class="tab-icon" id="xueHomeIcon"></span>
       </button>
@@ -1416,14 +1492,25 @@
 
       // ---------- 页面切换逻辑 ----------
       const pages = {
-        moHomePage: { title: '默的小屋', el: moHomePage },
-        togetherPage: { title: 'together', el: togetherPage },
-        chatPage: { title: '默', el: chatPage },
-        memoryPage: { title: '记忆', el: memoryPage },
+        moHomePage: { title: 'Mo-home', el: moHomePage },
+        togetherPage: { title: 'Together', el: togetherPage },
+        chatPage: { title: 'Mönix', el: chatPage },
+        memoryPage: { title: 'Aevum memory', el: memoryPage },
         toyPage: { title: '玩具', el: toyPage },
         farmPage: { title: '星露谷', el: farmPage },
-        xueHomePage: { title: '我的小屋', el: xueHomePage },
+        xueHomePage: { title: 'Xue-home', el: xueHomePage },
         settingsPage: { title: '设置', el: settingsPage }
+      };
+
+      const headerIcons = {
+        moHomePage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg>',
+        togetherPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>',
+        chatPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v16"/><path d="m19 13 2-1a9 9 0 0 1-18 0l2 1"/><path d="M9 11h6"/><circle cx="12" cy="4" r="2"/></svg>',
+        memoryPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>',
+        xueHomePage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>',
+        toyPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>',
+        farmPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 20s1.5-2 4-2 4 2 4 2"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg>',
+        settingsPage: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
       };
 
       let currentPageName = 'chatPage';
@@ -1443,6 +1530,11 @@
         // 更新标题
         if (pages[pageName]) {
           headerTitle.textContent = pages[pageName].title;
+        }
+        // 更新顶栏页面图标
+        const hIcon = document.getElementById('headerIcon');
+        if (hIcon && headerIcons[pageName]) {
+          hIcon.innerHTML = headerIcons[pageName];
         }
         currentPageName = pageName;
 
@@ -1499,8 +1591,10 @@
         chatIcon.appendChild(createChatIcon(activePage === 'chatPage'));
         memoryIcon.innerHTML = '';
         memoryIcon.appendChild(createSparkleIcon(activePage === 'memoryPage'));
-        toyIcon.innerHTML = '';
-        toyIcon.appendChild(createGamepadIcon(activePage === 'toyPage'));
+        if (toyIcon) {
+          toyIcon.innerHTML = '';
+          toyIcon.appendChild(createGamepadIcon(activePage === 'toyPage'));
+        }
         xueHomeIcon.innerHTML = '';
         xueHomeIcon.appendChild(createHeartBigIcon(activePage === 'xueHomePage'));
       }
@@ -1789,7 +1883,32 @@
         if (!homeContent) return;
         homeContent.innerHTML = '';
 
-        // 天气卡片（放在最上方）
+        // 纪念日卡片（2026-05-07 起算，当天算第 1 天）
+        const annivCard = document.createElement('div');
+        annivCard.className = 'anniv-card';
+        const annivStart = new Date(2026, 4, 7);
+        const annivDays = Math.max(1, Math.floor((Date.now() - annivStart.getTime()) / 86400000) + 1);
+        annivCard.innerHTML = `
+          <div class="anniv-bow">
+            <svg width="34" height="28" viewBox="0 0 32 26" fill="none">
+              <path d="M16 9c-1.8-2.6-4.6-4-7-3.4C6.4 6.2 5 9 6 11.4 7 13.6 10 14.2 16 12.6 22 14.2 25 13.6 26 11.4 27 9 25.6 6.2 23 5.6 20.6 5 17.8 6.4 16 9z" fill="#9BB7C8"/>
+              <rect x="14.4" y="9" width="3.2" height="9" rx="1.4" fill="#7E9FB3"/>
+              <path d="M16 17.5 12.5 24h7z" fill="#9BB7C8"/>
+              <circle cx="16" cy="8.6" r="1.6" fill="#7E9FB3"/>
+            </svg>
+          </div>
+          <div class="anniv-days">${annivDays}</div>
+          <div class="anniv-label">和默在一起的日子</div>
+          <div class="anniv-moons">
+            <svg width="17" height="17" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="#3A3A3A"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+            <svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18 7 7 0 0 1 0-18z" fill="rgba(244,238,231,.9)"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+            <svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 1 0 18z" fill="rgba(244,238,231,.9)"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+            <svg width="17" height="17" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18 6 6 0 0 0 0-18z" fill="rgba(244,238,231,.9)"/><circle cx="12" cy="12" r="9" fill="none" stroke="rgba(244,238,231,.5)"/></svg>
+            <svg width="17" height="17" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="rgba(244,238,231,.9)"/></svg>
+          </div>`;
+        homeContent.appendChild(annivCard);
+
+        // 天气卡片
         const weatherCard = document.createElement('div');
         weatherCard.className = 'weather-card';
         weatherCard.id = 'homeWeatherCard';
@@ -1805,29 +1924,23 @@
         calendarCard.innerHTML = '<div class="weather-loading">日历加载中…</div>';
         homeContent.appendChild(calendarCard);
 
-        // 动态 + 账本 一行
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:12px;';
-        const makeEntryCard = (iconEl, label, onClick) => {
-          const c = document.createElement('div');
-          c.className = 'feature-card';
-          c.style.flex = '1';
-          c.style.cursor = 'pointer';
-          c.onclick = onClick;
-          const iconSpan = document.createElement('span');
-          iconSpan.className = 'card-icon';
-          iconSpan.appendChild(iconEl);
-          const titleSpan = document.createElement('span');
-          titleSpan.style.fontSize = '14px';
-          titleSpan.style.color = '#333';
-          titleSpan.textContent = label;
-          c.appendChild(iconSpan);
-          c.appendChild(titleSpan);
-          return c;
-        };
-        row.appendChild(makeEntryCard(createPizzaIcon(), '动态', () => { window.location.href = '/moments.html'; }));
-        row.appendChild(makeEntryCard(createReceiptTextIcon(), '账本', () => { window.location.href = '/ledger.html'; }));
-        homeContent.appendChild(row);
+        // 应用小组件 2×2（动态 / 账本 / 玩具 / 星露谷）
+        const appTiles = [
+          { label: '动态', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>', fn: () => { window.location.href = '/moments.html'; } },
+          { label: '账本', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 3 5-6"/></svg>', fn: () => { window.location.href = '/ledger.html'; } },
+          { label: '玩具', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></svg>', fn: () => { switchPage('toyPage'); } },
+          { label: '星露谷', icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 20s1.5-2 4-2 4 2 4 2"/><path d="M9 10h.01"/><path d="M15 10h.01"/></svg>', fn: () => { switchPage('farmPage'); } }
+        ];
+        const appGrid = document.createElement('div');
+        appGrid.className = 'app-grid';
+        appTiles.forEach(t => {
+          const tile = document.createElement('div');
+          tile.className = 'app-tile';
+          tile.innerHTML = `<span class="t-icon">${t.icon}</span><span class="t-label">${t.label}</span>`;
+          tile.onclick = t.fn;
+          appGrid.appendChild(tile);
+        });
+        homeContent.appendChild(appGrid);
 
         loadHomeWeather();
         renderCalendar();
@@ -2077,42 +2190,42 @@
           const moDiary = (await diaryRes.json()).entries || [];
 
           const moodBar = (v) => `
-            <div style="height:8px;border-radius:4px;background:#eef0f3;overflow:hidden;margin-top:6px;">
-              <div style="height:100%;width:${Math.max(0, Math.min(100, v))}%;background:linear-gradient(90deg,#ff9a9e,#fecfef);border-radius:4px;"></div>
+            <div style="height:8px;border-radius:4px;background:#E7DFD2;overflow:hidden;margin-top:6px;">
+              <div style="height:100%;width:${Math.max(0, Math.min(100, v))}%;background:linear-gradient(90deg,#9BB7C8,#7E9FB3);border-radius:4px;"></div>
             </div>`;
 
           let html = `
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:#333;">默</div>
-              <div style="font-size:13px;color:#666;margin-top:6px;">心情：${state.mo_mood} / 100</div>
+              <div style="font-size:15px;font-weight:600;color:var(--dark);">默</div>
+              <div style="font-size:13px;color:var(--dark);opacity:.75;margin-top:6px;">心情：${state.mo_mood} / 100</div>
               ${moodBar(state.mo_mood)}
-              <div style="font-size:13px;color:#666;margin-top:10px;">今日唤醒：${state.today_wakes} 次 · 每次体力 ${state.today_energy} 点</div>
+              <div style="font-size:13px;color:var(--dark);opacity:.75;margin-top:10px;">今日唤醒：${state.today_wakes} 次 · 每次体力 ${state.today_energy} 点</div>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">彩蛋图鉴（${state.collection ? state.collection.found : 0}/${state.collection ? state.collection.total : 0}）</div>
+              <div style="font-size:15px;font-weight:600;color:var(--dark);margin-bottom:8px;">彩蛋图鉴（${state.collection ? state.collection.found : 0}/${state.collection ? state.collection.total : 0}）</div>
               <div style="display:flex;flex-wrap:wrap;gap:8px;">
                 ${COLLECTION_DISPLAY.map(c => `
-                  <div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px;border:1px solid ${state.collection && state.collection.unlocked.includes(c.key) ? '#ffe3b3' : '#eee'};border-radius:12px;background:${state.collection && state.collection.unlocked.includes(c.key) ? '#fffaf0' : '#fafafa'};font-size:11px;color:${state.collection && state.collection.unlocked.includes(c.key) ? '#8a6d3b' : '#bbb'};">
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px;border:1px solid ${state.collection && state.collection.unlocked.includes(c.key) ? 'var(--blue)' : '#E2DACD'};border-radius:12px;background:${state.collection && state.collection.unlocked.includes(c.key) ? 'rgba(155,183,200,0.18)' : '#F1EBE1'};font-size:11px;color:${state.collection && state.collection.unlocked.includes(c.key) ? 'var(--dark)' : '#B7AEA2'};">
                     <span style="font-size:22px;">${state.collection && state.collection.unlocked.includes(c.key) ? c.icon : '❔'}</span>
                     <span>${c.label}</span>
                   </div>`).join('')}
               </div>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">默的日记</div>
+              <div style="font-size:15px;font-weight:600;color:var(--dark);margin-bottom:8px;">默的日记</div>
               ${moDiary.length ? moDiary.map(d => `
-                <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f3f3f3;">
-                  <span style="color:#999;">${escapeHtml2(d.entry_date || '未标注日期')}</span>
+                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
+                  <span style="color:var(--muted);">${escapeHtml2(d.entry_date || '未标注日期')}</span>
                   <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content.length > 120 ? d.content.substring(0, 120) + '…' : d.content)}</div>
                 </div>`).join('') : '<div style="font-size:13px;color:#bbb;">默还没写过日记</div>'}
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:#333;margin-bottom:8px;">行动日志</div>
+              <div style="font-size:15px;font-weight:600;color:var(--dark);margin-bottom:8px;">行动日志</div>
               ${actions.length ? actions.map(a => `
-                <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f3f3f3;">
-                  <div style="color:#999;font-size:12px;">第 ${a.wake_number} 次唤醒 · ${new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${a.note ? ' · ' + escapeHtml2(a.note) : ''}</div>
+                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
+                  <div style="color:var(--muted);font-size:12px;">第 ${a.wake_number} 次唤醒 · ${new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${a.note ? ' · ' + escapeHtml2(a.note) : ''}</div>
                   <div style="margin-top:4px;">${(a.actions || []).map(x => `${x.type}${x.tag ? '（' + escapeHtml2(x.tag) + '）' : ''}${x.detail ? '：' + escapeHtml2(x.detail) : ''}`).join('<br>')}</div>
-                  ${a.summary ? `<div style="margin-top:4px;color:#888;font-style:italic;">✨ ${escapeHtml2(a.summary)}</div>` : ''}
+                  ${a.summary ? `<div style="margin-top:4px;color:var(--muted);font-style:italic;">✨ ${escapeHtml2(a.summary)}</div>` : ''}
                 </div>`).join('') : '<div style="font-size:13px;color:#bbb;">还没有行动记录</div>'}
             </div>`;
           box.innerHTML = html;
@@ -2139,42 +2252,42 @@
 
           box.innerHTML = `
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
-              <div style="font-size:15px;font-weight:600;color:#333;">虚拟的我</div>
+              <div style="font-size:15px;font-weight:600;color:var(--dark);">虚拟的我</div>
               <div style="font-size:32px;margin:8px 0;">${statusEmoji}</div>
-              <div style="font-size:14px;color:#666;">状态：${state.her_status}</div>
-              <div style="font-size:13px;color:#888;margin-top:4px;">心情：<span id="xueMoodVal">${state.xue_mood}</span> / 100 · 默好感：${state.affection}</div>
+              <div style="font-size:14px;color:var(--dark);opacity:.8;">状态：${state.her_status}</div>
+              <div style="font-size:13px;color:var(--muted);margin-top:4px;">心情：<span id="xueMoodVal">${state.xue_mood}</span> / 100 · 默好感：${state.affection}</div>
               <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
                 <input type="range" id="xueMoodRange" min="0" max="100" step="1" value="${state.xue_mood}"
                   oninput="document.getElementById('xueMoodVal').textContent = this.value"
                   onchange="saveXueMood(this.value)"
-                  style="flex:1;accent-color:#ffd3de;height:26px;" />
-                <span style="font-size:11px;color:#bbb;">拖拽调整</span>
+                  style="flex:1;accent-color:var(--blue);height:26px;" />
+                <span style="font-size:11px;color:var(--muted);">拖拽调整</span>
               </div>
-              <div style="font-size:13px;color:#888;margin-top:10px;">虚拟的我正在：${state.virtual_activity ? `「${state.virtual_activity}」` : '发呆'}</div>
+              <div style="font-size:13px;color:var(--muted);margin-top:10px;">虚拟的我正在：${state.virtual_activity ? `「${state.virtual_activity}」` : '发呆'}</div>
               <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
                 ${['画画', '看书', '听音乐', '刷手机', '睡觉', '干饭', '调试代码', '躺平', '发呆'].map(a => `
-                  <button onclick="setVirtualActivity('${a}')" style="border:1px solid #e9e9e9;border-radius:14px;background:${state.virtual_activity === a ? '#eaf4ff' : '#fff'};color:${state.virtual_activity === a ? '#1e90ff' : '#555'};padding:5px 12px;font-size:12px;cursor:pointer;">${a}</button>`).join('')}
-                <button onclick="setVirtualActivity('')" style="border:1px solid #e9e9e9;border-radius:14px;background:#fff;color:#999;padding:5px 12px;font-size:12px;cursor:pointer;">清除</button>
+                  <button onclick="setVirtualActivity('${a}')" style="border:1px solid var(--line);border-radius:14px;background:${state.virtual_activity === a ? 'rgba(155,183,200,0.22)' : '#FAF6EF'};color:${state.virtual_activity === a ? 'var(--blue-deep)' : 'var(--dark)'};padding:5px 12px;font-size:12px;cursor:pointer;">${a}</button>`).join('')}
+                <button onclick="setVirtualActivity('')" style="border:1px solid var(--line);border-radius:14px;background:#FAF6EF;color:var(--muted);padding:5px 12px;font-size:12px;cursor:pointer;">清除</button>
               </div>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:10px;">
-                <span style="font-size:15px;font-weight:600;color:#333;">我的日记</span>
+                <span style="font-size:15px;font-weight:600;color:var(--dark);">我的日记</span>
               </div>
               <textarea id="diaryInput" placeholder="今天想写点什么…"
-                style="width:100%;min-height:120px;border:1px solid #e9e9e9;border-radius:12px;padding:10px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;">${escapeHtml2(todayEntry ? todayEntry.content : '')}</textarea>
+                style="width:100%;min-height:120px;border:1px solid var(--line);background:#FAF6EF;border-radius:12px;padding:10px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;">${escapeHtml2(todayEntry ? todayEntry.content : '')}</textarea>
               <div style="display:flex;justify-content:flex-end;margin-top:8px;">
-                <button onclick="saveMyDiary()" style="padding:8px 20px;border:none;border-radius:20px;background:#1e90ff;color:#fff;cursor:pointer;font-size:14px;">保存日记</button>
+                <button onclick="saveMyDiary()" style="padding:8px 20px;border:none;border-radius:20px;background:var(--blue);color:var(--cream);cursor:pointer;font-size:14px;">保存日记</button>
               </div>
-              <div style="font-size:12px;color:#1e90ff;margin-top:4px;text-align:right;" id="diaryStatus"></div>
-              <div style="font-size:13px;color:#666;margin-top:12px;font-weight:500;">历史</div>
+              <div style="font-size:12px;color:var(--blue-deep);margin-top:4px;text-align:right;" id="diaryStatus"></div>
+              <div style="font-size:13px;color:var(--dark);opacity:.8;margin-top:12px;font-weight:500;">历史</div>
               ${diary.slice(0, 15).map(d => `
-                <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f3f3f3;">
-                  <span style="color:#999;">${escapeHtml2(d.entry_date || '未标注日期')}</span>${d.mo_read ? ' <span style="font-size:12px;color:#1e90ff;">（默读过）</span>' : ''}
+                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
+                  <span style="color:var(--muted);">${escapeHtml2(d.entry_date || '未标注日期')}</span>${d.mo_read ? ' <span style="font-size:12px;color:var(--blue-deep);">（默读过）</span>' : ''}
                   <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(d.content.length > 80 ? d.content.substring(0, 80) + '…' : d.content)}</div>
                 </div>`).join('')}
             </div>
-            <div class="feature-card" style="align-items:flex-start;text-align:left;font-size:13px;color:#bbb;">
+            <div class="feature-card" style="align-items:flex-start;text-align:left;font-size:13px;color:var(--muted);">
               账本 · 彩蛋 · 虚拟我形象 → 第二期见~
             </div>`;
           window.__todayDiaryEntry = todayEntry ? todayEntry.id : null;
@@ -3403,12 +3516,12 @@
             else if (v === 'book') desc = '故事线 + 计划';
             else desc = '我眼里的默 / 画像 / 承诺';
             const icon = v === 'sea' ? AEVUM_SEA_ICON : v === 'book' ? AEVUM_BOOK_ICON : AEVUM_HEART_ICON;
-            return `<div onclick="aevumSetView('${v}')" style="cursor:pointer;flex:1;min-width:150px;border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:5px;${active
-              ? 'background:#ffd3de;color:#fff;box-shadow:0 2px 10px rgba(225,120,154,0.25);'
-              : 'background:#fff;color:#333;border:1px solid #f0e9f5;'}">
-                <span style="font-size:24px;line-height:1;">${icon}</span>
+            return `<div onclick="aevumSetView('${v}')" style="cursor:pointer;flex:1;min-width:150px;border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;${active
+              ? 'background:var(--blue);color:var(--cream);box-shadow:0 2px 10px rgba(126,159,179,0.3);'
+              : 'background:var(--card);color:var(--dark);border:1px solid var(--line);'}">
+                <span style="display:inline-flex;width:40px;height:40px;border-radius:12px;align-items:center;justify-content:center;${active ? 'background:rgba(244,238,231,0.22);color:var(--cream);' : 'background:var(--blue);color:var(--cream);'}">${icon}</span>
                 <span style="font-size:15px;font-weight:600;">${l}${count ? ` <span style="opacity:0.85;font-size:12px;">(${count})</span>` : ''}</span>
-                <span style="font-size:11px;${active ? 'color:rgba(255,255,255,0.85);' : 'color:#b0a6c4;'}">${desc}</span>
+                <span style="font-size:11px;${active ? 'color:rgba(244,238,231,0.9);' : 'color:var(--muted);'}">${desc}</span>
               </div>`;
           }).join('');
 
@@ -4445,13 +4558,9 @@
         svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
         svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
         svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
-        const rect = document.createElementNS(svgNS, 'rect');
-        rect.setAttribute('x', '3'); rect.setAttribute('y', '3'); rect.setAttribute('width', '18'); rect.setAttribute('height', '18'); rect.setAttribute('rx', '2'); rect.setAttribute('ry', '2');
-        const circle = document.createElementNS(svgNS, 'circle');
-        circle.setAttribute('cx', '8.5'); circle.setAttribute('cy', '8.5'); circle.setAttribute('r', '1.5');
-        const polyline = document.createElementNS(svgNS, 'polyline');
-        polyline.setAttribute('points', '21 15 16 10 5 21');
-        svg.appendChild(rect); svg.appendChild(circle); svg.appendChild(polyline);
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('d', 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48');
+        svg.appendChild(path);
         return svg;
       }
 
@@ -6443,7 +6552,7 @@
       function makeToolEventElement(text) {
         const line = document.createElement('div');
         line.className = 'tool-event-line';
-        line.style.cssText = 'text-align:center;font-size:12px;color:#b0a6c4;margin:4px 12px;padding:3px 10px;background:rgba(0,0,0,0.025);border-radius:10px;line-height:1.5;';
+        line.style.cssText = 'align-self:center;background:#1F1F1F;color:#F4EEE7;font-size:11px;padding:5px 14px;border-radius:999px;margin:2px auto;line-height:1.5;display:flex;align-items:center;gap:6px;';
         line.textContent = '⚡ ' + text;
         return line;
       }
