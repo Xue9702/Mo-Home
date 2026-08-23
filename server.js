@@ -5109,7 +5109,7 @@ app.put('/api/aevum/topics/:id', async (req, res) => {
 });
 
 // ================== 用户画像 ==================
-const PROFILE_DIMENSIONS = ['目前职业', '家庭', '工作', '重要关系'];
+const PROFILE_DIMENSIONS = ['出生日期', '职业', '学历', '家庭', '重要关系'];
 
 function renderProfileText(dimensions) {
   if (!dimensions || typeof dimensions !== 'object') return '';
@@ -5182,8 +5182,34 @@ async function getTodosContext(limit = 8) {
 }
 
 // v3.0：统一组装每轮注入的记忆上下文（记忆海召回 → 记忆书场景 → 记忆心 → 计划）
+// 最新一次唤醒的行动日志：优先注入，避免默对"当轮做的事"有记忆时差
+async function getLatestWakeContext() {
+  try {
+    const { data } = await supabase
+      .from('mo_actions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const a = (data || [])[0];
+    if (!a) return '';
+    const acts = (a.actions || []).map(x =>
+      `${x.type}${x.tag ? '（' + String(x.tag) + '）' : ''}${x.detail ? '：' + String(x.detail) : ''}`
+    ).join('；');
+    const time = new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const lines = [`第 ${a.wake_number || 1} 次唤醒 · ${time}`];
+    if (acts) lines.push(acts);
+    if (a.summary) lines.push('总结：' + String(a.summary));
+    if (a.note) lines.push('备注：' + String(a.note));
+    return `\n\n【最近一次唤醒】\n${perspectiveConvert(lines.join('\n'))}`;
+  } catch (e) {
+    return '';
+  }
+}
+
 async function buildMemoryContext(userText, opts = {}) {
   let ctx = '';
+  const latestWake = await getLatestWakeContext();
+  if (latestWake) ctx += latestWake;
   const recall = await recallAevumMemories(userText, opts.limit || 5, opts.excludeText || '', opts.historyText || '');
   if (recall) ctx += recall;
   const moView = await getMoViewContext();
@@ -5231,9 +5257,9 @@ app.post('/api/aevum/profile/generate', async (req, res) => {
     const system = `你是 Aevum Memory 的用户画像生成器。根据雪的长期记忆，按客观维度归纳成一份用户画像。
 规则：
 - 只归纳有充分依据的信息，不编造
-- 维度：目前职业 / 家庭 / 工作 / 重要关系（只填客观信息；喜好、三观、性格等主观内容不要写进画像）
+- 维度：出生日期 / 职业 / 学历 / 家庭 / 重要关系（只填客观信息；喜好、三观、性格等主观内容不要写进画像）
 - 检测不到依据的维度直接跳过（不要硬编）；每项 20-60 字，简洁自然
-- 输出格式：只输出 [AEVUM_PROFILE]{"dimensions":{"目前职业":"...","家庭":"...","工作":"...","重要关系":"..."}}`;
+- 输出格式：只输出 [AEVUM_PROFILE]{"dimensions":{"出生日期":"...","职业":"...","学历":"...","家庭":"...","重要关系":"..."}}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {

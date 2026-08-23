@@ -3,7 +3,8 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#F4EEE7">
 <title>Mönix · 默的小屋</title>
   <style>
     * {
@@ -455,6 +456,7 @@
       border-top: 1px solid #e9e9e9;
       padding: 8px 0;
       flex-shrink: 0;
+      padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     }
 
     .tab-btn {
@@ -2480,7 +2482,7 @@
         user_tendency: '#ff9f7f', personality: '#7fb8ff', self_model: '#e1789a'
       };
       const AEVUM_DOMAINS_FRONT = ['恋爱', '创作', '情绪', '工作学习', '健康生活', '家庭', '技术', '回忆纪念', '其他'];
-      const AEVUM_PROFILE_DIMENSIONS = ['目前职业', '家庭', '工作', '重要关系'];
+      const AEVUM_PROFILE_DIMENSIONS = ['出生日期', '职业', '学历', '家庭', '重要关系'];
       const AEVUM_DERIVE_GRAPH = {
         event: ['fact', 'meaning', 'relationship'],
         fact: ['meaning', 'relationship'],
@@ -2802,15 +2804,6 @@
               <button onclick="toyConnectCustom()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 12px;font-size:12px;cursor:pointer;">加入并重连</button>
             </div>
             <div style="font-size:12px;color:#8a83a8;line-height:1.7;">步骤：① 先关掉司沃康 App、断开手机蓝牙；② 点「连接玩具」，在弹窗里选 ST420A；③ 下方选写入口发指令试反应。连上蓝牙后物理按键会失灵，属正常现象。</div>
-          </div>
-          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span style="font-size:14px;font-weight:600;color:#333;">星露谷 · 默的农场桥</span>
-              <span style="margin-left:auto;">
-                <button onclick="switchPage('farmPage')" style="border:none;border-radius:12px;background:#cfe8d8;color:#4d8f68;padding:8px 16px;font-size:13px;cursor:pointer;">🌾 进入星露谷页</button>
-              </span>
-            </div>
-            <div style="font-size:12px;color:#8a83a8;line-height:1.7;">让默通过本地游戏桥接控制星露谷：先在星露谷页测试连接（游戏要用 SMAPI 启动），开启监控后默就能感知农场变化、在聊天里用工具种地钓鱼。</div>
           </div>
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -3906,16 +3899,6 @@
             <div style="font-size:11px;color:#b0a6c4;">按维度记录"我了解的雪"，默每次聊天和唤醒都会看到；AI 检测不到的维度可留空或手动补充。</div>
             ${hasContent || editing ? dimRows : '<div style="font-size:13px;color:#b0a6c4;">还没有画像，点「✨ AI 生成」让默根据活跃记忆归纳~</div>'}
             ${profData.updated_at ? `<div style="font-size:11px;color:#b0a6c4;">上次更新：${new Date(profData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
-          </div>
-          <div class="feature-card" style="align-items:stretch;gap:6px;">
-            <div style="font-size:14px;font-weight:600;color:#333;">用户倾向（${tendList.length}）</div>
-            <div style="font-size:11px;color:#b0a6c4;">雪的喜好 / 三观 / 性格，来自对话自动提取，可在记忆海的候选里确认或拒绝。</div>
-            ${tendList.length ? tendList.map(t => `
-              <div style="font-size:13px;color:#555;padding:6px 0;border-bottom:1px solid #f6f2f8;">
-                <span style="color:#8a5fb5;">[${AEVUM_TYPE_LABELS[t.type] || t.type}]</span> ${escapeHtml2(t.content)}
-                <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">${new Date(t.created_at || Date.now()).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric' })}</div>
-              </div>`).join('')
-              : '<div style="font-size:13px;color:#b0a6c4;">还没有用户倾向记忆，聊到雪的喜好/三观/性格时默会自动提取~</div>'}
           </div>`;
       }
 
