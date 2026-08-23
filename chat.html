@@ -3589,12 +3589,13 @@
           if (aevumState.filters.owner) params.set('owner', aevumState.filters.owner);
           if (aevumState.filters.domain) params.set('domain', aevumState.filters.domain);
           if (aevumState.filters.q) params.set('q', aevumState.filters.q);
-          const [listRes, statsRes, bookRes, planRes, todoRes, profRes, moRes, promRes, mozhaRes] = await Promise.all([
+          const [listRes, statsRes, bookRes, planRes, todoRes, candRes, profRes, moRes, promRes, mozhaRes] = await Promise.all([
             fetch('/api/aevum?' + params.toString()),
             fetch('/api/aevum/stats'),
             fetch('/api/aevum/books').catch(() => null),
             fetch('/api/aevum/plans').catch(() => null),
             fetch('/api/todos').catch(() => null),
+            fetch('/api/aevum/books/candidates').catch(() => null),
             fetch('/api/aevum/profile').catch(() => null),
             fetch('/api/aevum/mo-view').catch(() => null),
             fetch('/api/aevum/promises').catch(() => null),
@@ -3605,6 +3606,7 @@
           const bookData = bookRes && bookRes.ok ? await bookRes.json() : { books: [] };
           const planData = planRes && planRes.ok ? await planRes.json() : { active: [], expired: [] };
           const todoData = todoRes && todoRes.ok ? await todoRes.json() : { items: [] };
+          const candData = candRes && candRes.ok ? await candRes.json() : { groups: [] };
           const profData = profRes && profRes.ok ? await profRes.json() : { content: '', dimensions: null, updated_at: null };
           const moData = moRes && moRes.ok ? await moRes.json() : { content: '', updated_at: null };
           const promData = promRes && promRes.ok ? await promRes.json() : { active: [], archived: [] };
@@ -3671,11 +3673,11 @@
                 <span style="color:#aaa;">已归档 ${(stats.byStatus && stats.byStatus.archived) || 0}</span>
               </div>` : ''}
             </div>
-            ${aevumState.view === 'book' ? renderBookPanel(bookData, planData, todoData) : ''}
+            ${aevumState.view === 'book' ? renderBookPanel(bookData, planData, todoData, candData) : ''}
             ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, promData, mozhaCount) : ''}
             ${inSea && (aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
             ${inSea ? `<div style="display:flex;flex-direction:column;gap:10px;">
-              ${list.length ? list.map(m => renderSeaCard(m)).join('')
+              ${list.length ? renderSeaGrouped(list)
                 : `<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">${aevumState.filters.status === 'archived' ? '这里还没有归档的记忆' : '记忆海空空的~默的对话会自动把事件单元存进来'}</div>`}
             </div>` : ''}`;
           }
@@ -3726,10 +3728,11 @@
       }
 
       // v3.0 记忆书面板：故事线 + 计划
-      function renderBookPanel(bookData, planData, todoData) {
+      function renderBookPanel(bookData, planData, todoData, candData) {
         const books = bookData.books || [];
         const plans = planData.active || [];
         const expired = planData.expired || [];
+        const candGroups = (candData && candData.groups) || [];
         const todos = (todoData && todoData.items) || [];
         const todosPending = todos.filter(t => t.status === 'pending');
         const todosDone = todos.filter(t => t.status === 'done');
@@ -3784,12 +3787,25 @@
             : '<div style="font-size:13px;color:#b0a6c4;padding:6px 0;">还没有待办，让默帮你记一件吧~</div>'}
             ${todosDone.length ? `<div style="font-size:12px;color:#b0a6c4;margin-top:4px;">已完成 ${todosDone.length} 条</div>` : ''}
           </div>`;
+        const candBanner = candGroups.length ? `
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;border:1px solid var(--blue);">
+            <div style="font-size:14px;font-weight:600;color:var(--dark);">📚 记忆书在生长</div>
+            <div style="font-size:12px;color:var(--muted);">有 ${candGroups.length} 组新内容可以生成故事，点确认后默会判断是续写、矛盾还是跳过：</div>
+            ${candGroups.map(g => `
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="flex:1;font-size:13px;color:var(--dark);">「${escapeHtml2(aevumViewText(g.label || '（无标签）'))}」 · ${g.count} 个新事件</span>
+                <button onclick="aevumConfirmCandidates(${g.book_id})" style="border:none;border-radius:12px;background:var(--blue);color:var(--cream);padding:7px 14px;font-size:12px;cursor:pointer;">生成故事</button>
+              </div>`).join('')}
+          </div>` : '';
         const storiesHtml = books.length ? books.map(b => `
             <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span style="cursor:pointer;font-size:14px;font-weight:600;color:#333;" onclick="aevumToggleBook(${b.id})">${escapeHtml2(aevumViewText(b.label || '（无标签）'))}</span>
                 <span style="font-size:11px;color:#8a83a8;">${b.unit_count || 0} 个事件单元</span>
-                <span style="margin-left:auto;cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumEditBook(${b.id}, this)">✎ 编辑</span>
+                <span style="margin-left:auto;display:flex;gap:10px;">
+                  <span style="cursor:pointer;color:var(--blue-deep);font-size:12px;" onclick="aevumViewBookVersions(${b.id})">📜 看这个故事怎么变化的</span>
+                  <span style="cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumEditBook(${b.id}, this)">✎ 编辑</span>
+                </span>
               </div>
               <div style="font-size:13px;color:#555;line-height:1.7;">${escapeHtml2(aevumViewText(b.summary))}</div>
               <div id="aevumBookBody_${b.id}" style="display:none;"></div>
@@ -3807,6 +3823,7 @@
             </div>
             <div style="font-size:11px;color:#b0a6c4;">点故事线看它包含的事件单元；点事件可看原文。</div>
           </div>
+          ${candBanner}
           ${plansCard}
           ${todoCard}
           ${storiesHtml}`;
@@ -3948,7 +3965,7 @@
           </div>`;
       }
 
-      function renderSeaCard(m) {
+      function renderSeaCard(m, hideCtx = false) {
         const statusBg = m.status === 'active' ? '#e8f9f0' : m.status === 'archived' ? '#f0f0f0' : '#fff3d6';
         const statusColor = m.status === 'active' ? '#2ecc71' : m.status === 'archived' ? '#aaa' : '#b8860b';
         const when = m.event_time || m.created_at;
@@ -3965,7 +3982,7 @@
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
             </div>
-            ${fullCtx ? `<div style="font-size:12px;color:#666;background:#faf7fc;border:1px solid #f0e9f5;border-radius:10px;padding:8px;line-height:1.6;white-space:pre-wrap;">📄 原文：${escapeHtml2(aevumViewText(fullCtx))}</div>` : ''}
+            ${!hideCtx && fullCtx ? `<div style="font-size:12px;color:#666;background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:8px;line-height:1.7;white-space:pre-wrap;">📄 原文：${escapeHtml2(aevumViewText(fullCtx))}</div>` : ''}
             <div style="font-size:14px;color:#444;line-height:1.6;white-space:pre-wrap;">${escapeHtml2(aevumViewText(m.content))}</div>
             ${m.tags && m.tags.length ? `<div style="font-size:11px;color:#e1789a;">${m.tags.map(escapeHtml2).join(' · ')}</div>` : ''}
             ${m.domain && m.domain.length ? `<div style="font-size:11px;color:#7f9fd9;">${m.domain.map(escapeHtml2).join(' · ')}</div>` : ''}
@@ -3979,6 +3996,51 @@
             </div>
           </div>`;
       }
+
+      // 记忆海按会话分组：原文块只显示一次，点开展开多个事件标题
+      function renderSeaGrouped(list) {
+        if (!list.length) return '';
+        const groups = new Map();
+        const singles = [];
+        for (const m of list) {
+          if (m.episode_id) {
+            if (!groups.has(m.episode_id)) groups.set(m.episode_id, []);
+            groups.get(m.episode_id).push(m);
+          } else singles.push(m);
+        }
+        let html = '';
+        for (const [epId, mems] of groups) {
+          const first = mems.find(m => m.context);
+          const ctx = first ? first.context : '';
+          const ordered = [...mems].sort((a, b) => new Date(a.event_time || a.created_at) - new Date(b.event_time || b.created_at));
+          html += `
+            <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
+              ${ctx ? `<div style="font-size:12.5px;color:var(--dark);opacity:.85;background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:10px;line-height:1.8;white-space:pre-wrap;">${escapeHtml2(aevumViewText(ctx))}</div>` : ''}
+              <div style="font-size:11px;color:var(--muted);">本段对话提取出 ${ordered.length} 个事件</div>
+              <div id="epGroup_${epId}" style="display:none;flex-direction:column;gap:10px;">
+                ${ordered.map(m => renderSeaCard(m, true)).join('')}
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--blue-deep);cursor:pointer;user-select:none;" onclick="aevumToggleEpisode(${epId})">
+                <span id="epToggleText_${epId}">展开查看</span>
+                <svg id="epChev_${epId}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </div>
+            </div>`;
+        }
+        for (const m of singles) html += renderSeaCard(m);
+        return html;
+      }
+
+      function aevumToggleEpisode(epId) {
+        const box = document.getElementById('epGroup_' + epId);
+        const txt = document.getElementById('epToggleText_' + epId);
+        const chev = document.getElementById('epChev_' + epId);
+        if (!box) return;
+        const open = box.style.display !== 'flex';
+        box.style.display = open ? 'flex' : 'none';
+        if (txt) txt.textContent = open ? '收起' : '展开查看';
+        if (chev) chev.style.transform = open ? 'rotate(180deg)' : '';
+      }
+      window.aevumToggleEpisode = aevumToggleEpisode;
 
       function aevumFilter() {
         const g = (id) => document.getElementById(id);
@@ -4198,6 +4260,52 @@
         renderAevum();
       }
       window.aevumDeletePlan = aevumDeletePlan;
+
+      async function aevumConfirmCandidates(bookId) {
+        if (!confirm('确认把这组新事件并入这本记忆书吗？默会判断续写/矛盾/跳过，旧摘要会存档。')) return;
+        try {
+          const res = await fetch('/api/aevum/books/' + bookId + '/confirm-candidates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '处理失败，请重试'); return; }
+          alert('✅ 已处理 ' + (data.added || 0) + ' 个新事件' + (data.contradict ? '，发现 ' + data.contradict + ' 处矛盾并已存档演化' : ''));
+          renderAevum();
+        } catch (e) { alert('处理失败，请稍后重试'); }
+      }
+      window.aevumConfirmCandidates = aevumConfirmCandidates;
+
+      async function aevumViewBookVersions(bookId) {
+        try {
+          const res = await fetch('/api/aevum/books/' + bookId + '/versions');
+          const data = await res.json().catch(() => ({}));
+          const book = data.book || {};
+          const versions = data.versions || [];
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center;';
+          const box = document.createElement('div');
+          box.style.cssText = 'background:var(--card);border-radius:16px;padding:16px;width:min(92vw,540px);max-height:82vh;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;';
+          box.innerHTML = `
+            <div style="font-size:15px;font-weight:600;color:var(--dark);">📜 「${escapeHtml2(aevumViewText(book.label || '（无标签）'))}」的故事变化</div>
+            <div style="font-size:12px;color:var(--muted);">当前版本（最新）：</div>
+            <div style="font-size:13px;color:var(--dark);background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:8px;line-height:1.6;">${escapeHtml2(aevumViewText(book.summary || ''))}</div>
+            ${versions.length ? `<div style="font-size:12px;color:var(--muted);margin-top:6px;">历史版本（${versions.length}）：</div>` : ''}
+            <div style="overflow-y:auto;display:flex;flex-direction:column;gap:8px;">
+              ${versions.map(v => `
+                <div style="font-size:12px;color:#9A928A;background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:8px;line-height:1.6;">
+                  <div style="color:var(--muted);margin-bottom:2px;">v${v.version_no} · ${new Date(v.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${v.relation_type === 'superseded-contradict' ? ' · 发生过矛盾更新' : ''}</div>
+                  ${escapeHtml2(aevumViewText(v.summary || ''))}
+                </div>`).join('') || ''}
+            </div>
+            <button onclick="this.closest('div[style*=\\"position:fixed\\"]').remove()" style="padding:9px;border:none;border-radius:12px;background:#eee;color:#555;font-size:13px;cursor:pointer;">关闭</button>`;
+          overlay.appendChild(box);
+          document.body.appendChild(overlay);
+          overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        } catch (e) { alert('加载失败'); }
+      }
+      window.aevumViewBookVersions = aevumViewBookVersions;
 
       async function aevumAddTodo() {
         const input = document.getElementById('todoInput');

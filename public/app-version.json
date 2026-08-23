@@ -1,5 +1,5 @@
 {
-  "version": "0.4.1",
+  "version": "0.4.2",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "图标换新版：雪花+莫比乌斯环（环颜色调淡，视觉更聚焦）"
+  "notes": "状态栏/导航栏适配米色 + 记忆系统升级（记忆书生长/记忆海分组）"
 }

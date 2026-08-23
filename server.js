@@ -4714,6 +4714,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
       }
       if (insData?.[0]?.id) {
         ensureAevumEmbedding(insData[0].id, content).catch(e => console.error('Aevum embedding 失败:', e.message));
+        // 关联阈值：与已有记忆书摘要 ≥0.70 → 生成待确认候选（异步，不阻塞）
+        checkBookAssociation(insData[0].id, content).catch(e => console.error('记忆书关联检查失败:', e.message));
       }
       inserted++;
     }
@@ -4723,6 +4725,57 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
     dbg.parseError = err.message;
     console.error('Aevum 提取失败:', err.message);
     return finish(0);
+  }
+}
+
+// ---------- 记忆书关联候选（三级阈值：合并 ≥0.85 / 关联 ≥0.70 / 召回 ≥0.3） ----------
+function cosineSim(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+let bookEmbedCache = new Map();
+async function getBookEmbedding(book) {
+  const cached = bookEmbedCache.get(book.id);
+  if (cached) return cached;
+  const emb = await getEmbedding(String(book.summary || book.label || '').slice(0, 500));
+  if (emb) bookEmbedCache.set(book.id, emb);
+  return emb || null;
+}
+
+// 新单元与已有记忆书摘要相似度 ≥0.70 → 写入待确认候选（不直接落地）
+async function checkBookAssociation(memoryId, content) {
+  try {
+    const emb = await getEmbedding(String(content || '').slice(0, 500));
+    if (!emb) return;
+    const { data: books } = await supabase.from('aevum_books').select('id, label, summary');
+    if (!books || !books.length) return;
+    for (const b of books) {
+      const bEmb = await getBookEmbedding(b);
+      if (!bEmb) continue;
+      const sim = cosineSim(emb, bEmb);
+      if (sim >= 0.70) {
+        const { data: dup } = await supabase
+          .from('aevum_book_candidates')
+          .select('id')
+          .eq('book_id', b.id)
+          .eq('memory_id', memoryId);
+        if (!dup || !dup.length) {
+          await supabase.from('aevum_book_candidates').insert({
+            book_id: b.id,
+            memory_id: memoryId,
+            similarity: Number(sim.toFixed(4)),
+            status: 'pending'
+          });
+          console.log('📌 记忆书候选：unit', memoryId, '→ book', b.id, 'sim', sim.toFixed(3));
+        }
+      }
+    }
+  } catch (e) {
+    console.error('记忆书关联检查失败:', e.message);
   }
 }
 
@@ -4814,7 +4867,7 @@ app.get('/api/aevum', async (req, res) => {
         }
         for (const m of memories) {
           const list = ctxByEp[m.episode_id] || [];
-          if (list.length) m.context = list.join('\n\n').slice(0, 1500);
+          if (list.length) m.context = list.join('\n\n').slice(0, 4000);
         }
       }
     } catch (e) { /* 原文拉取失败不影响列表 */ }
@@ -5714,6 +5767,30 @@ app.get('/api/aevum/books', async (req, res) => {
   }
 });
 
+// 待确认候选：某本书 ≥3 个未入册的候选单元 → 提示可生成故事（需在 /:id 之前注册）
+app.get('/api/aevum/books/candidates', async (req, res) => {
+  try {
+    const [candRes, itemsRes, booksRes] = await Promise.all([
+      supabase.from('aevum_book_candidates').select('book_id, memory_id').eq('status', 'pending'),
+      supabase.from('aevum_book_items').select('book_id, memory_id'),
+      supabase.from('aevum_books').select('id, label, updated_at')
+    ]);
+    const used = new Set((itemsRes.data || []).map(r => `${r.book_id}:${r.memory_id}`));
+    const pending = {};
+    for (const c of (candRes.data || [])) {
+      if (used.has(`${c.book_id}:${c.memory_id}`)) continue;
+      if (!pending[c.book_id]) pending[c.book_id] = new Set();
+      pending[c.book_id].add(c.memory_id);
+    }
+    const groups = (booksRes.data || [])
+      .map(b => ({ book_id: b.id, label: b.label, count: pending[b.id] ? pending[b.id].size : 0 }))
+      .filter(g => g.count >= 3);
+    res.json({ groups });
+  } catch (e) {
+    res.json({ groups: [] });
+  }
+});
+
 app.get('/api/aevum/books/:id', async (req, res) => {
   try {
     const { data: book, error } = await supabase.from('aevum_books').select('*').eq('id', req.params.id).single();
@@ -5746,6 +5823,123 @@ app.put('/api/aevum/books/:id', async (req, res) => {
     res.json({ ok: true, book: data });
   } catch (e) {
     res.status(500).json({ error: '保存失败' });
+  }
+});
+
+// ================== 记忆书生长（三级阈值 + 三分支演化） ==================
+
+async function regenerateBookSummary(label, units) {
+  if (!units || !units.length) return '';
+  const lines = units.map(u =>
+    `[${u.event_time ? String(u.event_time).slice(0, 10) : '未知时间'}] ${String(u.title || '').slice(0, 30)}：${String(u.content || '').replace(/\s+/g, ' ').slice(0, 120)}`
+  ).join('\n');
+  const system = '你是 Aevum Memory 的记忆书摘要生成器。根据这本书「' + label + '」的所有事件单元，把故事线 summary 重新写一遍：时间/谁说了或做了什么/最后结果如何；不要罗列原文或标题，100-200 字；如果出现矛盾（后来推翻之前的），如实写出"一开始…后来…"的演化。只输出 summary 正文，不要 JSON 或解释。';
+  try {
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: lines }], reasoning_effort: 'low', max_tokens: 600, temperature: 0.4, stream: false })
+    });
+    if (!resp.ok) return '';
+    const data = await resp.json();
+    return String(data.choices?.[0]?.message?.content || '').trim().slice(0, 500);
+  } catch (e) {
+    console.error('记忆书摘要重生成失败:', e.message);
+    return '';
+  }
+}
+
+app.post('/api/aevum/books/:id/confirm-candidates', async (req, res) => {
+  const bookId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(bookId)) return res.status(400).json({ error: 'ID 无效' });
+  try {
+    const { data: book } = await supabase.from('aevum_books').select('*').eq('id', bookId).single();
+    if (!book) return res.status(404).json({ error: '未找到记忆书' });
+    const { data: cands } = await supabase.from('aevum_book_candidates').select('id, memory_id').eq('book_id', bookId).eq('status', 'pending');
+    if (!cands || !cands.length) return res.json({ ok: true, processed: 0 });
+    const candIds = cands.map(c => c.memory_id);
+    const { data: candMems } = await supabase.from('aevum_memories').select('id, title, content, event_time').in('id', candIds);
+    const { data: items } = await supabase.from('aevum_book_items').select('memory_id').eq('book_id', bookId);
+    const oldIds = (items || []).map(r => r.memory_id).filter(id => !candIds.includes(id));
+    const { data: oldMems } = oldIds.length ? await supabase.from('aevum_memories').select('id, title, content, event_time').in('id', oldIds) : { data: [] };
+    const unitLine = m => `[${m.event_time ? String(m.event_time).slice(0, 10) : '未知'}] ${String(m.title || '').slice(0, 20)}：${String(m.content || '').replace(/\s+/g, ' ').slice(0, 100)}`;
+    const system = '你是 Aevum Memory 的记忆书生长判断器。判断每个候选事件单元与记忆书「' + book.label + '」的关系，三选一：CONTINUE=旧故事的后续发展不矛盾，加入书里；CONTRADICT=推翻了旧摘要里的事实，加入书里并标记矛盾；SKIP=纯重复或关系不大，跳过。只输出 JSON 数组，格式：[{"memory_id":1,"action":"CONTINUE","contradicts_id":null}]；contradicts_id 仅 CONTRADICT 时填被推翻的旧单元 id，无则 null。';
+    const user = '当前摘要：' + book.summary + '\n\n书中已有单元：\n' + ((oldMems || []).map(unitLine).join('\n') || '（无）') + '\n\n候选单元：\n' + ((candMems || []).map(unitLine).join('\n'));
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], reasoning_effort: 'low', max_tokens: 1500, temperature: 0.3, stream: false })
+    });
+    if (!resp.ok) return res.status(500).json({ error: 'AI 判断失败，请稍后重试' });
+    const data = await resp.json();
+    const reply = String(data.choices?.[0]?.message?.content || '');
+    const arrStart = reply.indexOf('[');
+    const arrEnd = reply.lastIndexOf(']');
+    let actions = [];
+    if (arrStart !== -1 && arrEnd > arrStart) {
+      try { actions = JSON.parse(reply.substring(arrStart, arrEnd + 1)); } catch (e) { actions = []; }
+    }
+    if (!Array.isArray(actions) || !actions.length) return res.status(500).json({ error: 'AI 返回格式异常，请重试' });
+    const statusMap = {};
+    const continueIds = [];
+    const contradictPairs = [];
+    for (const a of actions) {
+      const mid = Number(a.memory_id);
+      if (a.action === 'CONTINUE') { continueIds.push(mid); statusMap[mid] = 'confirmed'; }
+      else if (a.action === 'CONTRADICT') { continueIds.push(mid); statusMap[mid] = 'confirmed'; if (Number(a.contradicts_id)) contradictPairs.push({ from: mid, to: Number(a.contradicts_id) }); }
+      else { statusMap[mid] = 'skipped'; }
+    }
+    for (const p of contradictPairs) {
+      await supabase.from('aevum_memory_links').insert({ from_id: p.from, to_id: p.to, relation_type: 'contradicts' }).catch(() => {});
+    }
+    const uniq = [...new Set(continueIds)];
+    if (uniq.length) {
+      const { data: exist } = await supabase.from('aevum_book_items').select('memory_id').eq('book_id', bookId);
+      const existSet = new Set((exist || []).map(r => r.memory_id));
+      for (const mid of uniq) {
+        if (!existSet.has(mid)) await supabase.from('aevum_book_items').insert({ book_id: bookId, memory_id: mid });
+      }
+    }
+    let summaryUpdated = false;
+    if (uniq.length) {
+      const merged = [...(oldMems || []), ...(candMems || []).filter(m => uniq.includes(m.id))];
+      const newSummary = await regenerateBookSummary(book.label, merged);
+      if (newSummary) {
+        const { data: vRows } = await supabase.from('aevum_book_versions').select('version_no').eq('book_id', bookId);
+        const vNo = (vRows || []).length + 1;
+        await supabase.from('aevum_book_versions').insert({
+          book_id: bookId, version_no: vNo, summary: book.summary,
+          source_unit_ids: (oldMems || []).map(u => u.id),
+          relation_type: contradictPairs.length ? 'superseded-contradict' : 'superseded'
+        });
+        await supabase.from('aevum_books').update({ summary: newSummary, updated_at: new Date().toISOString() }).eq('id', bookId);
+        summaryUpdated = true;
+      }
+    }
+    for (const a of actions) {
+      if (a.action === 'SKIP') {
+        const mid = Number(a.memory_id);
+        const { data: mm } = await supabase.from('aevum_memories').select('occurrence').eq('id', mid).single();
+        await supabase.from('aevum_memories').update({ occurrence: (Number(mm?.occurrence) || 1) + 1 }).eq('id', mid);
+      }
+    }
+    for (const c of cands) {
+      await supabase.from('aevum_book_candidates').update({ status: statusMap[c.memory_id] || 'skipped' }).eq('id', c.id);
+    }
+    res.json({ ok: true, processed: actions.length, added: uniq.length, contradict: contradictPairs.length, summaryUpdated });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/aevum/books/:id/versions', async (req, res) => {
+  const bookId = parseInt(req.params.id, 10);
+  try {
+    const { data: book } = await supabase.from('aevum_books').select('id, label, summary, updated_at').eq('id', bookId).single();
+    const { data: versions } = await supabase.from('aevum_book_versions').select('*').eq('book_id', bookId).order('version_no', { ascending: false });
+    res.json({ book: book || null, versions: versions || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
