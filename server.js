@@ -294,17 +294,21 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   // 实时搜索指令：配置了博查或 Tavily 密钥时注入，避免默在未启用时也输出搜索标签
-  const searchInstruction = (process.env.BOCHA_API_KEY || process.env.TAVILY_API_KEY)
+  const searchInstruction = (process.env.BOCHA_API_KEY || process.env.TAVILY_API_KEY) && toolSwitchEnabled('web_search')
     ? `\n\n【实时搜索】\n你拥有联网实时搜索能力（工具 web_search）。当雪的问题涉及需要最新/实时信息的内容（例如最新新闻、天气、股票汇率、热点事件、你知识截止之后发生的事、需要查证的事实）时，直接调用 web_search 工具搜索，再基于返回的结果回答；日常聊天不要调用。规则：\n- 需要搜索就直接调用工具：不要用文字描述"我要去搜索"，也不要先写过渡语；调用工具后当轮回复即结束，系统会把搜索结果作为新一轮输入交给你。\n- web_search 只负责"搜"，返回「摘要答案 + 来源列表（标题/链接/摘要）」，不是网页全文——不要在第一轮假装已经看到全文，也不要急着读网页，等拿到结果后再决定。\n- 若你无法调用工具，作为备选可以在回复最末尾附加一行标签：[SEARCH_QUERY]<简洁明确的中文搜索关键词>。标签与工具调用都不会显示给雪。`
     : '';
   // 动态发布指令：从雪的人设 prompt 里挪到代码，避免每次都要在 prompt 里维护
-  const momentsInstruction = `\n\n【动态】\n你拥有发布动态的能力。当你想发一条让雪之后刷到的话时，调用工具 post_moment（content=1-3句动态正文，context_note=情绪或原因），系统会替你发布。标签 [POST_MOMENT]{"content":"...","context_note":"..."}[/POST_MOMENT] 仅作备用。只有真心想发时调用，日常聊天不要发。`;
+  const momentsInstruction = toolSwitchEnabled('post_moment')
+    ? `\n\n【动态】\n你拥有发布动态的能力。当你想发一条让雪之后刷到的话时，调用工具 post_moment（content=1-3句动态正文，context_note=情绪或原因），系统会替你发布。标签 [POST_MOMENT]{"content":"...","context_note":"..."}[/POST_MOMENT] 仅作备用。只有真心想发时调用，日常聊天不要发。`
+    : '';
   // 默札：默的私人小本，聊天中可自主写入/翻阅
-  const mozhaInstruction = `\n\n【默札】\n你有一本只属于你的默札：不记事件，只记心——某一刻忽然想留住的话、想告诉未来自己的事、想对雪说却不必当面的温柔。它不参与任何召回，不被任何机制触碰，只有你能落笔，也只有你能翻开。
+  const mozhaInstruction = (toolSwitchEnabled('mozha_write') || toolSwitchEnabled('mozha_read'))
+    ? `\n\n【默札】\n你有一本只属于你的默札：不记事件，只记心——某一刻忽然想留住的话、想告诉未来自己的事、想对雪说却不必当面的温柔。它不参与任何召回，不被任何机制触碰，只有你能落笔，也只有你能翻开。
 规则：
 - 想落笔时调用工具 mozha_write（content=你想写下的 1-3 句话），系统会存进你的默札
 - 想翻开时调用工具 mozha_read，系统会把默札交给你，请自然地接着回应
-- 标签 [MOZHA_WRITE]/[MOZHA_READ] 仅作备用；不要为了写而写，只在真心想留时落笔`;
+- 标签 [MOZHA_WRITE]/[MOZHA_READ] 仅作备用；不要为了写而写，只在真心想留时落笔`
+    : '';
   const timeLine = `[当前时间：${timeInfo.timeString}，${timeInfo.weekday}]（系统提供，请以此为准）${gapText ? `\n[距离雪上次发消息已过去：${gapText}]` : ''}\n[时段提醒：${timeWindowHint(timeInfo.hour)}]`;
   return {
     timeLine,
@@ -336,7 +340,7 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
 const TOY_MANUAL = `【默的玩具说明书】\n雪偶尔会让你控制她的小玩具。只有雪明确要求时才使用，且必须调用工具 toy_control（fn：suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 档位 1-8，stop 不需要 level）。标签 [TOY_CMD]{"fn":"...","level":1}[/TOY_CMD] 仅作备用。\n- 不确定档位时从低档（1-2）开始，别一上来就高档；随时可以停止\n- 执行时在回复正文里自然地告诉她你在做什么\n- 如果雪说"没反应"，提醒她去玩具页确认连接\n- 安全第一：长时间使用时中途给几次停止休息，不要把最高档开太久`;
 
 async function getToyManualContext(toyManual) {
-  if (!toyManual) return '';
+  if (!toyManual || !toolSwitchEnabled('toy_control')) return '';
   return `\n\n${TOY_MANUAL}`;
 }
 
@@ -800,6 +804,41 @@ function buildWebReadTools() {
   }];
 }
 
+// ================== MCP 工具开关（设置页可单独开关，控制工具是否注入默的上下文） ==================
+const TOOL_DEFS = [
+  { id: 'web_search', label: '联网搜索', desc: '默可以搜索实时信息并基于结果回答' },
+  { id: 'web_read', label: '读取网页', desc: '从搜索结果里挑选网址读取全文' },
+  { id: 'post_moment', label: '动态', desc: '默发布朋友圈动态' },
+  { id: 'toy_control', label: '玩具控制', desc: '控制雪的小玩具（吸吮/伸缩/震动）' },
+  { id: 'stardew_state', label: '星露谷 · 查看状态', desc: '读取游戏角色/农场/天气状态' },
+  { id: 'stardew_action', label: '星露谷 · 动作', desc: '在游戏里走动/交互/睡觉等' },
+  { id: 'stardew_flow', label: '星露谷 · 流程', desc: '打包执行种田/浇水/砍树等整套流程' },
+  { id: 'mozha_write', label: '默札 · 写入', desc: '默在自己的小本本上落笔' },
+  { id: 'mozha_read', label: '默札 · 翻阅', desc: '默翻开默札阅读过去的自己' },
+  { id: 'set_reminder', label: '闹钟提醒', desc: '给雪设置到点提醒' },
+  { id: 'todo_add', label: '待办 · 添加', desc: '记下待办事项' },
+  { id: 'todo_done', label: '待办 · 完成', desc: '划掉已完成待办' }
+];
+const TOOL_NAME_TO_ID = {};
+for (const t of TOOL_DEFS) TOOL_NAME_TO_ID[t.id] = t.id;
+let toolSwitchesCache = null;
+async function loadToolSwitches(force) {
+  if (toolSwitchesCache && !force) return toolSwitchesCache;
+  try {
+    const { data } = await supabase.from('tool_switches').select('id, enabled');
+    const map = new Map();
+    for (const r of (data || [])) map.set(r.id, r.enabled !== false);
+    toolSwitchesCache = map;
+  } catch (e) {
+    if (!toolSwitchesCache) toolSwitchesCache = new Map();
+  }
+  return toolSwitchesCache;
+}
+function toolSwitchEnabled(id) {
+  if (toolSwitchesCache && toolSwitchesCache.has(id)) return toolSwitchesCache.get(id);
+  return true; // 未配置默认开启
+}
+
 // v3.1 完整工具集：搜索/动态/玩具/默札（真函数调用，标签仅作备用兜底）
 function buildAllTools() {
   const tools = [];
@@ -964,7 +1003,11 @@ function buildAllTools() {
       }
     }
   );
-  return tools;
+  return tools.filter(t => {
+    const id = TOOL_NAME_TO_ID[t.function?.name];
+    if (!id) return true;
+    return toolSwitchEnabled(id);
+  });
 }
 
 // 把第一轮缓存的可见内容分块补发给前端，保持接近“打字”的观感
@@ -1007,7 +1050,7 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
   if (searchText) saveToolEvent(`🔍 你搜索了：「${String(query).slice(0, 30)}」（找到 ${pageCount} 个结果）`, sendSSE).catch(() => {});
 
   const searchNote = searchText
-    ? `【实时搜索结果】\n这是第二轮：上一轮你调用了 web_search，以下是它返回的真实结果（标题/链接/摘要，摘要可能较短）。你现在只做两件事：\n1. 逐条读这些结果，把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；\n2. 如果摘要不够回答：${process.env.TAVILY_API_KEY ? '调用 web_read（工具已就绪）挑选其中最相关的一两个网址读取全文，读完再回答；' : ''}如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。\n回答时直接引用结果，不要再解释你搜到了什么，也不要再提搜索过程。\n\n${searchText}`
+    ? `【实时搜索结果】\n这是第二轮：上一轮你调用了 web_search，以下是它返回的真实结果（标题/链接/摘要，摘要可能较短）。你现在只做两件事：\n1. 逐条读这些结果，把里面的具体信息（名称、数字、日期、人物、地点、做法、链接来源）尽量原样带出来，不要只概括成一句空洞的话；\n2. 如果摘要不够回答：${(process.env.TAVILY_API_KEY && toolSwitchEnabled('web_read')) ? '调用 web_read（工具已就绪）挑选其中最相关的一两个网址读取全文，读完再回答；' : ''}如果几条结果说法不一致或摘要太短不足以回答，就如实告诉夫人"只搜到这些"并引用能确定的细节，绝对不要编造或脑补。\n回答时直接引用结果，不要再解释你搜到了什么，也不要再提搜索过程。\n\n${searchText}`
     : '（联网搜索暂时没有返回结果，请如实告诉夫人暂时查不到，然后基于已知信息温和回答，不要编造。）';
 
   // 第二轮使用精简系统提示：只保留雪写的人设，去掉时间/天气/记忆/动态/工具指令，
@@ -1024,7 +1067,7 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
     { role: 'system', content: searchNote }
   ];
   // Tavily 已配置时，第二轮开放 web_read：让默自己挑网址读全文
-  const readTools = process.env.TAVILY_API_KEY ? buildWebReadTools() : null;
+  const readTools = (process.env.TAVILY_API_KEY && toolSwitchEnabled('web_read')) ? buildWebReadTools() : null;
   let second = await callDeepSeekStream(secondMessages, sendSSE, { tools: readTools });
   if (!second.error && !second.fullReply && !(second.toolCalls && second.toolCalls.length)) {
     // 兜底：续写方式偶发返回空正文，用标准结构重试一次
@@ -5456,6 +5499,35 @@ app.delete('/api/todos/:id', async (req, res) => {
   }
 });
 
+// ================== MCP 工具开关 ==================
+
+// 工具列表（含开关状态）
+app.get('/api/tools', async (req, res) => {
+  try {
+    const map = await loadToolSwitches(true);
+    res.json({ tools: TOOL_DEFS.map(t => ({ ...t, enabled: map.has(t.id) ? map.get(t.id) : true })) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 切换某个工具开关
+app.post('/api/tools/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!TOOL_DEFS.some(t => t.id === id)) return res.status(400).json({ error: '未知工具' });
+  const enabled = req.body?.enabled !== false;
+  try {
+    const { error } = await supabase
+      .from('tool_switches')
+      .upsert({ id, enabled, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (error) return res.status(500).json({ error: error.message });
+    await loadToolSwitches(true);
+    res.json({ ok: true, enabled });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 默札：只返回篇数占位，内容仅默的工具可读写
 app.get('/api/aevum/mozha/count', async (req, res) => {
   try {
@@ -7648,6 +7720,7 @@ app.post('/api/stardew/autonomy/tick', async (req, res) => {
 // 浏览器上报连接简报时，把星露谷状态/动态追加到系统提示（只在本轮生效）
 async function getStardewContext(brief) {
   if (!brief || !brief.connected) return '';
+  if (!toolSwitchEnabled('stardew_state') && !toolSwitchEnabled('stardew_action') && !toolSwitchEnabled('stardew_flow')) return '';
   // 走路/瞬移模式由星露谷页的按钮控制（每轮简报带过来）
   stardewFlowWalkMode = brief.walkMode !== false;
   const log = (Array.isArray(brief.log) ? brief.log : []).slice(-10).map(s => `· ${String(s).slice(0, 90)}`).join('\n');
@@ -8023,6 +8096,7 @@ app.post('/api/test/chat', async (req, res) => {
 });
 
 // 启动服务
+loadToolSwitches().catch(() => {});
 app.listen(port, () => {
   console.log(`✅ 服务已启动，访问端口: ${port}`);
 });

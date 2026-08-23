@@ -33,6 +33,11 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      overscroll-behavior-y: none;
+    }
+
+    html {
+      background: var(--cream);
     }
 
     .header {
@@ -93,6 +98,7 @@
       align-self: flex-start;
       align-items: flex-start;
       max-width: 100%;
+      width: 100%;
     }
 
     .bubble {
@@ -1109,6 +1115,8 @@
       margin-top: 6px;
       overflow: hidden;
       padding: 0;
+      width: 100%;
+      box-sizing: border-box;
     }
     .thinking-header {
       display: flex;
@@ -1118,6 +1126,8 @@
       color: #8F877D;
       font-size: 12.5px;
       user-select: none;
+      width: 100%;
+      box-sizing: border-box;
     }
     .thinking-header .th-bot {
       display: flex;
@@ -1142,6 +1152,8 @@
       white-space: pre-wrap;
       word-wrap: break-word;
       font-size: 13px;
+      width: 100%;
+      box-sizing: border-box;
     }
     .thinking-content .search-status-line { margin: 8px 12px 0; }
     .thinking-content .search-think-body { padding: 0 12px 12px; }
@@ -1408,6 +1420,16 @@
                 <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">APK 新版本从这里下载安装</div>
               </div>
               <span id="updateStatus" style="font-size:12px;color:#999;">点击检查</span>
+            </div>
+
+            <!-- MCP 工具开关 -->
+            <div class="setting-card" onclick="openToolsModal()">
+              <span id="toolsIcon"></span>
+              <div style="flex:1;min-width:0;">
+                <div class="card-title">MCP 工具</div>
+                <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">每个工具可单独开关，关掉就不注入默的上下文</div>
+              </div>
+              <span id="toolsStatus" style="font-size:12px;color:#999;">设置</span>
             </div>
 
           </div>
@@ -1714,6 +1736,10 @@
         const updateIconSpan = document.getElementById('updateIcon');
         if (updateIconSpan && !updateIconSpan.hasChildNodes()) {
           updateIconSpan.appendChild(createDownloadIcon());
+        }
+        const toolsIconSpan = document.getElementById('toolsIcon');
+        if (toolsIconSpan && !toolsIconSpan.hasChildNodes()) {
+          toolsIconSpan.appendChild(createWrenchIcon());
         }
         refreshNotifyState();
         const testWindowIconSpan = document.getElementById('testWindowIcon');
@@ -5217,7 +5243,10 @@
           header.style.cursor = 'pointer';
           header.onclick = () => {
             const isOpen = thinkDiv.classList.toggle('open');
-            thinkDiv.style.display = isOpen ? 'block' : 'none';
+            const bodyEl = thinkDiv.querySelector('.thinking-body') || thinkDiv.querySelector('.search-think-body');
+            const dividerEl = thinkDiv.querySelector('.thinking-divider');
+            if (bodyEl) bodyEl.style.display = isOpen ? 'block' : 'none';
+            if (dividerEl) dividerEl.style.display = isOpen ? 'block' : 'none';
             chev.innerHTML = '';
             chev.appendChild(isOpen ? createChevronDownIcon() : createChevronRightIcon());
           };
@@ -6663,6 +6692,89 @@
         }
       }
       window.checkAppUpdate = checkAppUpdate;
+
+      // ---------- MCP 工具开关 ----------
+      function createWrenchIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p = document.createElementNS(svgNS, 'path');
+        p.setAttribute('d', 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z');
+        svg.appendChild(p);
+        return svg;
+      }
+
+      async function openToolsModal() {
+        const statusEl = document.getElementById('toolsStatus');
+        if (statusEl) statusEl.textContent = '加载中…';
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:200;display:flex;align-items:center;justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:var(--card);border-radius:16px;padding:18px;width:min(92vw,520px);max-height:82vh;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size:15px;font-weight:600;color:var(--dark);display:flex;align-items:center;gap:8px;';
+        title.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg> MCP 工具开关';
+        const sub = document.createElement('div');
+        sub.style.cssText = 'font-size:12px;color:var(--muted);';
+        sub.textContent = '打开 = 把该工具的使用方式注入默的上下文；关上 = 默完全不知道这个工具存在。';
+        const list = document.createElement('div');
+        list.style.cssText = 'overflow-y:auto;display:flex;flex-direction:column;gap:8px;';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '关闭';
+        closeBtn.style.cssText = 'padding:9px;border:none;border-radius:12px;background:#eee;color:#555;font-size:13px;cursor:pointer;';
+        box.appendChild(title); box.appendChild(sub); box.appendChild(list); box.appendChild(closeBtn);
+        modal.appendChild(box);
+        document.body.appendChild(modal);
+
+        try {
+          const res = await fetch('/api/tools');
+          const data = await res.json();
+          const tools = data.tools || [];
+          if (statusEl) statusEl.textContent = tools.filter(t => t.enabled).length + ' 个开启';
+          list.innerHTML = '';
+          for (const t of tools) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:10px;background:#FAF6EF;border:1px solid var(--line);border-radius:12px;padding:10px 12px;';
+            const info = document.createElement('div');
+            info.style.cssText = 'flex:1;min-width:0;';
+            const name = document.createElement('div');
+            name.style.cssText = 'font-size:13.5px;font-weight:600;color:var(--dark);';
+            name.textContent = t.label;
+            const desc = document.createElement('div');
+            desc.style.cssText = 'font-size:11.5px;color:var(--muted);margin-top:2px;';
+            desc.textContent = t.desc;
+            info.appendChild(name); info.appendChild(desc);
+            const sw = document.createElement('label');
+            sw.className = 'mo-switch';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = t.enabled !== false;
+            input.onchange = async () => {
+              try {
+                await fetch('/api/tools/' + t.id, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ enabled: input.checked })
+                });
+              } catch (e) { input.checked = !input.checked; }
+            };
+            const slider = document.createElement('span');
+            slider.className = 'mo-slider';
+            sw.appendChild(input); sw.appendChild(slider);
+            row.appendChild(info); row.appendChild(sw);
+            list.appendChild(row);
+          }
+        } catch (e) {
+          list.innerHTML = '<div style="color:#999;font-size:13px;">加载失败，请确认已执行 setup_tools.sql</div>';
+          if (statusEl) statusEl.textContent = '加载失败';
+        }
+        closeBtn.onclick = () => modal.remove();
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+      }
+      window.openToolsModal = openToolsModal;
 
       // 工具事件：聊天页里的"拍一拍"样式小字（不进气泡，独立一行）
       function makeToolEventElement(text) {
