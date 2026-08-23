@@ -953,10 +953,8 @@
     }
 
     .header {
-      background: var(--glass-bg);
-      backdrop-filter: blur(18px) saturate(160%);
-      -webkit-backdrop-filter: blur(18px) saturate(160%);
-      border-bottom: 1px solid var(--line);
+      background: var(--cream);
+      border-bottom: none;
       box-shadow: none;
     }
 
@@ -979,11 +977,11 @@
 
     .tab-bar {
       position: relative;
-      background: var(--card);
+      background: var(--cream);
       backdrop-filter: blur(20px) saturate(170%);
       -webkit-backdrop-filter: blur(20px) saturate(170%);
       border: none;
-      border-top: 1px solid var(--line);
+      border-top: none;
       border-radius: 0;
       margin: 0;
       padding: 10px 6px 12px;
@@ -997,10 +995,9 @@
       top: 50%;
       left: 0;
       transform: translateY(-50%);
-      height: 44px;
-      border-radius: 22px;
+      height: 40px;
+      border-radius: 12px;
       background: var(--blue);
-      box-shadow: 0 4px 14px rgba(126, 159, 179, 0.4);
       transition: transform 0.28s ease, width 0.28s ease;
       z-index: 0;
     }
@@ -4017,12 +4014,12 @@
             <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
               ${ctx ? `<div style="font-size:12.5px;color:var(--dark);opacity:.85;background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:10px;line-height:1.8;white-space:pre-wrap;">${escapeHtml2(aevumViewText(ctx))}</div>` : ''}
               <div style="font-size:11px;color:var(--muted);">本段对话提取出 ${ordered.length} 个事件</div>
-              <div id="epGroup_${epId}" style="display:none;flex-direction:column;gap:10px;">
+              <div class="ep-body" id="epGroup_${epId}" style="display:none;flex-direction:column;gap:10px;">
                 ${ordered.map(m => renderSeaCard(m, true)).join('')}
               </div>
-              <div style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--blue-deep);cursor:pointer;user-select:none;" onclick="aevumToggleEpisode(${epId})">
-                <span id="epToggleText_${epId}">展开查看</span>
-                <svg id="epChev_${epId}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              <div style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--blue-deep);cursor:pointer;user-select:none;padding:6px 0;position:relative;z-index:2;" onclick="aevumToggleEpisode(this)">
+                <span class="ep-toggle-text">展开查看</span>
+                <svg class="ep-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
               </div>
             </div>`;
         }
@@ -4030,13 +4027,15 @@
         return html;
       }
 
-      function aevumToggleEpisode(epId) {
-        const box = document.getElementById('epGroup_' + epId);
-        const txt = document.getElementById('epToggleText_' + epId);
-        const chev = document.getElementById('epChev_' + epId);
-        if (!box) return;
-        const open = box.style.display !== 'flex';
-        box.style.display = open ? 'flex' : 'none';
+      function aevumToggleEpisode(btn) {
+        if (!btn || !btn.closest) return;
+        const card = btn.closest('.feature-card');
+        if (!card) return;
+        const box = card.querySelector('.ep-body');
+        const txt = btn.querySelector('.ep-toggle-text');
+        const chev = btn.querySelector('.ep-chev');
+        const open = !box || box.style.display !== 'flex';
+        if (box) box.style.display = open ? 'flex' : 'none';
         if (txt) txt.textContent = open ? '收起' : '展开查看';
         if (chev) chev.style.transform = open ? 'rotate(180deg)' : '';
       }

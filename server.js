@@ -685,7 +685,6 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
   let fullReply = '';
   let fullThinking = '';
   let contentBuffer = '';
-  let lastThinkingChunk = ''; // 只跳过完全重复的重发分片，避免 endsWith 把"1500"的第二个 0 误吞
   const toolCallsMap = new Map(); // 流式分片到达，按 index 累积工具调用
 
   const reader = response.body.getReader();
@@ -714,12 +713,19 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
 
           if (delta?.reasoning_content) {
             const t = delta.reasoning_content;
-            // 去重：模型偶尔会完整重发同一个思考分片；只跳过完全相同的分片，
-            // 不再用 endsWith（会把"150"+"0"里第二个 0 误判成重复而吞掉）
-            if (t !== lastThinkingChunk) {
-              lastThinkingChunk = t;
-              fullThinking += t;
-              sendSSE({ thinking: t });
+            // 重叠去重：模型偶尔会重发"已累计的思考"或重复分片；
+            // 只在尾部与头部出现 ≥6 字的真实重叠时才截断新增部分，
+            // 避免把 "1500" 里新出现的 "0"（重叠仅 1 字）误判成重复吞掉
+            let overlap = 0;
+            const max = Math.min(fullThinking.length, t.length);
+            for (let i = max; i >= 1; i--) {
+              if (fullThinking.slice(-i) === t.slice(0, i)) { overlap = i; break; }
+            }
+            let chunk = t;
+            if (overlap >= 6) chunk = t.slice(overlap);
+            if (chunk.length) {
+              fullThinking += chunk;
+              sendSSE({ thinking: chunk });
             }
           }
 
