@@ -714,23 +714,31 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
 
           if (delta?.reasoning_content) {
             const t = delta.reasoning_content;
-            // 去重分两层：
-            // 1) 完全相同的分片重发（任意长度）→ 跳过，避免"思考"+"思考"这种短分片重复
-            // 2) "已累计思考"带前缀重发 → 尾部与头部 ≥6 字真实重叠时只追加新增部分
-            // 都不影响 "1500" 里新出现的 "0"（它和上一个分片不同、重叠仅 1 字）
-            if (t !== lastThinkChunk) {
-              lastThinkChunk = t;
+            // 思考分片去重（根治"累计全文重发"）：
+            // DeepSeek 有时每个分片都带前面已输出的全部内容（t 以 fullThinking 开头）
+            // → 只追加新增部分，天然去重且不吞新字符（"1500" 的新 "0" 不属于前缀，会完整追加）
+            let chunk = t;
+            if (t.length > fullThinking.length && t.startsWith(fullThinking)) {
+              chunk = t.slice(fullThinking.length);
+            } else if (t === fullThinking) {
+              chunk = '';
+            } else if (t === lastThinkChunk) {
+              chunk = '';
+            } else if (t.length >= 2 && fullThinking.endsWith(t)) {
+              chunk = '';
+            } else {
+              // 兜底：尾部/头部大段重叠（≥6 字）→ 只追加新增
               let overlap = 0;
               const max = Math.min(fullThinking.length, t.length);
               for (let i = max; i >= 1; i--) {
                 if (fullThinking.slice(-i) === t.slice(0, i)) { overlap = i; break; }
               }
-              let chunk = t;
               if (overlap >= 6) chunk = t.slice(overlap);
-              if (chunk.length) {
-                fullThinking += chunk;
-                sendSSE({ thinking: chunk });
-              }
+            }
+            lastThinkChunk = t;
+            if (chunk && chunk.length) {
+              fullThinking += chunk;
+              sendSSE({ thinking: chunk });
             }
           }
 

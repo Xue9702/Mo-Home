@@ -373,6 +373,7 @@
       flex-direction: column;
       height: 100vh;
       height: 100dvh;
+      background: var(--cream);
     }
 
     .version-nav {
@@ -414,6 +415,7 @@
       flex: 1;
       overflow: hidden;
       position: relative;
+      background: var(--cream);
     }
 
     .page {
@@ -5383,7 +5385,7 @@
         if (content) {
           const bubble = document.createElement('div');
           bubble.className = 'bubble';
-          bubble.textContent = content;
+          bubble.innerHTML = bubbleHtml(content);
 
           msgDiv.appendChild(bubble);
         }
@@ -6880,9 +6882,16 @@
         if (!bubble) return;
         clearTimeout(bubble._streamTimer);
         bubble._streamTimer = setTimeout(() => {
-          try { bubble.textContent = text; } catch (e) { /* 气泡已被替换 */ }
+          try { bubble.innerHTML = bubbleHtml(text); } catch (e) { /* 气泡已被替换 */ }
           if (scrollList) { try { messageList.scrollTop = messageList.scrollHeight; } catch (e) {} }
         }, 24);
+      }
+
+      // 气泡内容：先转义再渲染 **粗体**（默偶尔用星号强调标题）
+      function bubbleHtml(text) {
+        let s = escapeHtml2(String(text || ''));
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        return s;
       }
 
       // ============ 测试窗口（?mode=test）============
