@@ -39,6 +39,31 @@ const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 const PUSH_ENABLED = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 if (PUSH_ENABLED) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
+// ================== FCM 推送（APK 关闭也能收到） ==================
+// Render 环境变量：FIREBASE_SERVICE_ACCOUNT_B64（服务账号 JSON 的 base64，单行）或 FIREBASE_SERVICE_ACCOUNT（JSON 原文）
+let firebaseAdmin = null;
+let FCM_ENABLED = false;
+try {
+  const fbAdmin = require('firebase-admin');
+  const rawKey = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_B64 || '';
+  if (rawKey) {
+    let parsedKey = null;
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      parsedKey = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    } else {
+      parsedKey = JSON.parse(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8'));
+    }
+    if (parsedKey && parsedKey.project_id) {
+      fbAdmin.initializeApp({ credential: fbAdmin.credential.cert(parsedKey) });
+      firebaseAdmin = fbAdmin;
+      FCM_ENABLED = true;
+      console.log('🔥 Firebase/FCM 已启用（project:', parsedKey.project_id, '）');
+    }
+  }
+} catch (e) {
+  console.error('Firebase 初始化失败，FCM 不可用（不影响其他功能）:', e.message);
+}
+
 // ------------------ System Prompt 管理 ------------------
 
 // 随机延迟生成器
@@ -2530,6 +2555,10 @@ async function logWakeAction(entry) {
 async function addNotification(title, body, source) {
   try {
     await supabase.from('notifications').insert({ title, body, source, read: false });
+    // 默的唤醒/贴贴消息：同步发 FCM，App 完全关闭也能在锁屏收到
+    if (source === 'wake' || source === 'hug') {
+      sendFcmPush(title, body).catch(e => console.error('FCM 通知推送失败:', e.message));
+    }
   } catch (e) {
     console.error('通知写入失败:', e.message);
   }
@@ -3657,6 +3686,82 @@ async function sendPushAll(subs, title, body, url = '/') {
   return sent;
 }
 
+// ---------- FCM：手机 App 后台推送（不依赖页面打开） ----------
+// 注册手机推送 token（APK 每次启动后调用）
+app.post('/api/fcm/register', async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  if (!token) return res.status(400).json({ error: '缺少 token' });
+  const device = String(req.body?.device || 'android').slice(0, 60);
+  try {
+    const { error } = await supabase
+      .from('fcm_tokens')
+      .upsert({ token, device, updated_at: new Date().toISOString() }, { onConflict: 'token' });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/fcm/unregister', async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  if (!token) return res.status(400).json({ error: '缺少 token' });
+  try {
+    await supabase.from('fcm_tokens').delete().eq('token', token);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 设置页诊断：FCM 是否启用 + 已注册设备数
+app.get('/api/fcm/status', async (req, res) => {
+  try {
+    const { count } = await supabase.from('fcm_tokens').select('id', { count: 'exact', head: true });
+    res.json({ enabled: FCM_ENABLED, count: count || 0 });
+  } catch (e) {
+    res.json({ enabled: FCM_ENABLED, count: 0, error: e.message });
+  }
+});
+
+async function getFcmTokens() {
+  const { data } = await supabase.from('fcm_tokens').select('token').limit(50);
+  return (data || []).map(r => r.token).filter(Boolean);
+}
+
+async function sendFcmPush(title, body) {
+  if (!FCM_ENABLED || !firebaseAdmin) return 0;
+  try {
+    const tokens = await getFcmTokens();
+    if (!tokens.length) return 0;
+    const result = await firebaseAdmin.messaging().sendEachForMulticast({
+      tokens,
+      notification: {
+        title: String(title || '默').slice(0, 60),
+        body: String(body || '').slice(0, 220)
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'mo_push',
+          color: '#9BB7C8'
+        }
+      }
+    });
+    // 清理失效 token（卸载/过期）
+    const invalid = (result.responses || [])
+      .map((r, i) => (r.error ? tokens[i] : null))
+      .filter(Boolean);
+    if (invalid.length) {
+      await supabase.from('fcm_tokens').delete().in('token', invalid);
+    }
+    return result.successCount || 0;
+  } catch (e) {
+    console.error('FCM 发送失败:', e.message);
+    return 0;
+  }
+}
+
 // ================== 闹钟（reminders） ==================
 
 // 解析闹钟时间：不带时区后缀的按北京时间（UTC+8）处理，
@@ -3748,6 +3853,8 @@ async function checkDueReminders() {
       const hasPush = PUSH_ENABLED && subs.length > 0;
       try {
         if (hasPush) await sendPushAll(subs, '⏰ 默的提醒', String(r.content || ''));
+        // APK 后台推送（不依赖浏览器打开）
+        sendFcmPush('⏰ 默的提醒', String(r.content || '')).catch(e => console.error('闹钟 FCM 推送失败:', e.message));
         // 页面打开时也能看到（轮询通知）；已推送过的带 push_sent 标记避免重复弹
         await supabase.from('notifications').insert({
           title: '⏰ 默的提醒',
@@ -4316,9 +4423,13 @@ async function mergeSeaDuplicate(dup, m) {
   try {
     const tags = [...new Set([...(dup.tags || []), ...(Array.isArray(m.tags) ? m.tags.map(String) : [])])].slice(0, 8);
     const evidence = [...new Set([...(dup.evidence || []), ...(Array.isArray(m.evidence) ? m.evidence : [])])].slice(0, 3);
+    const people = [...new Set([...(Array.isArray(dup.people) ? dup.people : []), ...(Array.isArray(m.people) ? m.people.map(String) : [])])].slice(0, 8);
+    const predicates = [...new Set([...(Array.isArray(dup.predicates) ? dup.predicates : []), ...(Array.isArray(m.predicates) ? m.predicates.map(String) : [])])].slice(0, 8);
     await supabase.from('aevum_memories').update({
       tags,
       evidence,
+      people,
+      predicates,
       occurrence: (Number(dup.occurrence) || 1) + 1,
       updated_at: new Date().toISOString()
     }).eq('id', dup.id);
@@ -4386,6 +4497,29 @@ function textAnchors(text, size = 30) {
     if (a.length >= 20) anchors.push(a);
   }
   return anchors;
+}
+
+// 人物/谓词索引开关配置（5 分钟缓存）：关掉的索引不参与召回加分
+let indexConfigCache = { at: 0, people: null, predicates: null };
+async function getIndexConfig(kind) {
+  try {
+    const now = Date.now();
+    if (indexConfigCache.people && now - indexConfigCache.at < 300000) {
+      return indexConfigCache[kind] || new Set();
+    }
+    const { data } = await supabase.from('aevum_index_config').select('kind, value, enabled');
+    const people = new Set();
+    const predicates = new Set();
+    for (const r of (data || [])) {
+      if (r.enabled === false) continue;
+      if (r.kind === 'people') people.add(String(r.value));
+      else if (r.kind === 'predicates') predicates.add(String(r.value));
+    }
+    indexConfigCache = { at: now, people, predicates };
+    return indexConfigCache[kind] || new Set();
+  } catch (e) {
+    return new Set();
+  }
 }
 
 // 召回：向量相似度取活跃记忆；向量不可用时退回关键词匹配
@@ -4466,6 +4600,11 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     if (!items.length) return '';
     // v3.0 混合打分：0.5×相似度 + 0.25×(重要度/10) + 0.15×情绪强度 + 0.1×时间衰减 + 频率小权重
     const nowMs = Date.now();
+    // 人物/谓词索引加分：查询里提到的人/动作，命中对应索引的记忆优先召回
+    const peopleIdx = await getIndexConfig('people');
+    const predIdx = await getIndexConfig('predicates');
+    const qPeople = [...peopleIdx].filter(p => q.includes(p));
+    const qPreds = [...predIdx].filter(p => q.includes(p));
     const scored = items.map(m => {
       const ageDays = Math.max(0, (nowMs - new Date(m.created_at || nowMs).getTime()) / 86400000);
       // 24h 内不衰减（满分 1.0），24h 之后再按 90 天曲线下降，0.1 保底
@@ -4473,11 +4612,22 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
       const emo = (m.emotion && typeof m.emotion === 'object') ? m.emotion : {};
       const emoIntensity = (Math.abs(Number(emo.valence) || 0) + Math.min(1, Math.max(0, Number(emo.arousal) || 0))) / 2;
       const freq = 0.02 * Math.min(Math.max(0, (Number(m.occurrence) || 1) - 1), 4);
+      let idxBonus = 0;
+      if (qPeople.length || qPreds.length) {
+        const mPeople = Array.isArray(m.people) ? m.people.map(String) : [];
+        const mPreds = Array.isArray(m.predicates) ? m.predicates.map(String) : [];
+        idxBonus = Math.min(
+          0.25,
+          0.08 * qPeople.filter(p => mPeople.includes(p)).length +
+          0.05 * qPreds.filter(p => mPreds.includes(p)).length
+        );
+      }
       const score = 0.5 * (m._sim || 0)
         + 0.25 * ((m.importance || 0) / 10)
         + 0.15 * emoIntensity
         + 0.1 * temporal
-        + freq;
+        + freq
+        + idxBonus;
       return { m, score };
     });
     // 所有路径统一过 0.3 阈值（含关键词）；全被过滤时保留最强 1 条兜底
@@ -4634,12 +4784,14 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、游戏、其他
 - tags：3-5 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
+- people：这段对话里除了雪/默之外出现的人（用日常称呼，如"弟弟""妈妈""客户""XX朋友"），没有则为 []
+- predicates：这段对话的核心动作/心理动词短语（如"接了绘画单""想要休息""梦见""害怕迟到"），2-4 个，没有则为 []
 - task_status：判断这条记忆是不是"未完成的承诺/约定/待办/约定好之后要做的事"——是则填 "open"；如果这条记忆本身就是"完成了某件之前约定的事"（兑现了承诺、把答应的事做完），则填 "done"；普通事件不填（null）。注意：普通叙述（"我吃了饭""我们一起画了画"）不是任务，不要填。
 - evidence_turns：你概括这段对话时用到的是第几轮到第几轮（从 1 开始数这段对话，例如 [5,7]；只用一轮就 [5,5]）
 - evidence：把用到的那几轮原文放进数组（每轮一条，从每轮中选取最相关的连续片段，每轮最多 250 字、最多 2 轮，总长不超过 500 字），供召回时把原文一起带给默
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"task_status":"open|done|null"}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -4745,6 +4897,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
         evidence_turns: Array.isArray(m.evidence_turns) ? m.evidence_turns.map(Number).filter(n => Number.isInteger(n) && n >= 1).slice(0, 2) : [],
         evidence: Array.isArray(m.evidence) ? m.evidence : [],
         tags: Array.isArray(m.tags) ? m.tags.map(String).filter(t => !['快乐', '美好', '重要', '温暖', '陪伴', '成长'].includes(t)).slice(0, 8) : [],
+        people: Array.isArray(m.people) ? [...new Set(m.people.map(String).map(s => String(s).trim()).filter(s => s && s.length <= 20))].slice(0, 8) : [],
+        predicates: Array.isArray(m.predicates) ? [...new Set(m.predicates.map(String).map(s => String(s).trim()).filter(s => s && s.length <= 20))].slice(0, 8) : [],
         source: 'auto-extract',
         episode_id: episodeId || null
       };
@@ -4752,8 +4906,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
       // v30 未执行时 area/title/event_time/occurrence 列不存在：去掉重试
       if (insResult.error) {
         const emsg = insResult.error.message || '';
-        if (/area|title|event_time|occurrence|evidence_turns|task_status/i.test(emsg)) {
-          delete insPayload.area; delete insPayload.title; delete insPayload.event_time; delete insPayload.occurrence; delete insPayload.evidence_turns; delete insPayload.task_status;
+        if (/area|title|event_time|occurrence|evidence_turns|task_status|people|predicates/i.test(emsg)) {
+          delete insPayload.area; delete insPayload.title; delete insPayload.event_time; delete insPayload.occurrence; delete insPayload.evidence_turns; delete insPayload.task_status; delete insPayload.people; delete insPayload.predicates;
           insResult = await supabase.from('aevum_memories').insert(insPayload).select();
         }
       }
@@ -4939,6 +5093,89 @@ app.post('/api/aevum/backfill', async (req, res) => {
       done++;
     }
     res.json({ ok: true, backfilled: done });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------- 人物/谓词索引管理（设置页） ----------
+app.get('/api/aevum/indexes', async (req, res) => {
+  try {
+    const { data: cfgRows } = await supabase.from('aevum_index_config').select('*');
+    const cfg = new Map((cfgRows || []).map(r => [r.kind + '::' + r.value, r]));
+    const { data: memRows } = await supabase.from('aevum_memories').select('people, predicates').limit(1000);
+    const peopleMap = new Map();
+    const predMap = new Map();
+    for (const r of (memRows || [])) {
+      for (const p of (Array.isArray(r.people) ? r.people : [])) {
+        const v = String(p || '').trim();
+        if (v) peopleMap.set(v, (peopleMap.get(v) || 0) + 1);
+      }
+      for (const p of (Array.isArray(r.predicates) ? r.predicates : [])) {
+        const v = String(p || '').trim();
+        if (v) predMap.set(v, (predMap.get(v) || 0) + 1);
+      }
+    }
+    // 手动加过但还没出现在记忆里的索引也展示
+    for (const r of (cfgRows || [])) {
+      if (r.kind === 'people' && !peopleMap.has(r.value)) peopleMap.set(r.value, 0);
+      if (r.kind === 'predicates' && !predMap.has(r.value)) predMap.set(r.value, 0);
+    }
+    const merge = (kind, map) => [...map.entries()]
+      .map(([value, count]) => ({
+        value,
+        count,
+        enabled: cfg.has(kind + '::' + value) ? cfg.get(kind + '::' + value).enabled !== false : true
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 80);
+    res.json({ people: merge('people', peopleMap), predicates: merge('predicates', predMap) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/aevum/indexes/toggle', async (req, res) => {
+  const kind = req.body?.kind === 'predicates' ? 'predicates' : 'people';
+  const value = String(req.body?.value || '').trim().slice(0, 20);
+  const enabled = !!req.body?.enabled;
+  if (!value) return res.status(400).json({ error: '缺少索引词' });
+  try {
+    const { error } = await supabase
+      .from('aevum_index_config')
+      .upsert({ kind, value, enabled }, { onConflict: 'kind,value' });
+    if (error) return res.status(500).json({ error: error.message });
+    indexConfigCache = { at: 0, people: null, predicates: null }; // 清缓存
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/aevum/indexes/add', async (req, res) => {
+  const kind = req.body?.kind === 'predicates' ? 'predicates' : 'people';
+  const value = String(req.body?.value || '').trim().slice(0, 20);
+  if (!value) return res.status(400).json({ error: '缺少索引词' });
+  try {
+    const { error } = await supabase
+      .from('aevum_index_config')
+      .upsert({ kind, value, enabled: true }, { onConflict: 'kind,value' });
+    if (error) return res.status(500).json({ error: error.message });
+    indexConfigCache = { at: 0, people: null, predicates: null };
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/aevum/indexes/delete', async (req, res) => {
+  const kind = req.body?.kind === 'predicates' ? 'predicates' : 'people';
+  const value = String(req.body?.value || '').trim();
+  if (!value) return res.status(400).json({ error: '缺少索引词' });
+  try {
+    await supabase.from('aevum_index_config').delete().eq('kind', kind).eq('value', value);
+    indexConfigCache = { at: 0, people: null, predicates: null };
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

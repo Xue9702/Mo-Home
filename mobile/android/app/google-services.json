@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "46594264091",
+    "project_id": "monix-71b16",
+    "storage_bucket": "monix-71b16.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:46594264091:android:83d5366e0fdae833923cbe",
+        "android_client_info": {
+          "package_name": "com.mohome.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBIgNmrXIZJAxXLatk2jM5Ih3AvVwd3Bqs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

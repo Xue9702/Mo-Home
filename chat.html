@@ -1433,6 +1433,26 @@
               <span id="toolsStatus" style="font-size:12px;color:#999;">设置</span>
             </div>
 
+            <!-- 手机推送（APK 后台通知） -->
+            <div class="setting-card" style="cursor:default;">
+              <span id="fcmIcon"></span>
+              <div style="flex:1;min-width:0;cursor:pointer;" onclick="registerFcmPush()">
+                <div class="card-title">手机推送</div>
+                <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">App 完全关闭时，默的消息和闹钟也能送到锁屏</div>
+              </div>
+              <span id="fcmStatus" style="font-size:12px;color:#999;">检测中…</span>
+            </div>
+
+            <!-- 记忆索引（人物 / 谓词） -->
+            <div class="setting-card" onclick="openIndexModal()">
+              <span id="indexIcon"></span>
+              <div style="flex:1;min-width:0;">
+                <div class="card-title">记忆索引</div>
+                <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">人物与动作谓词单独建档，召回更精准</div>
+              </div>
+              <span id="indexStatus" style="font-size:12px;color:#999;">管理</span>
+            </div>
+
           </div>
         </div>
       </div>
@@ -1742,7 +1762,16 @@
         if (toolsIconSpan && !toolsIconSpan.hasChildNodes()) {
           toolsIconSpan.appendChild(createWrenchIcon());
         }
+        const fcmIconSpan = document.getElementById('fcmIcon');
+        if (fcmIconSpan && !fcmIconSpan.hasChildNodes()) {
+          fcmIconSpan.appendChild(createBellIcon());
+        }
+        const indexIconSpan = document.getElementById('indexIcon');
+        if (indexIconSpan && !indexIconSpan.hasChildNodes()) {
+          indexIconSpan.appendChild(createTagIcon());
+        }
         refreshNotifyState();
+        refreshFcmStatus();
         const testWindowIconSpan = document.getElementById('testWindowIcon');
         if (testWindowIconSpan && !testWindowIconSpan.hasChildNodes()) {
           testWindowIconSpan.appendChild(createTestWindowIcon());
@@ -5142,6 +5171,23 @@
         return svg;
       }
 
+      // 记忆索引图标（标签）
+      function createTagIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '20'); svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z');
+        svg.appendChild(p1);
+        const c = document.createElementNS(svgNS, 'circle');
+        c.setAttribute('cx', '7.5'); c.setAttribute('cy', '7.5'); c.setAttribute('r', '.5'); c.setAttribute('fill', 'currentColor');
+        svg.appendChild(c);
+        return svg;
+      }
+
       // 提醒图标（铃铛）
       function createBellIcon() {
         const svgNS = 'http://www.w3.org/2000/svg';
@@ -6552,11 +6598,17 @@
           const core = document.createElement('script');
           core.src = '/capacitor/core.js';
           core.onload = () => {
-            const plugin = document.createElement('script');
-            plugin.src = '/capacitor/local-notifications.js';
-            plugin.onload = () => { console.log('✅ Capacitor 插件已加载'); resolve(true); };
-            plugin.onerror = () => { console.error('插件 JS 加载失败'); resolve(false); };
-            document.head.appendChild(plugin);
+            const scripts = ['/capacitor/local-notifications.js', '/capacitor/push-notifications.js'];
+            let idx = 0;
+            const next = () => {
+              if (idx >= scripts.length) { console.log('✅ Capacitor 插件已加载'); resolve(true); return; }
+              const s = document.createElement('script');
+              s.src = scripts[idx++];
+              s.onload = next;
+              s.onerror = () => { console.error('插件 JS 加载失败: ' + s.src); resolve(false); };
+              document.head.appendChild(s);
+            };
+            next();
           };
           core.onerror = () => { console.error('Capacitor core JS 加载失败'); resolve(false); };
           document.head.appendChild(core);
@@ -6595,6 +6647,93 @@
         }
       }
       window.syncLocalReminders = syncLocalReminders;
+
+      // ---------- FCM 推送注册（APK 后台也能收到默的消息/闹钟） ----------
+      let fcmRegistered = false;
+      async function registerFcmPush() {
+        const statusEl = document.getElementById('fcmStatus');
+        if (!isCapacitorApp()) {
+          if (statusEl) statusEl.textContent = '网页模式 · 用上面的开关';
+          return;
+        }
+        if (statusEl) statusEl.textContent = '连接中…';
+        try {
+          await loadCapacitorPlugins();
+          const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications;
+          if (!P) {
+            if (statusEl) statusEl.textContent = '⚠️ 插件未加载';
+            return;
+          }
+          const perm = await P.checkPermissions();
+          if (perm.receive !== 'granted') {
+            const req = await P.requestPermissions();
+            if (req.receive !== 'granted') {
+              if (statusEl) statusEl.textContent = '未授权通知';
+              return;
+            }
+          }
+          // 创建专用通知频道（高优先级，锁屏也能亮）
+          try {
+            await P.createChannel({
+              id: 'mo_push',
+              name: '默的消息',
+              importance: 4,
+              visibility: 1,
+              vibration: true,
+              lights: true
+            });
+          } catch (e) { /* 频道可能已存在，忽略 */ }
+          if (!fcmRegistered) {
+            fcmRegistered = true;
+            await P.addListener('registration', async ({ value }) => {
+              if (!value) return;
+              try {
+                await fetch('/api/fcm/register', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ token: value, device: 'android' })
+                });
+                const statusEl2 = document.getElementById('fcmStatus');
+                if (statusEl2) statusEl2.textContent = '✅ 已接入';
+              } catch (e) {
+                console.error('FCM token 上报失败:', e);
+              }
+            });
+            await P.addListener('registrationError', (err) => {
+              console.error('FCM 注册失败:', err && err.error);
+              const statusEl2 = document.getElementById('fcmStatus');
+              if (statusEl2) statusEl2.textContent = '⚠️ 注册失败（需谷歌服务）';
+            });
+          }
+          await P.register();
+          if (statusEl) statusEl.textContent = '已连接，等待 token…';
+        } catch (e) {
+          console.error('FCM 注册异常:', e);
+          if (statusEl) statusEl.textContent = '⚠️ 连接失败';
+        }
+      }
+      window.registerFcmPush = registerFcmPush;
+
+      // 设置页打开时刷新手机推送状态
+      async function refreshFcmStatus() {
+        const statusEl = document.getElementById('fcmStatus');
+        if (!isCapacitorApp()) {
+          if (statusEl) statusEl.textContent = '网页模式 · 用上面的开关';
+          return;
+        }
+        try {
+          const res = await fetch('/api/fcm/status');
+          const data = await res.json();
+          if (!data.enabled) {
+            if (statusEl) statusEl.textContent = '服务器未配置';
+            return;
+          }
+          if (statusEl) statusEl.textContent = data.count > 0 ? '✅ 已接入' : '点击连接';
+        } catch (e) {
+          if (statusEl) statusEl.textContent = '状态未知';
+        }
+      }
+      window.refreshFcmStatus = refreshFcmStatus;
 
       // ---------- 闹钟提醒（可手动添加/取消；默也能通过工具设置） ----------
       function createClockIcon() {
@@ -6888,6 +7027,122 @@
       }
       window.openToolsModal = openToolsModal;
 
+      // 记忆索引管理：人物/谓词 开关 + 手动添加
+      async function openIndexModal() {
+        const statusEl = document.getElementById('indexStatus');
+        if (statusEl) statusEl.textContent = '加载中…';
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:200;display:flex;align-items:center;justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:var(--card);border-radius:16px;padding:18px;width:min(92vw,520px);max-height:82vh;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size:15px;font-weight:600;color:var(--dark);display:flex;align-items:center;gap:8px;';
+        title.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/></svg> 记忆索引（人物 / 谓词）';
+        const sub = document.createElement('div');
+        sub.style.cssText = 'font-size:12px;color:var(--muted);';
+        sub.textContent = '打开 = 聊到这个人/这个动作时，相关记忆优先召回；关上 = 不参与加分。';
+        const list = document.createElement('div');
+        list.style.cssText = 'overflow-y:auto;display:flex;flex-direction:column;gap:10px;';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '关闭';
+        closeBtn.style.cssText = 'padding:9px;border:none;border-radius:12px;background:#eee;color:#555;font-size:13px;cursor:pointer;';
+        box.appendChild(title); box.appendChild(sub); box.appendChild(list); box.appendChild(closeBtn);
+        modal.appendChild(box);
+        document.body.appendChild(modal);
+
+        const section = (label, kind, items, onToggle, onAdd, onDelete) => {
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+          const head = document.createElement('div');
+          head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:600;color:var(--dark);';
+          const headLeft = document.createElement('span');
+          headLeft.textContent = label + ' (' + items.length + ')';
+          const addBox = document.createElement('div');
+          addBox.style.cssText = 'display:flex;gap:6px;';
+          const input = document.createElement('input');
+          input.placeholder = '添加…';
+          input.style.cssText = 'width:96px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:#FAF6EF;color:var(--dark);outline:none;';
+          const addBtn = document.createElement('button');
+          addBtn.textContent = '+';
+          addBtn.style.cssText = 'padding:4px 10px;border:none;border-radius:8px;background:var(--blue);color:#F4EEE7;font-size:13px;cursor:pointer;';
+          addBtn.onclick = async () => {
+            const v = input.value.trim();
+            if (!v) return;
+            await onAdd(v);
+            input.value = '';
+          };
+          addBox.appendChild(input); addBox.appendChild(addBtn);
+          head.appendChild(headLeft); head.appendChild(addBox);
+          wrap.appendChild(head);
+          if (!items.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'font-size:12px;color:var(--muted);padding:4px 2px;';
+            empty.textContent = '还没有索引，聊到相关内容后会自动生成，也可以手动添加。';
+            wrap.appendChild(empty);
+          }
+          for (const it of items) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:10px;background:#FAF6EF;border:1px solid var(--line);border-radius:12px;padding:8px 12px;';
+            const info = document.createElement('div');
+            info.style.cssText = 'flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;';
+            const name = document.createElement('span');
+            name.style.cssText = 'font-size:13.5px;font-weight:600;color:var(--dark);';
+            name.textContent = it.value;
+            const cnt = document.createElement('span');
+            cnt.style.cssText = 'font-size:11px;color:var(--muted);';
+            cnt.textContent = it.count > 0 ? it.count + ' 条记忆' : '手动添加';
+            info.appendChild(name); info.appendChild(cnt);
+            const del = document.createElement('button');
+            del.textContent = '×';
+            del.style.cssText = 'border:none;background:none;color:#c0b6a8;font-size:15px;cursor:pointer;padding:2px 4px;';
+            del.onclick = async () => { await onDelete(it.value); row.remove(); };
+            const sw = document.createElement('label');
+            sw.className = 'mo-switch';
+            const input2 = document.createElement('input');
+            input2.type = 'checkbox';
+            input2.checked = it.enabled !== false;
+            input2.onchange = async () => {
+              try {
+                await onToggle(it.value, input2.checked);
+              } catch (e) { input2.checked = !input2.checked; }
+            };
+            const slider = document.createElement('span');
+            slider.className = 'mo-slider';
+            sw.appendChild(input2); sw.appendChild(slider);
+            row.appendChild(info); row.appendChild(del); row.appendChild(sw);
+            wrap.appendChild(row);
+          }
+          return wrap;
+        };
+
+        try {
+          const res = await fetch('/api/aevum/indexes');
+          const data = await res.json();
+          const people = data.people || [];
+          const preds = data.predicates || [];
+          if (statusEl) statusEl.textContent = people.length + '+' + preds.length + ' 个';
+          const api = (kind, action) => (value, enabled) => fetch('/api/aevum/indexes/' + action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind, value, enabled })
+          });
+          list.appendChild(section('人物', 'people', people,
+            (v, en) => api('people', 'toggle')(v, en),
+            async (v) => { await api('people', 'add')(v, true); openIndexModal(); modal.remove(); },
+            (v) => api('people', 'delete')(v, true)));
+          list.appendChild(section('谓词（动作 / 心理）', 'predicates', preds,
+            (v, en) => api('predicates', 'toggle')(v, en),
+            async (v) => { await api('predicates', 'add')(v, true); openIndexModal(); modal.remove(); },
+            (v) => api('predicates', 'delete')(v, true)));
+        } catch (e) {
+          list.innerHTML = '<div style="color:#999;font-size:13px;">加载失败，请确认已执行 setup_index_people_predicates.sql</div>';
+          if (statusEl) statusEl.textContent = '加载失败';
+        }
+        closeBtn.onclick = () => modal.remove();
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+      }
+      window.openIndexModal = openIndexModal;
+
       // 工具事件：聊天页里的"拍一拍"样式小字（不进气泡，独立一行）
       function makeToolEventElement(text) {
         const line = document.createElement('div');
@@ -7071,7 +7326,11 @@ let fullReply = '', fullThinking = '', lastThinkChunk = '';
             if (rm && rm.checked) { localStorage.setItem('moPass', passwordInput.value.trim()); localStorage.setItem('moRemember', '1'); }
             else { localStorage.removeItem('moPass'); localStorage.removeItem('moRemember'); }
             if (TEST_MODE) loadTestHistory();
-            else { loadHistory(); setTimeout(syncLocalReminders, 1500); }
+            else {
+              loadHistory();
+              setTimeout(syncLocalReminders, 1500);
+              setTimeout(registerFcmPush, 2500);
+            }
             userInput.focus(); loginError.style.display = 'none';
             if (!window._pollStarted) { window._pollStarted = true; setInterval(pollNotifications, 25000); }
             setTimeout(() => updateTabIndicator(), 80);

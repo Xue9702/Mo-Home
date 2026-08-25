@@ -1,5 +1,5 @@
 {
-  "version": "0.4.3",
+  "version": "0.4.4",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "修复系统导航栏/状态栏米色对齐（正确主题生效）+ 记忆书续写改为追加模式"
+  "notes": "接入 Google 推送（App 关闭也能收到默的消息和闹钟）+ 记忆人物/谓词索引 + 底部系统栏颜色对齐"
 }

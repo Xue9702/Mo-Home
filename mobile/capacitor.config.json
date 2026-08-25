@@ -6,6 +6,11 @@
     "url": "https://mo-home.onrender.com",
     "cleartext": false
   },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["alert", "badge", "sound"]
+    }
+  },
   "android": {
     "allowMixedContent": false
   }
