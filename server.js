@@ -2554,10 +2554,18 @@ async function logWakeAction(entry) {
 
 async function addNotification(title, body, source) {
   try {
-    await supabase.from('notifications').insert({ title, body, source, read: false });
+    const { data } = await supabase.from('notifications').insert({ title, body, source, read: false }).select('id').single();
+    const nid = data?.id;
     // 默的唤醒/贴贴消息：同步发 FCM，App 完全关闭也能在锁屏收到
-    if (source === 'wake' || source === 'hug') {
-      sendFcmPush(title, body).catch(e => console.error('FCM 通知推送失败:', e.message));
+    if ((source === 'wake' || source === 'hug') && nid) {
+      sendFcmPush(title, body)
+        .then(sent => {
+          // FCM 已送达手机的，标记 push_sent，页面轮询不再重复弹
+          if (sent > 0) {
+            return supabase.from('notifications').update({ push_sent: true }).eq('id', nid);
+          }
+        })
+        .catch(e => console.error('FCM 通知推送失败:', e.message));
     }
   } catch (e) {
     console.error('通知写入失败:', e.message);
@@ -3854,12 +3862,15 @@ async function checkDueReminders() {
       try {
         if (hasPush) await sendPushAll(subs, '⏰ 默的提醒', String(r.content || ''));
         // APK 后台推送（不依赖浏览器打开）
-        sendFcmPush('⏰ 默的提醒', String(r.content || '')).catch(e => console.error('闹钟 FCM 推送失败:', e.message));
+        const fcmSent = await sendFcmPush('⏰ 默的提醒', String(r.content || '')).catch(e => {
+          console.error('闹钟 FCM 推送失败:', e.message);
+          return 0;
+        });
         // 页面打开时也能看到（轮询通知）；已推送过的带 push_sent 标记避免重复弹
         await supabase.from('notifications').insert({
           title: '⏰ 默的提醒',
           body: String(r.content || ''),
-          push_sent: hasPush
+          push_sent: hasPush || fcmSent > 0
         });
         await supabase.from('reminders').update({ status: 'fired', fired_at: now }).eq('id', r.id);
         console.log('⏰ 闹钟触发:', r.content, '| 推送数:', subs.length);
