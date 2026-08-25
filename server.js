@@ -4453,6 +4453,9 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
       });
     }
     if (!items.length) return '';
+    // 任务状态过滤：已完成/已取消的承诺不参与常规召回（除非主动翻查）
+    items = items.filter(m => !(m.task_status === 'done' || m.task_status === 'cancelled'));
+    if (!items.length) return '';
     // v3.0 混合打分：0.5×相似度 + 0.25×(重要度/10) + 0.15×情绪强度 + 0.1×时间衰减 + 频率小权重
     const nowMs = Date.now();
     const scored = items.map(m => {
@@ -4473,6 +4476,30 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     let picked = scored.sort((a, b) => b.score - a.score);
     const aboveFloor = picked.filter(x => x.score >= 0.3);
     picked = aboveFloor.length ? aboveFloor.slice(0, limit) : picked.slice(0, 1);
+    // 兜底降权：open 承诺若存在更晚的未挂链完成事件 → 标注"疑似已完成"并降权
+    for (const x of picked) {
+      if (x.m.task_status !== 'open') continue;
+      try {
+        const { data: laterDone } = await supabase
+          .from('aevum_memories')
+          .select('id, content, event_time')
+          .eq('task_status', 'done')
+          .gt('event_time', x.m.event_time || '1970-01-01')
+          .limit(5);
+        if (laterDone && laterDone.length) {
+          const emb = await getEmbedding(String(x.m.content || '').slice(0, 500));
+          for (const d of laterDone) {
+            const dEmb = await getUnitEmbedding(d);
+            if (emb && dEmb && cosineSim(emb, dEmb) >= 0.7) {
+              x.score -= 0.1;
+              x.m._suspectedDone = true;
+              break;
+            }
+          }
+        }
+      } catch (e) { /* 兜底失败不影响 */ }
+    }
+    picked.sort((a, b) => (b.score - a.score) || (new Date(b.m.event_time || 0) - new Date(a.m.event_time || 0)));
     items = picked
       .sort((a, b) => b.score - a.score)
       .map(x => x.m);
@@ -4484,6 +4511,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
       // 视角转换只作用于 AI 压缩后的内容（标题/概述），原文保持原样
       const contentConverted = perspectiveConvert(m.content);
       let line = `- [${label ? label + '｜' : ''}${AEVUM_TYPE_CN[m.type] || '事件'}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] `;
+      if (m._suspectedDone) line += '（疑似已完成，建议与雪确认）';
       // 重要度 >7 的单元召回时附带"AI 用来概括的那几轮"完整原文（原文不做视角转换）；
       // 原文放在内容前面，即使后面被总字数截断，重要原文也一定保留
       if ((m.importance || 0) > 7) {
@@ -4598,11 +4626,12 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
 - domain 领域从以下中选 1-2 个：恋爱、创作、情绪、工作学习、健康生活、家庭、技术、回忆纪念、游戏、其他
 - tags：3-5 个高质量、具体的标签；不要用"快乐/美好/重要/温暖"这类泛标签
+- task_status：判断这条记忆是不是"未完成的承诺/约定/待办/约定好之后要做的事"——是则填 "open"；如果这条记忆本身就是"完成了某件之前约定的事"（兑现了承诺、把答应的事做完），则填 "done"；普通事件不填（null）。注意：普通叙述（"我吃了饭""我们一起画了画"）不是任务，不要填。
 - evidence_turns：你概括这段对话时用到的是第几轮到第几轮（从 1 开始数这段对话，例如 [5,7]；只用一轮就 [5,5]）
 - evidence：把用到的那几轮原文放进数组（每轮一条，从每轮中选取最相关的连续片段，每轮最多 250 字、最多 2 轮，总长不超过 500 字），供召回时把原文一起带给默
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"]}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"task_status":"open|done|null"}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -4691,6 +4720,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
       }
       const insOwner = AEVUM_PERSPECTIVE_MAP[m.owner] || AEVUM_PERSPECTIVE_MAP[m.perspective] || 'USER';
       const eventTime = parseAevumEventTime(m.event_time) || new Date().toISOString();
+      const taskStatus = ['open', 'done'].includes(String(m.task_status || '')) ? String(m.task_status) : null;
       const insPayload = {
         type: 'event',
         area: 'sea',
@@ -4698,6 +4728,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
         content,
         title: String(m.title || '').trim().slice(0, 30) || content.slice(0, 20),
         event_time: eventTime,
+        ...(taskStatus ? { task_status: taskStatus } : {}),
         occurrence: 1,
         status: 'active',
         importance: validAevumImportance(m.importance),
@@ -4713,8 +4744,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
       // v30 未执行时 area/title/event_time/occurrence 列不存在：去掉重试
       if (insResult.error) {
         const emsg = insResult.error.message || '';
-        if (/area|title|event_time|occurrence|evidence_turns/i.test(emsg)) {
-          delete insPayload.area; delete insPayload.title; delete insPayload.event_time; delete insPayload.occurrence; delete insPayload.evidence_turns;
+        if (/area|title|event_time|occurrence|evidence_turns|task_status/i.test(emsg)) {
+          delete insPayload.area; delete insPayload.title; delete insPayload.event_time; delete insPayload.occurrence; delete insPayload.evidence_turns; delete insPayload.task_status;
           insResult = await supabase.from('aevum_memories').insert(insPayload).select();
         }
       }
@@ -4727,6 +4758,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
         ensureAevumEmbedding(insData[0].id, content).catch(e => console.error('Aevum embedding 失败:', e.message));
         // 关联阈值：与已有记忆书摘要 ≥0.70 → 生成待确认候选（异步，不阻塞）
         checkBookAssociation(insData[0].id, content).catch(e => console.error('记忆书关联检查失败:', e.message));
+        // 任务状态：如果是"完成事件"，尝试回写源头承诺（双向挂链）
+        checkPromiseFulfillment(insData[0].id, content, eventTime, taskStatus).catch(e => console.error('承诺回写检查失败:', e.message));
       }
       inserted++;
     }
@@ -4808,6 +4841,57 @@ async function checkBookAssociation(memoryId, content) {
     }
   } catch (e) {
     console.error('记忆书关联检查失败:', e.message);
+  }
+}
+
+// 任务状态回写：新单元如果是"完成事件"，找到源头 open 承诺并双向挂链、置 done
+async function checkPromiseFulfillment(memoryId, content, eventTime, taskStatus) {
+  try {
+    const { data: openTasks } = await supabase
+      .from('aevum_memories')
+      .select('id, title, content, event_time, task_status, fulfilled_by')
+      .eq('task_status', 'open');
+    if (!openTasks || !openTasks.length) return;
+    const emb = await getEmbedding(String(content || '').slice(0, 500));
+    if (!emb) return;
+    const newTime = eventTime ? new Date(eventTime).getTime() : Date.now();
+    const cands = [];
+    for (const t of openTasks) {
+      const tTime = t.event_time ? new Date(t.event_time).getTime() : 0;
+      if (tTime >= newTime) continue; // 承诺必须早于完成事件
+      const tEmb = await getUnitEmbedding({ id: t.id, content: t.content });
+      if (!tEmb) continue;
+      const sim = cosineSim(emb, tEmb);
+      if (sim >= 0.6) cands.push({ ...t, sim });
+    }
+    if (!cands.length) return;
+    cands.sort((a, b) => b.sim - a.sim);
+    const best = cands[0];
+    const system = '你是 Aevum Memory 的承诺回写判断器。判断"新事件"是否明确兑现了"旧承诺"。只有明确的完成（如"做完了/结束了/兑现了/已经做了"）才算完成；只是提到相关话题或计划不算。只回答 yes 或 no，不要多余文字。';
+    const user = '旧承诺：' + String(best.title || '') + '：' + String(best.content || '').slice(0, 200) + '\n新事件：' + String(content || '').slice(0, 300);
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], reasoning_effort: 'low', max_tokens: 10, temperature: 0.1, stream: false })
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const reply = String(data.choices?.[0]?.message?.content || '').trim().toLowerCase();
+    if (reply.indexOf('yes') === 0) {
+      const nowIso = new Date().toISOString();
+      await supabase.from('aevum_memories').update({
+        task_status: 'done',
+        done_at: nowIso,
+        fulfilled_by: [...new Set([...(best.fulfilled_by || []), memoryId])]
+      }).eq('id', best.id);
+      const { data: row } = await supabase.from('aevum_memories').select('fulfills').eq('id', memoryId).single();
+      await supabase.from('aevum_memories').update({
+        fulfills: [...new Set([...(row?.fulfills || []), best.id])]
+      }).eq('id', memoryId);
+      console.log('✅ 承诺回写：unit', memoryId, '→ 兑现承诺', best.id);
+    }
+  } catch (e) {
+    console.error('承诺回写检查失败:', e.message);
   }
 }
 
