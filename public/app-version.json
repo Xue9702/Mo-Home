@@ -1,5 +1,5 @@
 {
-  "version": "0.4.2",
+  "version": "0.4.3",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "状态栏/导航栏适配米色 + 记忆系统升级（记忆书生长/记忆海分组）"
+  "notes": "修复系统导航栏/状态栏米色对齐（正确主题生效）+ 记忆书续写改为追加模式"
 }

@@ -5952,23 +5952,23 @@ app.put('/api/aevum/books/:id', async (req, res) => {
 
 // ================== 记忆书生长（三级阈值 + 三分支演化） ==================
 
-async function regenerateBookSummary(label, units) {
-  if (!units || !units.length) return '';
-  const lines = units.map(u =>
+async function appendBookSummary(label, currentSummary, newUnits) {
+  if (!newUnits || !newUnits.length) return '';
+  const lines = newUnits.map(u =>
     `[${u.event_time ? String(u.event_time).slice(0, 10) : '未知时间'}] ${String(u.title || '').slice(0, 30)}：${String(u.content || '').replace(/\s+/g, ' ').slice(0, 120)}`
   ).join('\n');
-  const system = '你是 Aevum Memory 的记忆书摘要生成器。根据这本书「' + label + '」的所有事件单元，把故事线 summary 重新写一遍：时间/谁说了或做了什么/最后结果如何；不要罗列原文或标题，100-200 字；如果出现矛盾（后来推翻之前的），如实写出"一开始…后来…"的演化。只输出 summary 正文，不要 JSON 或解释。';
+  const system = '你是 Aevum Memory 的记忆书追加器。现有 summary 是一本记忆书「' + label + '」已经写好的内容，现在要在它末尾追加一批新增事件。规则：1) 现有 summary 原文一字不改，必须完整保留；2) 只在末尾追加 1-3 句，概括这些新增事件，每一句开头带日期（如 8/15）；3) 如果新增事件推翻了之前的说法，追加时注明"后来…"但不要修改原文；4) 不要罗列原文，用故事线口吻。只输出"追加后的完整 summary"（= 原 summary 原文 + 新增内容），不要解释。';
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: lines }], reasoning_effort: 'low', max_tokens: 600, temperature: 0.4, stream: false })
+      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: '现有 summary：\n' + String(currentSummary || '') + '\n\n新增事件：\n' + lines }], reasoning_effort: 'low', max_tokens: 800, temperature: 0.4, stream: false })
     });
     if (!resp.ok) return '';
     const data = await resp.json();
     return String(data.choices?.[0]?.message?.content || '').trim().slice(0, 500);
   } catch (e) {
-    console.error('记忆书摘要重生成失败:', e.message);
+    console.error('记忆书追加失败:', e.message);
     return '';
   }
 }
@@ -6026,8 +6026,9 @@ app.post('/api/aevum/books/:id/confirm-candidates', async (req, res) => {
     }
     let summaryUpdated = false;
     if (uniq.length) {
-      const merged = [...(oldMems || []), ...(candMems || []).filter(m => uniq.includes(m.id))];
-      const newSummary = await regenerateBookSummary(book.label, merged);
+      // 追加模式：不重写原文，只在末尾追加新增内容（带日期）
+      const newUnitsOnly = (candMems || []).filter(m => uniq.includes(m.id));
+      const newSummary = await appendBookSummary(book.label, book.summary, newUnitsOnly);
       if (newSummary) {
         const { data: vRows } = await supabase.from('aevum_book_versions').select('version_no').eq('book_id', bookId);
         const vNo = (vRows || []).length + 1;

@@ -3302,7 +3302,7 @@
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
-        let fullReply = '', fullThinking = '', searchPhaseActive = false;
+        let fullReply = '', fullThinking = '', searchPhaseActive = false, lastThinkChunk = '';
         let currentMsgDiv = null, currentThinkDiv = null, currentBubble = null, currentThinkBody = null;
         const ensureMsg = () => {
           if (currentMsgDiv) return;
@@ -3327,7 +3327,9 @@
             try { json = JSON.parse(trimmed.slice(6)); } catch (e) { continue; }
             if (json.thinking) {
               ensureMsg();
-              fullThinking += json.thinking;
+              const r = streamThinking(fullThinking, lastThinkChunk, json.thinking);
+              lastThinkChunk = r.next;
+              if (r.chunk) fullThinking += r.chunk;
               const tbody = ensureThinkingStructure(currentThinkDiv, true);
               if (tbody) tbody.textContent = fullThinking;
               currentThinkDiv.style.display = 'block';
@@ -4893,6 +4895,24 @@
         return body;
       }
 
+      // 前端思考分片去重（双保险）：服务端已去重，这里再兜一层，
+      // 防止任何重复/重叠分片导致流式显示重复
+      function streamThinking(fullThinking, lastChunk, t) {
+        let chunk = t;
+        if (t.length > fullThinking.length && t.startsWith(fullThinking)) chunk = t.slice(fullThinking.length);
+        else if (t === fullThinking || t === lastChunk) chunk = '';
+        else if (t.length >= 2 && fullThinking.endsWith(t)) chunk = '';
+        else {
+          let overlap = 0;
+          const max = Math.min(fullThinking.length, t.length);
+          for (let i = max; i >= 1; i--) {
+            if (fullThinking.slice(-i) === t.slice(0, i)) { overlap = i; break; }
+          }
+          if (overlap >= 6) chunk = t.slice(overlap);
+        }
+        return { chunk, next: t };
+      }
+
       // 把搜索状态行 + 思考正文容器挂进新消息的思考区（可随思考一起折叠）
       function setupSearchStatusBlock(thinkDiv) {
         thinkDiv.style.display = 'block';
@@ -5539,7 +5559,7 @@
           const response = await fetch('/api/edit-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msgId, newContent: newText, city: localStorage.getItem('moWeatherCity') || '', toyManual: toyManualOn(), stardewBrief: farmBrief() }) });
           if (!response.ok) throw new Error('请求失败');
           removeTyping();
-          let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '';
+          let userMessageId = null, groupId = null, currentVersion = 1, totalVersions = 1, currentAssistantBubble = null, currentThinkingContainer = null, fullReply = '', fullThinking = '', lastThinkChunk = '';
           let currentMsgDiv = null, currentThinkBody = null, searchPhaseActive = false;
           if (originalUserMsg) originalUserMsg.dataset.groupId = groupId;
           if (originalAssistantMsg) originalAssistantMsg.dataset.groupId = groupId;
@@ -5557,8 +5577,10 @@
                 const json = JSON.parse(payload);
                 if (json.userMessageId) { userMessageId = json.userMessageId; groupId = json.groupId; currentVersion = json.currentVersion; totalVersions = json.totalVersions; }
                 if (json.thinking) {
-                  // 服务端已过滤重复分片，这里直接追加（endsWith 去重会误吞"1500"的第二个 0）
-                  fullThinking += json.thinking;
+                  // 前端也去重（双保险）：避免流式显示重复
+                  const r = streamThinking(fullThinking, lastThinkChunk, json.thinking);
+                  lastThinkChunk = r.next;
+                  if (r.chunk) fullThinking += r.chunk;
                   if (!currentThinkingContainer) {
                     currentThinkingContainer = document.createElement('div');
                     currentThinkingContainer.className = 'thinking-content';
@@ -6001,7 +6023,7 @@
         messageList.appendChild(msgDiv);
         messageList.scrollTop = messageList.scrollHeight;
 
-        let fullReply = '', fullThinking = '';
+        let fullReply = '', fullThinking = '', lastThinkChunk = '';
         // 当前活跃的流式消息元素（联网搜索时会把“搜索状态 + 正式回答”切到一条新消息上）
         let currentMsgDiv = msgDiv, currentThinkDiv = thinkDiv, currentBubble = bubble, currentThinkBody = null;
         let searchPhaseActive = false;
@@ -6033,8 +6055,10 @@
                 const json = JSON.parse(payload);
 
                 if (json.thinking) {
-                  // 服务端已过滤重复分片，这里直接追加
-                  fullThinking += json.thinking;
+                  // 前端也去重（双保险）：避免流式显示重复
+                  const r = streamThinking(fullThinking, lastThinkChunk, json.thinking);
+                  lastThinkChunk = r.next;
+                  if (r.chunk) fullThinking += r.chunk;
                   const tbody = ensureThinkingStructure(currentThinkDiv, true);
                   if (tbody) tbody.textContent = fullThinking;
                   currentThinkDiv.style.display = 'block'; // 有内容就显示
@@ -6181,7 +6205,7 @@
         const messageId = btn.dataset.messageId;
         if (!messageId || messageId.startsWith('temp-')) { btn.textContent = '❌ 无效消息'; setTimeout(() => { btn.textContent = ''; btn.appendChild(createRefreshIcon()); btn.title = '重新生成'; btn.disabled = false; }, 2000); return; }
         let newMsgDiv = null;
-        let fullReply = '', fullThinking = '', streamError = null;
+        let fullReply = '', fullThinking = '', streamError = null, lastThinkChunk = '';
         let currentMsgDiv = null, currentThinkDiv = null, currentBubble = null, currentThinkBody = null;
         let searchPhaseActive = false;
         try {
@@ -6221,8 +6245,10 @@
               try {
                 const json = JSON.parse(payload);
                 if (json.thinking) {
-                  // 服务端已过滤重复分片，这里直接追加
-                  fullThinking += json.thinking;
+                  // 前端也去重（双保险）：避免流式显示重复
+                  const r = streamThinking(fullThinking, lastThinkChunk, json.thinking);
+                  lastThinkChunk = r.next;
+                  if (r.chunk) fullThinking += r.chunk;
                   currentThinkDiv.style.display = 'block';
                   const tbody = ensureThinkingStructure(currentThinkDiv, true);
                   if (tbody) tbody.textContent = fullThinking;
@@ -6981,7 +7007,7 @@
         const m2 = createAssistantStreamMessage();
         messageList.appendChild(m2.msg);
         m2.thinkDiv.style.display = 'block';
-        let fullReply = '', fullThinking = '';
+let fullReply = '', fullThinking = '', lastThinkChunk = '';
         try {
           const response = await fetch('/api/test/chat', {
             method: 'POST',
@@ -7008,7 +7034,9 @@
               try { json = JSON.parse(t.slice(6)); } catch (e) { continue; }
               if (json.error) m2.bubble.textContent = '⚠️ ' + json.error;
               if (json.thinking) {
-                fullThinking += json.thinking;
+                const r = streamThinking(fullThinking, lastThinkChunk, json.thinking);
+                lastThinkChunk = r.next;
+                if (r.chunk) fullThinking += r.chunk;
                 const tbody = ensureThinkingStructure(m2.thinkDiv, true);
                 if (tbody) tbody.textContent = fullThinking;
               }
