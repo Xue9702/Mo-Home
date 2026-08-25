@@ -685,6 +685,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
   let fullReply = '';
   let fullThinking = '';
   let contentBuffer = '';
+  let lastThinkChunk = ''; // 记录上一个思考分片，完全相同的重发直接跳过（任意长度）
   const toolCallsMap = new Map(); // 流式分片到达，按 index 累积工具调用
 
   const reader = response.body.getReader();
@@ -713,19 +714,23 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
 
           if (delta?.reasoning_content) {
             const t = delta.reasoning_content;
-            // 重叠去重：模型偶尔会重发"已累计的思考"或重复分片；
-            // 只在尾部与头部出现 ≥6 字的真实重叠时才截断新增部分，
-            // 避免把 "1500" 里新出现的 "0"（重叠仅 1 字）误判成重复吞掉
-            let overlap = 0;
-            const max = Math.min(fullThinking.length, t.length);
-            for (let i = max; i >= 1; i--) {
-              if (fullThinking.slice(-i) === t.slice(0, i)) { overlap = i; break; }
-            }
-            let chunk = t;
-            if (overlap >= 6) chunk = t.slice(overlap);
-            if (chunk.length) {
-              fullThinking += chunk;
-              sendSSE({ thinking: chunk });
+            // 去重分两层：
+            // 1) 完全相同的分片重发（任意长度）→ 跳过，避免"思考"+"思考"这种短分片重复
+            // 2) "已累计思考"带前缀重发 → 尾部与头部 ≥6 字真实重叠时只追加新增部分
+            // 都不影响 "1500" 里新出现的 "0"（它和上一个分片不同、重叠仅 1 字）
+            if (t !== lastThinkChunk) {
+              lastThinkChunk = t;
+              let overlap = 0;
+              const max = Math.min(fullThinking.length, t.length);
+              for (let i = max; i >= 1; i--) {
+                if (fullThinking.slice(-i) === t.slice(0, i)) { overlap = i; break; }
+              }
+              let chunk = t;
+              if (overlap >= 6) chunk = t.slice(overlap);
+              if (chunk.length) {
+                fullThinking += chunk;
+                sendSSE({ thinking: chunk });
+              }
             }
           }
 
@@ -4752,7 +4757,16 @@ async function getBookEmbedding(book) {
   return emb || null;
 }
 
-// 新单元与已有记忆书摘要相似度 ≥0.70 → 写入待确认候选（不直接落地）
+let unitEmbedCache = new Map();
+async function getUnitEmbedding(unit) {
+  const cached = unitEmbedCache.get(unit.id);
+  if (cached) return cached;
+  const emb = await getEmbedding(String(unit.content || '').slice(0, 500));
+  if (emb) unitEmbedCache.set(unit.id, emb);
+  return emb || null;
+}
+
+// 新单元与已有记忆书（摘要 + 已有事件单元）相似度 ≥0.70 → 写入待确认候选（不直接落地）
 async function checkBookAssociation(memoryId, content) {
   try {
     const emb = await getEmbedding(String(content || '').slice(0, 500));
@@ -4760,10 +4774,22 @@ async function checkBookAssociation(memoryId, content) {
     const { data: books } = await supabase.from('aevum_books').select('id, label, summary');
     if (!books || !books.length) return;
     for (const b of books) {
+      let bestSim = 0;
       const bEmb = await getBookEmbedding(b);
-      if (!bEmb) continue;
-      const sim = cosineSim(emb, bEmb);
-      if (sim >= 0.70) {
+      if (bEmb) bestSim = Math.max(bestSim, cosineSim(emb, bEmb));
+      // 再对比这本书已有事件单元的内容（同故事更贴近）
+      try {
+        const { data: itemRows } = await supabase.from('aevum_book_items').select('memory_id').eq('book_id', b.id);
+        const ids = (itemRows || []).map(r => r.memory_id).slice(0, 20);
+        if (ids.length) {
+          const { data: units } = await supabase.from('aevum_memories').select('id, content').in('id', ids);
+          for (const u of (units || [])) {
+            const uEmb = await getUnitEmbedding(u);
+            if (uEmb) bestSim = Math.max(bestSim, cosineSim(emb, uEmb));
+          }
+        }
+      } catch (e) { /* 单元对比失败不影响 */ }
+      if (bestSim >= 0.70) {
         const { data: dup } = await supabase
           .from('aevum_book_candidates')
           .select('id')
@@ -4773,10 +4799,10 @@ async function checkBookAssociation(memoryId, content) {
           await supabase.from('aevum_book_candidates').insert({
             book_id: b.id,
             memory_id: memoryId,
-            similarity: Number(sim.toFixed(4)),
+            similarity: Number(bestSim.toFixed(4)),
             status: 'pending'
           });
-          console.log('📌 记忆书候选：unit', memoryId, '→ book', b.id, 'sim', sim.toFixed(3));
+          console.log('📌 记忆书候选：unit', memoryId, '→ book', b.id, 'sim', bestSim.toFixed(3));
         }
       }
     }
@@ -7295,7 +7321,7 @@ async function getMomentsContext() {
     // 将动态格式化为一段可读的文字
     const momentsList = data.map(m => {
       const authorName = m.author === 'mo' ? '默' : '雪';
-      const time = new Date(m.created_at).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      const time = new Date(m.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       let momentText = `[${authorName} ${time}] ${m.content}`;
       if (m.reply_content) {
         momentText += `\n  -> 默的回复: ${m.reply_content}`;

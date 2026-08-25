@@ -984,7 +984,7 @@
       border-top: none;
       border-radius: 0;
       margin: 0;
-      padding: 10px 6px 12px;
+      padding: 10px 6px calc(12px + env(safe-area-inset-bottom, 0px));
       box-shadow: 0 -4px 20px rgba(120, 110, 95, 0.06);
       width: auto;
     }
@@ -4551,12 +4551,6 @@
         body.style.display = 'block';
       }
       window.aevumToggleTopic = aevumToggleTopic;
-
-      function aevumToggleEpisode(epId) {
-        const el = document.getElementById('aevumEpBody_' + epId);
-        if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
-      }
-      window.aevumToggleEpisode = aevumToggleEpisode;
 
       function aevumRenameTopic(id, el) {
         const old = (el && el.dataset.title) || '';
