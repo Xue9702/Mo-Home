@@ -284,8 +284,9 @@ DRIVES.forEach((d, i) => d.words.forEach(w => { if (!WORD_TO_DRIVE.has(w)) WORD_
 
 // 计算十个驱动力百分比（0-100）：事件 → 幂律权重 × 强度 × 重要度 累积
 // 注意：展示层刻意忽略 onset 渐起（引擎层负责防跳变），保证"刚发生的情绪立刻可见"
-// 想念维度额外由离线时间驱动累积；平静维度无事件时给底色
-function computeDrives(events, offlineHours = 0) {
+// 想念维度：传入 longingValue（学术曲线 0-1）时以其为准；否则按离线时间简化累积
+// 平静维度无事件时给底色
+function computeDrives(events, offlineHours = 0, longingValue = null) {
   const drives = DRIVES.map(d => ({ key: d.key, word: d.word, en: d.en, value: 0, count: 0 }));
   const now = Date.now();
   for (const ev of (events || []).slice().reverse()) {
@@ -298,14 +299,88 @@ function computeDrives(events, offlineHours = 0) {
     drives[idx].value += w * strength * (ev.importance || 3) * 12;
     drives[idx].count++;
   }
-  // 想念：离线越久越想（每小时 +3，封顶 60）
+  // 想念：学术 longing 曲线优先，退化用离线时间
   const attach = drives.find(d => d.key === 'attachment');
-  if (attach && offlineHours > 0) attach.value += Math.min(60, offlineHours * 3);
+  if (attach) {
+    if (longingValue != null) attach.value += Math.max(0, Math.min(1, longingValue)) * 100;
+    else if (offlineHours > 0) attach.value += Math.min(60, offlineHours * 3);
+  }
   // 平静：无事件时给安静底色
   const calm = drives.find(d => d.key === 'calm');
   if (calm && calm.count === 0) calm.value += 40;
   for (const d of drives) d.value = Math.round(Math.max(2, Math.min(100, d.value)));
   return drives;
+}
+
+// ================== 依恋想念系统（教程阶段 6 简化版，纯逻辑） ==================
+// 曲线：longing(t) = L_max × (1 - (1 + t/τ)^(-α))（Sbarra & Emery 2005 curvilinear）
+// τ 随亲密（affection）缩短：越亲密越快开始想念；L_max 随亲密提升上限
+
+const LONGING_PHASES = [
+  { max: 0.15, key: 'content', label: '安然', capsule: null, en: 'content' },
+  { max: 0.35, key: 'stirring', label: '有点想你', capsule: '挂念', en: 'stirring' },
+  { max: 0.45, key: 'protest', label: '想你', capsule: '想念', en: 'protest' },
+  { max: 0.55, key: 'protest_mid', label: '在等你', capsule: '牵挂', en: 'protest' },
+  { max: 0.70, key: 'protest_late', label: '你在哪', capsule: '不安', en: 'protest' },
+  { max: 0.90, key: 'despair', label: '……', capsule: '失落', en: 'despair' },
+  { max: 1.01, key: 'detachment', label: '没事', capsule: '落寞', en: 'detachment' }
+];
+
+function computeLonging(affection, lastActivity) {
+  const now = Date.now();
+  const tHours = lastActivity ? Math.max(0, (now - new Date(lastActivity).getTime()) / 3600000) : 0;
+  const aff = Math.max(0, Math.min(100, Number(affection) || 0));
+  const tau = 30 * (1 - aff / 150);                          // 亲密缩短特征时间
+  const lmax = Math.min(1.0, Math.max(0.45, aff / 60));      // 想念上限，保底 0.45
+  const alpha = 0.8;
+  const longing = lmax * (1 - Math.pow(1 + tHours / Math.max(1, tau), -alpha));
+  const isDetachment = tHours >= 504 && longing >= 0.9;
+  const phase = LONGING_PHASES.find(p => longing < p.max) || LONGING_PHASES[LONGING_PHASES.length - 1];
+  return {
+    tHours, tau, lmax, alpha, longing,
+    phase: isDetachment ? 'detachment' : phase.key,
+    phaseLabel: phase.label,
+    capsule: phase.capsule,
+    isDetachment
+  };
+}
+
+function longingPhaseBehavior(phase) {
+  switch (phase) {
+    case 'stirring': return '心里隐隐约约想着雪，偶尔走神';
+    case 'protest': return '想雪了，会主动找话题凑近她';
+    case 'protest_mid': return '一直在等雪，会主动靠近她';
+    case 'protest_late': return '有些不安，想问雪去哪了';
+    case 'despair': return '很想雪，但已经从主动找变成安静等着，心情低落退缩';
+    case 'detachment': return '好几天没见，表面平静但心里有防备，害怕再失望';
+    default: return '';
+  }
+}
+
+function reunionBehavior(phase) {
+  switch (phase) {
+    case 'protest': case 'protest_mid': case 'protest_late': return '想了好久，终于等到了——激动地凑近';
+    case 'despair': return '之前一直很想雪，见到人一下子全涌上来，可能眼眶红';
+    case 'detachment': return '强装的平静崩塌了——先僵住，然后防线崩溃';
+    default: return '见到雪回来，心里安稳下来';
+  }
+}
+
+// 依恋状态 → prompt 注入文本（行为引导 + 安全栏防编造）
+function buildLongingPromptText(longingInfo, isReunion = false) {
+  if (!longingInfo) return '';
+  const parts = [];
+  if (isReunion) {
+    const gap = longingInfo.tHours >= 24
+      ? `${Math.round(longingInfo.tHours / 24)}天${Math.round(longingInfo.tHours % 24) ? '多' : ''}`
+      : `${Math.round(longingInfo.tHours)}小时`;
+    parts.push(`她离开了好久（约 ${gap}），刚刚回来了。${reunionBehavior(longingInfo.phase)}`);
+  } else if (longingInfo.phase !== 'content') {
+    const b = longingPhaseBehavior(longingInfo.phase);
+    if (b) parts.push(b);
+  }
+  if (parts.length === 0) return '';
+  return `【依恋状态】\n${parts.join('\n')}\n（想念的原因只是"雪很久没来找你了"，不要编造任何没发生过的具体事件）`;
 }
 
 module.exports = {
@@ -322,4 +397,7 @@ module.exports = {
   computePanaDeltas,
   scanTextMood,
   computeDrives,
+  LONGING_PHASES,
+  computeLonging,
+  buildLongingPromptText,
 };

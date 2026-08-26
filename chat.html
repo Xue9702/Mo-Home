@@ -2341,6 +2341,11 @@
                 <span onclick="moHomeRefresh()" style="cursor:pointer;color:var(--blue-deep);font-size:12px;">刷新 ↻</span>
               </div>
               <div style="font-size:13px;color:var(--dark);opacity:.8;margin-top:6px;">此刻：${escapeHtml2(state.mood_word || '平静')}${state.mood_reason ? '<span style="color:var(--muted);font-size:11px;"> · ' + escapeHtml2(String(state.mood_reason).slice(0, 30)) + '</span>' : ''}</div>
+              ${state.longing && state.longing.phase !== 'content' ? `
+              <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--blue-deep);background:rgba(155,183,200,0.14);border:1px solid rgba(155,183,200,0.35);border-radius:10px;padding:4px 10px;width:fit-content;">
+                💙 ${escapeHtml2(state.longing.phaseLabel)}${state.longing.capsule ? ' · ' + escapeHtml2(state.longing.capsule) : ''}
+                <span style="color:var(--muted);font-size:11px;">想念 ${Math.round(state.longing.longing * 100)}%</span>
+              </div>` : ''}
               <div style="display:flex;align-items:center;gap:8px;margin-top:8px;width:100%;">
                 <span style="width:28px;font-size:12px;color:var(--blue-deep);">PA</span>
                 <div style="flex:1;height:8px;border-radius:4px;background:#E7DFD2;overflow:hidden;"><div style="height:100%;width:${Math.round((state.pa || 0) * 100)}%;background:linear-gradient(90deg,#9BB7C8,#7E9FB3);border-radius:4px;transition:width .5s;"></div></div>

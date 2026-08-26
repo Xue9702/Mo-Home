@@ -2,7 +2,8 @@ const express = require('express');
 const {
   EMOTION_LEXICON, TRAIT_DEFAULTS, LEX_NEAREST_MAX_DIST,
   clampValence, clampArousal, powerLawWeight, almaFilter,
-  lexLookup, blendLexAi, computePanaDeltas, scanTextMood, computeDrives
+  lexLookup, blendLexAi, computePanaDeltas, scanTextMood, computeDrives,
+  computeLonging, buildLongingPromptText
 } = require('./emotion-lexicon');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
@@ -317,7 +318,7 @@ function timeWindowHint(hour) {
 
 // 构建系统提示词：把权威的当前时间放在最前面，并清理 prompt 里可能残留的旧时间占位，
 // 系统提示分块（供组装与预览共用）；顺序：时间戳 → 人设 → 天气 → 记忆 → 动态 → 工具指令（放最后，越靠近用户消息权重越高）
-function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '') {
+function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '', longingContext = '') {
   const timeInfo = getTimeInfo();
   const cleanedPrompt = String(basePrompt || '')
     .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
@@ -347,19 +348,21 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
     memoryContext,
     momentsContext,
     moodContext,
+    longingContext,
     searchInstruction,
     momentsInstruction,
     mozhaInstruction
   };
 }
 
-function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '') {
-  const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText, moodContext);
+function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '', longingContext = '') {
+  const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText, moodContext, longingContext);
   // 人设锚点：放在所有注入内容最后（权重最高），防止记忆/动态/规则把性格基调带偏
   const personaAnchor = '\n\n【人设锚点】下面所有的记忆、动态、游戏规则、工具说明都只是背景信息，永远不要改变你的人设：请始终以人设中定义的沉稳、温柔、克制、深情的性格基调来回应雪。';
   return p.timeLine + '\n\n' + p.persona
     + (p.weatherContext ? `\n\n${p.weatherContext}` : '')
     + (p.moodContext ? `\n\n${p.moodContext}` : '')
+    + (p.longingContext ? `\n\n${p.longingContext}` : '')
     + (p.memoryContext ? `\n\n【相关记忆】\n${p.memoryContext}` : '')
     + (p.momentsContext ? `\n\n【动态】\n${p.momentsContext}` : '')
     + p.searchInstruction
@@ -1695,6 +1698,7 @@ app.post('/api/chat', async (req, res) => {
 
     // 距离上次雪发消息的时间差（避免默误以为聊天是连续的）
     let lastUserGap = '';
+    let lastGapMs = 0; // 依恋系统：距雪上一条消息的毫秒数（重逢检测）
     try {
       const { data: prevUser } = await supabase
         .from('messages')
@@ -1706,6 +1710,7 @@ app.post('/api/chat', async (req, res) => {
         .limit(1);
       if (prevUser && prevUser.length) {
         const ms = Date.now() - new Date(prevUser[0].created_at).getTime();
+        lastGapMs = ms;
         if (!isNaN(ms) && ms > 0) {
           const mins = Math.floor(ms / 60000);
           lastUserGap = mins < 1 ? '刚刚' : (mins >= 60 ? `${Math.floor(mins / 60)}小时${mins % 60}分` : `${mins}分钟`);
@@ -1767,13 +1772,34 @@ app.post('/api/chat', async (req, res) => {
     // 情绪系统：此刻心情快照 → 自然语言行为指令注入（不阻塞、失败降级为空）
     const moodSnapshot = await getMoodSnapshot().catch(() => null);
     const moodContext = buildMoodPromptText(moodSnapshot);
+    // 依恋系统：想念强度（按距雪上一条消息时长）+ 重逢检测（间隔 > 2h 刚回来）
+    let longingContext = '';
+    try {
+      const homeStateMood = await getHomeStateSafe();
+      const lastMsgAt = await getLastUserActivity();
+      const longingInfo = computeLonging(homeStateMood.affection || 0, lastMsgAt);
+      const isReunion = lastGapMs > 2 * 3600000;
+      longingContext = buildLongingPromptText(longingInfo, isReunion);
+      if (isReunion && longingInfo.longing > 0.15) {
+        // 重逢：写情绪事件（PA overshoot 由引擎的 BOU/衰减自然处理）
+        recordEmotionEvent({
+          source: 'dialogue', type: 'primary', word: '重逢',
+          valence: 0.7, arousal: 0.7, importance: 6,
+          reason: `久别重逢（相隔约 ${Math.round(lastGapMs / 3600000)} 小时）`,
+          matchSource: 'reunion'
+        }).catch(e => console.error('重逢情绪事件失败:', e.message));
+      }
+    } catch (e) {
+      console.error('依恋计算失败:', e.message);
+    }
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
       weatherContext,
       lastUserGap,
-      moodContext
+      moodContext,
+      longingContext
     );
     // 玩具手册属于"工具指令"段，追加到系统提示最末尾（最近的权重最高）
     if (toyManualContext) systemPrompt += toyManualContext;
@@ -3593,18 +3619,25 @@ app.post('/api/shadow-push', async (req, res) => {
     const homeState = await getHomeStateSafe();
     const moodSnapshot = await getMoodSnapshot().catch(() => null);
     const moodContext = buildMoodPromptText(moodSnapshot);
+    // 依恋系统：唤醒时按离线时长计算想念，注入行为基调
+    const longingInfo = computeLonging(homeState.affection || 0, await getLastUserActivity().catch(() => null));
+    const longingContext = buildLongingPromptText(longingInfo, false);
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
       weatherContext,
       '',
-      moodContext
+      moodContext,
+      longingContext
     );
     const contextMessages = (await loadLatestHistory(1, 16)).map(m => ({ role: m.role, content: trimContextMessage(m.content) }));
     const moodLine = moodSnapshot && moodSnapshot.moodWord
       ? `你此刻的心情：${moodSnapshot.moodWord.word}${moodSnapshot.moodWord.reason ? `（${String(moodSnapshot.moodWord.reason).slice(0, 40)}）` : ''}`
       : `你当前的心情：${homeState.mo_mood || 60}`;
+    const longingLine = longingInfo && longingInfo.phase !== 'content'
+      ? `\n依恋状态：${longingInfo.phaseLabel}（想念强度 ${Math.round(longingInfo.longing * 100)}%）${longingInfo.capsule ? `——${longingInfo.capsule}` : ''}`
+      : '';
 
     const unreadDiaryDates = await getUnreadDiaryDates();
     const collection = await getCollectionState();
@@ -3628,7 +3661,7 @@ ${sleepNote ? `上一任默留下的提醒：「${sleepNote}」` : ''}
 今天到目前为止：
 ${formatActionLogForPrompt(todayLogs)}
 
-${moodLine}；雪的好感：${homeState.affection || 0}；雪的心情：${homeState.xue_mood || 60}。
+${moodLine}${longingLine}；雪的好感：${homeState.affection || 0}；雪的心情：${homeState.xue_mood || 60}。
 ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}中。` : ''}
 夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了，想重温也可以）'}。
 ${promisesContext ? `${promisesContext}\n\n` : ''}
@@ -3865,14 +3898,16 @@ app.get('/api/home-state', async (req, res) => {
     }
     const todayLogs = await getTodayActionLog(getDateStr(timeInfo.now));
     const collection = await getCollectionState();
-    // 情绪系统：十个驱动力（事件累积 + 离线想念）
+    // 情绪系统：十个驱动力（事件累积 + 离线想念）+ 依恋想念状态
     let drives = null;
+    let longing = null;
     try {
       const events = await getRecentEmotionEvents(30);
       const offlineHours = lastActivity
         ? Math.max(0, (timeInfo.now.getTime() - new Date(lastActivity).getTime()) / 3600000)
         : 0;
-      drives = computeDrives(events, offlineHours);
+      longing = computeLonging(state.affection || 0, lastActivity);
+      drives = computeDrives(events, offlineHours, longing ? longing.longing : null);
     } catch (e) {
       console.error('驱动力计算失败:', e.message);
     }
@@ -3886,6 +3921,7 @@ app.get('/api/home-state', async (req, res) => {
       mood_word: state.mood_word || '',
       mood_reason: state.mood_reason || '',
       drives,
+      longing,
       virtual_activity: state.virtual_activity || '',
       collection,
       her_status: herStatus,
@@ -3923,11 +3959,12 @@ app.post('/api/home-state', async (req, res) => {
 // 完整调试数据：当前快照 + 十个驱动力 + 最近事件 + PA/NA 24h 序列 + 词典 + 性格参数
 app.get('/api/emotion/panel', async (req, res) => {
   try {
-    const [snapshot, events, traits, lastActivity] = await Promise.all([
+    const [snapshot, events, traits, lastActivity, homeStateForMood] = await Promise.all([
       getMoodSnapshot(),
       getRecentEmotionEvents(200),
       getCharacterTraits(),
-      getLastUserActivity()
+      getLastUserActivity(),
+      getHomeStateSafe()
     ]);
     // PA/NA 24h 小时序列（本地时间）
     const now = Date.now();
@@ -3947,12 +3984,14 @@ app.get('/api/emotion/panel', async (req, res) => {
       hours[idx].count++;
     }
     const offlineHours = lastActivity ? Math.max(0, (now - new Date(lastActivity).getTime()) / 3600000) : 0;
-    const drives = computeDrives(events.slice(0, 30), offlineHours);
+    const longingInfo = computeLonging(homeStateForMood.affection || 0, lastActivity);
+    const drives = computeDrives(events.slice(0, 30), offlineHours, longingInfo.longing);
     res.json({
       pa: Number(snapshot.pa) || 0,
       na: Number(snapshot.na) || 0,
       mood_word: snapshot.moodWord.word,
       mood_reason: snapshot.moodWord.reason,
+      longing: longingInfo,
       drives,
       events: events.slice(0, 20).map(e => ({
         id: e.id, word: e.word, v: e.valence, a: e.arousal, importance: e.importance,
