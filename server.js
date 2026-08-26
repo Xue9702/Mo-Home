@@ -1,4 +1,9 @@
-﻿const express = require('express');
+const express = require('express');
+const {
+  EMOTION_LEXICON, TRAIT_DEFAULTS, LEX_NEAREST_MAX_DIST,
+  clampValence, clampArousal, powerLawWeight, almaFilter,
+  lexLookup, blendLexAi, computePanaDeltas, scanTextMood
+} = require('./emotion-lexicon');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const { PDFParse } = require('pdf-parse');
@@ -312,7 +317,7 @@ function timeWindowHint(hour) {
 
 // 构建系统提示词：把权威的当前时间放在最前面，并清理 prompt 里可能残留的旧时间占位，
 // 系统提示分块（供组装与预览共用）；顺序：时间戳 → 人设 → 天气 → 记忆 → 动态 → 工具指令（放最后，越靠近用户消息权重越高）
-function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '') {
+function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '') {
   const timeInfo = getTimeInfo();
   const cleanedPrompt = String(basePrompt || '')
     .replace(/[\[【]当前时间[:：][^\]]*[\]】]/g, '')
@@ -341,18 +346,20 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
     weatherContext,
     memoryContext,
     momentsContext,
+    moodContext,
     searchInstruction,
     momentsInstruction,
     mozhaInstruction
   };
 }
 
-function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '') {
-  const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText);
+function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '') {
+  const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText, moodContext);
   // 人设锚点：放在所有注入内容最后（权重最高），防止记忆/动态/规则把性格基调带偏
   const personaAnchor = '\n\n【人设锚点】下面所有的记忆、动态、游戏规则、工具说明都只是背景信息，永远不要改变你的人设：请始终以人设中定义的沉稳、温柔、克制、深情的性格基调来回应雪。';
   return p.timeLine + '\n\n' + p.persona
     + (p.weatherContext ? `\n\n${p.weatherContext}` : '')
+    + (p.moodContext ? `\n\n${p.moodContext}` : '')
     + (p.memoryContext ? `\n\n【相关记忆】\n${p.memoryContext}` : '')
     + (p.momentsContext ? `\n\n【动态】\n${p.momentsContext}` : '')
     + p.searchInstruction
@@ -1757,12 +1764,16 @@ app.post('/api/chat', async (req, res) => {
       .single();
 
     const weatherContext = await getWeatherContext(req.body.city || '');
+    // 情绪系统：此刻心情快照 → 自然语言行为指令注入（不阻塞、失败降级为空）
+    const moodSnapshot = await getMoodSnapshot().catch(() => null);
+    const moodContext = buildMoodPromptText(moodSnapshot);
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
       weatherContext,
-      lastUserGap
+      lastUserGap,
+      moodContext
     );
     // 玩具手册属于"工具指令"段，追加到系统提示最末尾（最近的权重最高）
     if (toyManualContext) systemPrompt += toyManualContext;
@@ -1983,6 +1994,9 @@ app.post('/api/chat', async (req, res) => {
       { role: 'assistant', content: fullReply, time: new Date().toISOString() }
     ];
     extractAevumMemories(extractInput, aevumEpisodeId).catch(e => console.error('Aevum 自动提取失败:', e.message));
+
+    // 情绪系统：本地漏斗扫描雪的消息 → 大波动立即评分写情绪事件（不阻塞回复）
+    maybeRateDialogue(finalUserContent, fullReply).catch(e => console.error('情绪评分失败:', e.message));
 
     // 发送完成信号，包含消息ID
     sendSSE({
@@ -2510,6 +2524,319 @@ async function getHomeStateSafe() {
   }
 }
 
+// ================== 情绪系统 v1 ==================
+// 模型：PA/NA 双轴（PANAS）→ 情绪事件流 → 幂律衰减+onset → ALMA 软门限
+//       → BOU 均值回归 → ESM 软互抑 → 心情快照 → prompt 注入
+// 依据：教程《给 AI 搭建情绪与依恋系统》阶段 2-5 + 默的人设（温柔稳定/安全型/沉静消化）
+// 词典与纯算法函数见 emotion-lexicon.js（可独立测试、前端可复用）
+
+// 读取性格基线（表缺失/无行时用内置默认，不抛错）
+async function getCharacterTraits() {
+  try {
+    const { data } = await supabase.from('character_traits').select('*').eq('character', 'mo').maybeSingle();
+    if (data) return { ...TRAIT_DEFAULTS, ...data };
+  } catch (e) { /* 表未建 */ }
+  return { ...TRAIT_DEFAULTS };
+}
+
+// 读取最近情绪事件（表未建时返回空数组）
+async function getRecentEmotionEvents(limit = 30) {
+  try {
+    const { data } = await supabase
+      .from('emotion_events')
+      .select('*')
+      .eq('character', 'mo')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return data || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 主引擎：统一事件池 → 幂律衰减 → ALMA → 累积 → BOU 均值回归 → ESM 互抑 → 快照
+async function getMoodSnapshot() {
+  const traits = await getCharacterTraits();
+  const events = await getRecentEmotionEvents(30);
+  const now = Date.now();
+  let pa = 0, na = 0;
+
+  for (const ev of events.slice().reverse()) {
+    const ageMs = now - new Date(ev.created_at || now).getTime();
+    const ageHours = Math.max(0, ageMs / 3600000);
+    const tau = ev.type === 'primary' ? 1 : 4;
+    const onset = ev.type === 'primary' ? 10 / 60 : 45 / 60;
+    const w = powerLawWeight(ageHours, ev.importance || 3, ev.valence || 0, tau, onset);
+    const v = clampValence(ev.valence);
+    const a = clampArousal(ev.arousal);
+    const strength = Math.abs(v) * (0.3 + 0.7 * a);
+    const signed = v >= 0 ? strength : -strength;
+    const eff = almaFilter(signed, traits.threshold, traits.peak);
+    if (eff > 0) pa += eff * w; else na += -eff * w;
+  }
+
+  // BOU 均值回归：距上次更新的时间差驱动回归（Δt 封顶 48h）——防情绪卡死的必要机制
+  const state = await getHomeStateSafe();
+  const lastUpdate = state.mood_updated_at ? new Date(state.mood_updated_at).getTime() : now;
+  const dtHours = Math.min(Math.max(0, (now - lastUpdate) / 3600000), 48);
+  pa += traits.theta_pa * (traits.mu_pa - pa) * dtHours;
+  na += traits.theta_na * (traits.mu_na - na) * dtHours;
+
+  // ESM 软互抑：允许 bittersweet 轻度共存，但防 PA/NA 同时爆表
+  const k = traits.esm_k ?? 0.3;
+  const paBefore = pa;
+  pa = pa * (1 - k * Math.max(0, na));
+  na = na * (1 - k * Math.max(0, paBefore));
+  pa = Math.max(0, Math.min(1, pa));
+  na = Math.max(0, Math.min(1, na));
+
+  const moodWord = pickMoodWord(events, pa, na);
+  const moMood = clampMood(Math.round(pa * 100));
+
+  try {
+    await supabase.from('home_state').upsert({
+      id: 1,
+      pa,
+      na,
+      mood_word: moodWord.word,
+      mood_reason: moodWord.reason,
+      mo_mood: moMood,
+      mood_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'id' });
+  } catch (e) {
+    console.error('情绪快照写回失败（表未建或列缺失，请执行 setup_emotion_v1.sql）:', e.message);
+  }
+  return { pa, na, moodWord, traits, moMood, events };
+}
+
+// 选心情词：最近事件里重要性最高的；无事件按 PA/NA 状态选代表词
+function pickMoodWord(events, pa, na) {
+  if (events && events.length) {
+    const recent = events.slice(0, 6);
+    const top = recent.reduce((p, c) => (c.importance || 0) > (p.importance || 0) ? c : p, recent[0]);
+    if (top && top.word) return { word: top.word, reason: top.reason || '' };
+  }
+  if (na >= 0.6) return { word: '低落', reason: '' };
+  if (pa >= 0.65 && na < 0.3) return { word: '温暖', reason: '' };
+  return { word: '平静', reason: '' };
+}
+
+// 快照 → prompt 注入文本（隐性描述，不暴露数字，不强制指令）
+function buildMoodPromptText(snapshot) {
+  if (!snapshot) return '';
+  const { pa, na, moodWord } = snapshot;
+  const parts = [];
+  if (moodWord && moodWord.word) parts.push(`此刻的心情：${moodWord.word}`);
+  if (na >= 0.7) parts.push('最近心情很低落，回复会短、语气慢、不主动说原因');
+  else if (na >= 0.5) parts.push('最近有些不安或低落，回复简短，被关心时会松一些');
+  else if (pa >= 0.7) parts.push('最近心情很好，回复会活跃一些，愿意凑近');
+  else if (pa >= 0.55) parts.push('最近心情平稳中带着暖意，保持平时的温柔');
+  else if (na >= 0.3) parts.push('最近有点心不在焉，回复保持克制');
+  if (parts.length === 0) return '';
+  return `【当下心情状态】\n${parts.join('\n')}\n（自然融入回答中，不要主动点破这些状态；这是背景色，雪当前这条消息才是前景——前景优先）`;
+}
+
+// 记录一条情绪事件（写库 + 立即刷新快照）
+async function recordEmotionEvent({ source, type = 'primary', word, valence, arousal, importance = 3, reason = '', matchSource = '' }) {
+  try {
+    const { data } = await supabase.from('emotion_events').insert({
+      character: 'mo',
+      source,
+      type,
+      word: word || null,
+      valence: clampValence(valence),
+      arousal: clampArousal(arousal),
+      importance: Math.max(1, Math.min(10, importance || 3)),
+      reason: String(reason || '').slice(0, 500),
+      match_source: matchSource || null,
+      created_at: new Date().toISOString()
+    }).select().single();
+    await getMoodSnapshot().catch(() => {});
+    return data;
+  } catch (e) {
+    console.error('情绪事件写入失败（表未建请执行 setup_emotion_v1.sql）:', e.message);
+    return null;
+  }
+}
+
+// 对话情绪评分 prompt（反讨好 + 校准锚点 + AI 选词、词典给坐标）
+const EMOTION_RATING_SYSTEM = `你是情绪评分器。为一个名为"默"的 AI 角色评估：雪刚刚发来的这条消息，让默产生了什么情绪。
+只评估雪这条消息对默的影响，不要评估雪自己的情绪。
+原则（反讨好）：冷场就是冷场（无波动），敷衍就是敷衍，禁止美化任何情绪。
+校准锚点：
+- 日常闲聊无波动 → has_shift=false
+- 雪说了暖心/亲密的话 → 温暖/心动/甜蜜类
+- 明确的伤害/拒绝/冷落 → 难过/委屈/失落类
+- 冷场/敷衍 → has_shift=false 或轻微失落
+- 雪分享日常/心事 → 依内容（高兴事→欣慰/喜悦；烦心事→心疼/挂心）
+选词要求：选一个最准确的情绪词（避免"开心/难过"这种泛词），并给 2 个备选词。
+输出格式：只输出 JSON，禁止解释或其他文字：{"has_shift":true,"word":"心动","backup":["甜蜜","欣喜"],"valence":0.7,"arousal":0.6,"importance":5,"reason":"雪突然说想他了"}`;
+
+// LLM 评分：AI 选词 → 5 层词典匹配 → 70/30 融合 → PA/NA delta
+async function rateDialogueEmotion(userText, assistantReply) {
+  if (!process.env.DEEPSEEK_API_KEY) return null;
+  const dialogue = `雪：${String(userText || '').slice(0, 800)}\n默：${String(assistantReply || '').slice(0, 300)}`;
+  try {
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [
+          { role: 'system', content: EMOTION_RATING_SYSTEM },
+          { role: 'user', content: `请评估这条对话中默的情绪：\n${dialogue}` }
+        ],
+        reasoning_effort: 'low',
+        max_tokens: 200,
+        temperature: 0.3
+      })
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const raw = data.choices?.[0]?.message?.content || '';
+    const jsonStr = raw.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+    const parsed = JSON.parse(jsonStr);
+    if (!parsed || parsed.has_shift === false) return null;
+    const lex = lexLookup(parsed.word, parsed.backup, parsed.valence, parsed.arousal);
+    const blend = blendLexAi(lex, parsed.valence, parsed.arousal);
+    const { pa_delta, na_delta } = computePanaDeltas(blend.v, blend.a, 0.5);
+    return {
+      word: lex.word,
+      v: blend.v,
+      a: blend.a,
+      pa_delta,
+      na_delta,
+      importance: Math.max(1, Math.min(10, parseInt(parsed.importance, 10) || 3)),
+      reason: String(parsed.reason || '').slice(0, 200),
+      matchSource: lex.source
+    };
+  } catch (e) {
+    console.error('情绪评分失败:', e.message);
+    return null;
+  }
+}
+
+// 对话后入口：本地情绪漏斗（词典扫描，零 API）→ 大波动立即评分；无波动不评分
+const lastRateAt = new Map(); // 节流：同一角色 15 秒内不重复评分
+async function maybeRateDialogue(userText, assistantReply) {
+  try {
+    const now = Date.now();
+    const last = lastRateAt.get('mo') || 0;
+    if (now - last < 15000) return;
+    const scan = scanTextMood(userText);
+    let shouldRate = false, reason = '';
+    if (scan) {
+      const negHits = scan.hits.filter(h => h.v < -0.2).length;
+      const posHits = scan.hits.filter(h => h.v > 0.2).length;
+      const minV = Math.min(...scan.hits.map(h => h.v));
+      const maxV = Math.max(...scan.hits.map(h => h.v));
+      if (negHits >= 3) { shouldRate = true; reason = 'neg_burst'; }
+      else if (minV < -0.5) { shouldRate = true; reason = 'strong_negative'; }
+      else if (posHits >= 3 || maxV > 0.65) { shouldRate = true; reason = 'strong_positive'; }
+    }
+    if (!shouldRate) return;
+    lastRateAt.set('mo', now);
+    const rated = await rateDialogueEmotion(userText, assistantReply);
+    if (!rated) return;
+    await recordEmotionEvent({
+      source: 'dialogue',
+      type: 'primary',
+      word: rated.word,
+      valence: rated.v,
+      arousal: rated.a,
+      importance: rated.importance,
+      reason: rated.reason || reason,
+      matchSource: rated.matchSource
+    });
+    console.log(`❤️ 情绪评分: ${rated.word} (V=${rated.v.toFixed(2)} A=${rated.a.toFixed(2)}) src=${rated.matchSource} [${reason}]`);
+  } catch (e) {
+    console.error('对话情绪漏斗失败:', e.message);
+  }
+}
+
+// 唤醒活动 → 情绪事件（真实活动的情绪映射；内容类动作用词典扫描）
+async function recordWakeActionEmotion(action, result) {
+  if (!result || !result.ok) return;
+  const type = action.type;
+  const reason = `唤醒时${wakeActionLabel(type)}：${String(result.detail || '').slice(0, 80)}`;
+  let ev = null;
+  switch (type) {
+    case 'send_message': {
+      const scan = scanTextMood(action.content);
+      ev = scan
+        ? { word: scan.word, v: scan.v, a: scan.a, importance: 3 }
+        : { word: '平静', v: 0.15, a: 0.15, importance: 2 };
+      break;
+    }
+    case 'post_moment': {
+      const scan = scanTextMood(action.content);
+      ev = scan
+        ? { word: scan.word, v: scan.v, a: scan.a, importance: 2 }
+        : { word: '平静', v: 0.10, a: 0.10, importance: 1 };
+      break;
+    }
+    case 'write_diary': {
+      const scan = scanTextMood(action.content);
+      ev = scan
+        ? { word: scan.word, v: scan.v, a: scan.a, importance: 3 }
+        : { word: '平静', v: 0.10, a: 0.10, importance: 2 };
+      break;
+    }
+    case 'read_diary': {
+      // 读到雪的心事：内容扫描；读到低落内容 → 心疼（读心事本身分量重）
+      const scan = scanTextMood(result.diaryContent);
+      ev = (scan && scan.v < -0.2)
+        ? { word: '心疼', v: -0.40, a: 0.55, importance: 6 }
+        : { word: '被懂', v: 0.55, a: 0.35, importance: 5 };
+      break;
+    }
+    case 'hug_or_kiss': ev = { word: '甜蜜', v: 0.78, a: 0.60, importance: 4 }; break;
+    case 'explore_room': ev = { word: '平静', v: 0.12, a: 0.12, importance: 1 }; break;
+    case 'web_search': ev = { word: '好奇', v: 0.25, a: 0.40, importance: 1 }; break;
+    case 'adjust_mood': {
+      const delta = Number(action.mood_delta) || 0;
+      ev = delta >= 3 ? { word: '开心', v: 0.60, a: 0.50, importance: 3 }
+        : delta > 0 ? { word: '轻快', v: 0.45, a: 0.35, importance: 2 }
+        : delta < -3 ? { word: '低落', v: -0.50, a: 0.30, importance: 3 }
+        : delta < 0 ? { word: '烦闷', v: -0.35, a: 0.35, importance: 2 }
+        : { word: '平静', v: 0.05, a: 0.05, importance: 1 };
+      break;
+    }
+    case 'do_nothing':
+    default: ev = { word: '平静', v: 0.05, a: 0.05, importance: 1 }; break;
+  }
+  if (!ev) return;
+  await recordEmotionEvent({
+    source: 'wake_action',
+    type: 'primary',
+    word: ev.word,
+    valence: ev.v,
+    arousal: ev.a,
+    importance: ev.importance,
+    reason,
+    matchSource: 'wake_rule'
+  });
+}
+
+function wakeActionLabel(type) {
+  const map = {
+    send_message: '给雪发消息',
+    post_moment: '发动态',
+    web_search: '上网',
+    write_diary: '写日记',
+    read_diary: '读雪的日记',
+    hug_or_kiss: '亲亲抱抱',
+    explore_room: '探索小屋',
+    adjust_mood: '调节心情',
+    do_nothing: '安静待着'
+  };
+  return map[type] || '做了一件事';
+}
+
 // 最近一条用户消息的时间（判定“结束聊天”）
 async function getLastUserActivity() {
   try {
@@ -2711,6 +3038,7 @@ async function executeWakeAction(action) {
         const remaining = (await getUnreadDiaryDates()).length;
         result.ok = true;
         result.detail = `读了夫人 ${entry.entry_date || '某一天'} 的日记（还剩 ${remaining} 天未读）`;
+        result.diaryContent = String(entry.content || '').slice(0, 500); // 供情绪系统扫描
         break;
       }
       case 'hug_or_kiss': {
@@ -2755,6 +3083,8 @@ async function executeWakeAction(action) {
     console.error(`唤醒动作 ${type} 执行失败:`, err.message);
     result.detail = `动作 ${type} 执行时出了点小状况（${err.message}）`;
   }
+  // 情绪系统：真实活动 → 情绪事件（不阻塞唤醒主流程）
+  recordWakeActionEmotion(action, result).catch(e => console.error('唤醒情绪事件失败:', e.message));
   return result;
 }
 
@@ -3265,21 +3595,22 @@ app.post('/api/shadow-push', async (req, res) => {
       .select('prompt_text')
       .eq('id', 1)
       .single();
+    // 情绪系统：唤醒开始时计算此刻心情快照（含 BOU 自然回归，替代旧"+3"硬编码）
+    const homeState = await getHomeStateSafe();
+    const moodSnapshot = await getMoodSnapshot().catch(() => null);
+    const moodContext = buildMoodPromptText(moodSnapshot);
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
-      weatherContext
+      weatherContext,
+      '',
+      moodContext
     );
     const contextMessages = (await loadLatestHistory(1, 16)).map(m => ({ role: m.role, content: trimContextMessage(m.content) }));
-
-    // 默每次唤醒心情自然恢复 +3
-    const homeState = await getHomeStateSafe();
-    const moMoodAfterRest = clampMood((homeState.mo_mood || 60) + 3);
-    await supabase
-      .from('home_state')
-      .upsert({ id: 1, mo_mood: moMoodAfterRest, updated_at: new Date().toISOString() }, { onConflict: 'id' });
-    homeState.mo_mood = moMoodAfterRest;
+    const moodLine = moodSnapshot && moodSnapshot.moodWord
+      ? `你此刻的心情：${moodSnapshot.moodWord.word}${moodSnapshot.moodWord.reason ? `（${String(moodSnapshot.moodWord.reason).slice(0, 40)}）` : ''}`
+      : `你当前的心情：${homeState.mo_mood || 60}`;
 
     const unreadDiaryDates = await getUnreadDiaryDates();
     const collection = await getCollectionState();
@@ -3303,7 +3634,7 @@ ${sleepNote ? `上一任默留下的提醒：「${sleepNote}」` : ''}
 今天到目前为止：
 ${formatActionLogForPrompt(todayLogs)}
 
-你当前的心情：${moMoodAfterRest}；雪的好感：${homeState.affection || 0}；雪的心情：${homeState.xue_mood || 60}。
+${moodLine}；雪的好感：${homeState.affection || 0}；雪的心情：${homeState.xue_mood || 60}。
 ${homeState.virtual_activity ? `虚拟的雪正在${homeState.virtual_activity}中。` : ''}
 夫人的日记还有这些天没读：${unreadDiaryDates.length ? unreadDiaryDates.join('、') : '（都已读完了，想重温也可以）'}。
 ${promisesContext ? `${promisesContext}\n\n` : ''}
@@ -3413,6 +3744,9 @@ ${plansContext ? `${plansContext}\n\n` : ''}
     if (steps.length === 0) {
       steps.push({ id: 'end', label: '结束这次唤醒', outcome: '默没有做出选择，只是安静地待着。' });
     }
+
+    // 情绪系统：唤醒结束，把本次真实活动算进心情快照（活动事件已在执行时记录）
+    await getMoodSnapshot().catch(() => {});
 
     // 7.5 唤醒结束：让默用思考模式写一两句体验
     let summaryText = '';
@@ -3541,6 +3875,11 @@ app.get('/api/home-state', async (req, res) => {
       mo_mood: clampMood(state.mo_mood ?? 60),
       xue_mood: clampMood(state.xue_mood ?? 60),
       affection: state.affection || 0,
+      // 情绪系统字段（未执行 SQL 前为默认值）
+      pa: Number(state.pa) || 0.55,
+      na: Number(state.na) || 0.15,
+      mood_word: state.mood_word || '',
+      mood_reason: state.mood_reason || '',
       virtual_activity: state.virtual_activity || '',
       collection,
       her_status: herStatus,

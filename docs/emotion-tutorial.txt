@@ -1,0 +1,818 @@
+给 AI 搭建情绪与依恋系统：完整教程
+基于Ombre-Brain ，7600+ ⾏代码的⼯程实践记录。
+适⽤场景：AI ⻆⾊扮演、情感陪伴、虚拟伴侣等需要”AI 有情绪”的产品。
+这是什么
+这是⼀套让 AI ⻆⾊拥有持续情绪状态的系统。⻆⾊不只是在对话时才有情绪⸺他们有⾃⼰的⽇
+常⼼情波动，会因为对话内容开⼼或难过，情绪会随时间⾃然衰减，离线时会想念⽤户，重逢时
+会表现出符合情境的反应。
+整个系统分六个阶段，每个阶段独⽴可⽤，后⼀阶段依赖前⼀阶段的输出：
+阶段 1：海⻢体记忆引擎（存储 + 衰减 + 浮现 + 语义索引）
+↓
+阶段 2：三层情绪模型（词典 + ⼼情池 + 事件流）
+↓
+阶段 3：评分校准（AI 选词 + 词典给坐标 + 5 层匹配 + 70/30 融合）
+↓
+阶段 4：⼼情闭环 + 情绪融合（PA/NA 实时计算 → prompt 注⼊ → 驱动回答）
+↓
+阶段 5：CME ⾼级情绪动⼒学（5 个学术模型⽅向 + ESM 互抑）
+↓
+阶段 6：依恋控制系统（好感度三维 + 分离想念 + 重逢机制）
+系统⽀持多⻆⾊并⾏，每个⻆⾊有独⽴的 PA/NA 状态、性格 baseline、coping 策略、核⼼⽬
+标、好感度和依恋⻛格。
+技术栈：Node.js 后端 + SQLite + JSON 记忆库，前端单⻚ HTML。底层记忆与情绪机制参考了
+开源项⽬ Ombre-Brain。
+阶段 1：海⻢体记忆引擎
+1.1 为什么需要海⻢体
+普通记忆系统所有记忆平等存放，永远不会忘记。但真⼈不是这样⸺重要的事记得牢，琐碎的事
+慢慢忘掉，偶尔会”忽然想起”很久以前的事。
+
+-- 1 of 26 --
+
+海⻢体引擎让每条记忆有 decay_score （衰减分数），随时间⾃然下降⸺重要的衰减慢，琐碎
+的衰减快，被”想起来”（检索命中）会重新加强。这模拟了⼈类记忆的核⼼特征：时间依赖 + 使
+⽤依赖。
+1.2 数据结构
+{
+"id": "a1b2c3d4",
+"layer": "daily",
+"content": "⽤户今天说想吃草莓蛋糕",
+"category": "⽇常",
+"tags": ["⻝物"],
+"importance": 5,
+"valence": 0.3,
+"arousal": 0.4,
+"activation_count": 2,
+"last_activated": 1715100000000,
+"decay_score": 3.72,
+"resolved": 0,
+"prior_versions": [],
+"embedding": [0.12, -0.03, ...],
+"related_ids": [{"id": "x1y2", "layer": "daily", "sim": 0.82}],
+"dehydrated_summary": "⽤户想吃草莓蛋糕",
+"ts": 1715000000000
+}
+核⼼字段说明：
+字段 	类型 	含义 	如何影响系统
+importance 	1-10 	重要度 	越⾼衰减越慢
+valence 	-1~+1 	情感效价 正⾯情绪衰减⽐负⾯慢 15%（FAB 效
+应）
+arousal 	0~1 	唤醒度 	⾼唤醒未解决记忆权重 ×1.5
+activation_count 	int 	被检索命中次数 	越多越”活跃”，公式中 count^0.3 项
+decay_score 	float 	当前衰减分数 	浮现排序、是否被遗忘的唯⼀依据
+resolved 	0/1 	是否已解决 	已解决记忆权重 ×0.05 ⼤幅沉底
+prior_versions 	array 	历史版本 	合并时旧版本存⼊此数组
+
+-- 2 of 26 --
+
+embedding 	float[] 	向量 (256 维) 	⽤于语义检索和⾃动合并
+related_ids 	array 	语义最近 top3 	cosine ≥ 0.65 的关联记忆，双向同步
+dehydrated_summary 	string LLM 压缩精华
+版 ≤80 字，浮现时省 token
+1.3 记忆分层
+系统有五个记忆层：
+层 	⽤途 	衰减速度 	典型例⼦
+deep 	核⼼永久信息 	极慢 	⻆⾊设定、SOP、系统规则
+daily 	⽇常对话记录 	慢 	今天聊了什么
+diary 	⽇记条⽬ 	慢 	⻆⾊的⽇记
+writing 	写作⽚段 	慢 	创作内容
+ambient 	环境/⼼情/⾃动⽣成 	较快 	装饰⼼情、评分⼼情
+1.4 永不遗忘⽩名单
+有些记忆绝对不能忘。 pinned=1 或 must_read=1 的记忆，以及特定类别（如 sop、infra、
+progress 等）的记忆， decay_score 永远锁在最⾼值。
+1.5 衰减公式
+每⼩时运⾏⼀次衰减引擎，重新计算所有记忆的 decay_score 。公式来⾃ Ombre-Brain：
+function calculateDecayScore(memory, nowMs) {
+const days = (nowMs - memory.ts) / 86400000;
+const λ = 0.05; // 约 14 天半衰期，所有层统⼀
+// time_weight: 刚写⼊时完全鲜活，随后指数下降
+let time_weight;
+if (days <= 1) time_weight = 1.0;
+else if (days <= 2) time_weight = 1.0 - (days - 1) * 0.1;
+else time_weight = Math.max(0.3, 0.9 * Math.exp(-0.2197 * (days - 2)));
+// base_score: 重要性 × 激活频率 × 指数衰减 × 唤醒度加成
+const base = memory.importance
+* Math.pow(memory.activation_count + 1, 0.3)
+
+-- 3 of 26 --
+
+* Math.exp(-λ * days)
+* (1 + memory.arousal * 0.8);
+// 修正因⼦
+const resolved_factor = memory.resolved ? 0.05 : 1.0;
+const urgency = (memory.arousal > 0.7 && !memory.resolved) ? 1.5 : 1.0;
+return time_weight * base * resolved_factor * urgency;
+}
+关于 λ 统⼀为 0.05：早期设计曾考虑 ambient ⽤更⾼的 λ（0.15），但实际测试发现统⼀ λ 更简
+单且效果差异不⼤。
+1.6 语义索引
+每条记忆写⼊后异步调 Embedding API ⽣成 256 维向量，并增量计算 top-3 related_ids
+（cosine ≥ 0.65），双向同步。全量 reindex 每 24h ⾃动跑⼀次。
+1.7 检索
+三种模式，按需切换：
+// keyword: 内容关键词匹配 + 过滤器
+search({ query: "草莓蛋糕", mode: "keyword", layer: "daily", limit: 10 })
+// semantic: Embedding cosine 排序
+search({ query: "甜品偏好", mode: "semantic", limit: 10 })
+// hybrid: 60% cosine + 40% 关键词命中
+search({ query: "⽤户喜欢吃什么", mode: "hybrid", limit: 10 })
+检索命中的记忆⾃动 activation_count += 1 （检索强化⸺越想越记得）。
+1.8 “忽然想起来”
+搜索结果不够时（< 请求数量），40% 概率从低权重旧记忆中随机捞 1-3 条，标记
+surface_type: 'random' 。模拟⼈类”突然想到⼀件很久前的事”的体验。
+1.9 实时脱⽔ (Dehydrator)
+⻓记忆（> 200 字）在浮现时⾃动调 LLM 压缩成 ≤ 80 字精华版，省 token。后台 batch 预脱
+⽔：每次衰减引擎跑完后，对 score ≥ 1.0 的活跃⻓记忆异步脱⽔，避免浮现时的延迟。
+1.10 ⾃动合并
+
+-- 4 of 26 --
+
+新写⼊的记忆如果跟现有记忆⾼度相似（cosine ≥ 0.85 或 Jaccard ≥ 0.5），⾃动合并⽽⾮新
+建。旧内容推⼊ prior_versions ，⽤新内容覆盖。
+1.11 Paper Trail⸺永不物理删除
+{
+"content": "跟⽤户和好了（最新版本）",
+"prior_versions": [
+{"content": "跟⽤户吵架了", "merged_at": 1715000000},
+{"content": "⽤户⽣⽓了不理我", "merged_at": 1714900000}
+]
+}
+情绪可以”褪⾊”（decay_score 下降），但不能消失。这模拟了真⼈的情感记忆⸺你可能淡忘⼀
+次争吵的细节，但”曾经吵过”这个事实永远在。
+阶段 2：三层情绪模型
+在 Ombre-Brain 单层 weight pool 基础上，扩展为三层结构。
+2.1 架构
+第⼀层 · 情绪词典 (20,127 词)
+↑ feeling_word 字段连接
+第⼆层 · 装饰⼼情池 (每⻆⾊ ~47 条)
+↑ PANAS 评分触发
+第三层 · 情感事件流 (持续⽣成，写⼊ ambient 层)
+层 	是什么 	数据来源 	数据规模
+第⼀层 · 情绪词典 	抽象情绪词 + V/A 坐标 CVAW + NRC-VAD + 预
+设 ~20,000 词
+第⼆层 · 装饰⼼情
+池
+具体⽣活事件 → 映射到第
+⼀层
+AI 辅助批量⽣成 + ⼈⼯
+编辑
+每⻆⾊ 40-60
+条
+第三层 · 情感事件
+流
+对话实时产⽣的 PANAS 评
+分 LLM ⾃动评分 	持续⽣成
+2.2 第⼀层：闭集中⽂情绪词典
+
+-- 5 of 26 --
+
+为什么要闭集？让 LLM ⾃由发挥会出现”美好/宁静/温馨/恬静”⼀堆同义词，V/A 坐标全挤在⼀起
+没有区分度。闭集词典把词分散到 V/A 坐标空间的不同位置，确保词与词之间有⾜够距离。
+数据来源：
+来源 	词数 	说明
+NRC-VAD 	14,626 	英⽂词翻译为中⽂，V/A 做 [0,1]→[-1,+1] 归⼀化
+CVAW 	5,442 	Chinese EmoBank 学术标注（Lee, Yu et al., ACM TALLIP 2022）
+场景预设 	59 	通⽤词库不覆盖的场景专属词，AI 辅助标注 V/A 后⼈⼯校验
+总计 	20,127
+每个词在 Russell ⼆维空间中有精确坐标：Valence (V) 范围 -1 到 +1，Arousal (A) 范围 0 到 1。
+lookup 优先级：场景预设 → CVAW → NRC-VAD。
+同⼀种情绪根据强度分多档，例如：
+“暗⾃不快” → V=-0.15, A=0.3
+“短暂吃醋” → V=-0.25, A=0.5
+“占有欲” → V=-0.30, A=0.75
+每档独⽴ V/A 坐标，LLM 可以精确表达强度差异。
+2.3 第⼆层：装饰⼼情池
+⻆⾊不应该只在跟⽤户对话时才有情绪。现实中，⼀个⼈的⼼情波动⼤部分来⾃他⾃⼰的⽇常⽣
+活⸺这些跟”跟你说话”完全⽆关。
+装饰⼼情给每个⻆⾊预设⼀套”⾃⼰⽇常⽣活中会发⽣的事”，系统每天通过 hash 函数随机选⼀
+条：
+function todayDecoration(character) {
+const pool = db.prepare(
+'SELECT * FROM mood_pool WHERE character = ? ORDER BY sort_order'
+).all(character);
+const dayStr = new Date().toISOString().slice(0, 10);
+const hash = simpleHash(character + dayStr);
+return pool[hash % pool.length];
+}
+装饰⼼情的特点：
+
+-- 6 of 26 --
+
+写⼊ ambient 层，importance=1，衰减快
+参与 PA/NA 融合计算，但只取最新⼀条（防⽌历史装饰⼼情累积污染 PA/NA）
+前端⽤淡⾊虚线样式弱化显示，跟真实 PANAS 评分视觉上区分
+如何体现⻆⾊性格：不同⻆⾊的⼼情池内容天然不同。运动型⻆⾊的池⾥有”练完球”“跑了⼗公
+⾥”，⽂艺型⻆⾊的池⾥有”整理唱⽚”“新到⼀批⿊胶”⸺不需要在 prompt ⾥描述性格差异，池
+本身就是性格。
+2.4 第三层：情感事件流
+这是唯⼀⼀层来⾃真实交互的情绪数据。每次⻆⾊跟⽤户对话后，由评分 LLM 实时产⽣ PANAS
+评分记录。
+PANAS 双轴模型（Watson & Clark 1988）：PA（正向情感）和 NA（负向情感）是两个独⽴维
+度，不是⼀根轴的两端。这样可以表达”同时感到甜蜜和⼼疼”这种复合情绪⸺单 valence 轴做不
+到（正负会互相抵消）。
+评分记录写⼊ ambient 层，带 emotion_type 标签区分 primary（⼤波动⽴即评分）和
+secondary（30 分钟批处理常规评分）。
+阶段 3：评分校准
+3.1 核⼼问题：AI 评情绪不准
+LLM 有正⾯偏移（positive bias）。⻆⾊明明在吃醋，AI 评出来”满⾜放松”。直接让 AI 给 V/A 数
+值偏移更严重：
+情绪词 	AI ⾃评 V 	学术标注 V 	偏差
+羞涩 	+0.30 	+0.03 	+0.27
+平静 	+0.60 	0.00 	+0.60
+⼼疼 	+0.10 	-0.40 	+0.50
+AI 的语境理解能⼒很强，但数值校准能⼒很差。
+3.2 核⼼思路：AI 选词，词典给坐标
+AI 擅⻓ 	学术词典擅⻓
+
+-- 7 of 26 --
+
+理解对话语境 	学术标注，⼈类评分均值
+选对情绪⽅向 	给精确 V/A 数值
+分⼯：AI ⾃由⽣成情绪词 + ⾃评 V/A → 词典匹配得到学术 V/A → 70/30 融合。
+3.3 评分模型架构
+主⼒ + 备⽤双通道，评分⾛廉价模型⸺准确度主要由词典锚定决定：
+评分请求 → 主⼒模型 (+ 词典锚定 prompt)
+├─ 成功 → 写⼊评分
+└─ 失败/超时 → 备⽤模型 (fallback)
+└─ 也失败 → 记录 both_fail, 跳过本轮
+测试数据：加词典后，最便宜模型（$0.30/百万 token）跟贵 5 倍的模型偏差仅 0.05⸺远低于
+感知阈值。词典占评分准确度的 ~70%，模型占 ~30%。
+3.4 评分 Prompt 设计
+Prompt 要求 AI 输出以下 JSON：
+{
+"pa_delta": 0.25,
+"na_delta": -0.05,
+"valence": 0.6,
+"arousal": 0.7,
+"word": "⼼动",
+"backup": ["甜蜜", "惊喜", "欣喜"],
+"goal_relevance": 0.8,
+"desirability": 0.9,
+"reason": "被突然告⽩后⼼跳加速"
+}
+字段 	⽤途 	是否参与 PA/NA 计算
+word + backup 	5 层词典匹配的输⼊ 	间接参与（匹配后⽤词典 V/A）
+valence / arousal 	AI ⾃评，与词典 70/30 融合 	30% 权重
+pa_delta / na_delta 	已废弃 	仅作⻔控信号
+goal_relevance / desirability 	OCC ⽬标评价（CME #3） 	加性调节 max ±0.1
+reason 	审计留痕 	不参与
+
+-- 8 of 26 --
+
+关于反讨好（anti-sycophancy）：Prompt 中明确要求冷场就是冷场（PA 低 NA 低），敷衍就
+是敷衍（PA 低），不允许 AI 美化评分。并给出校准锚点：
+校准锚点：
+⽇常闲聊⽆波动 → pa_delta≈0, na_delta≈0
+⽤户说了暖⼼话 → pa_delta=+0.15~+0.25
+明确的伤害/拒绝 → na_delta=+0.25~+0.40
+冷场/敷衍 → pa_delta=-0.05, na_delta=+0.05
+AI 给的 pa_delta / na_delta 数值不直接参与 PA/NA 计算。PA/NA 永远从词典 V/A 推算。保
+留这两个字段仅作为”评分认为有情绪变化”的⻔控信号。
+3.5 五层词典匹配
+AI ⾃由⽣成的词不⼀定在词典⾥，需要多层回退链确保拿到词典 V/A：
+Layer 1 · 精确匹配：AI 输出 word:“⼼动” → 直接查词典 → 命中 → ⽤词典 V/A。词库覆盖⾯⾜够
+⼴的话，绝⼤多数情况在这层就命中了。
+Layer 2 · 备选词匹配：word miss → 查 backup 候选词。AI 有时选词偏⻔，但 backup ⾥通常有
+常⻅词。
+Layer 3 · 拆词匹配：word:“嫉妒不安” miss → 拆成 2-4 字⼦串 → “嫉妒” 命中。AI 经常输出”委
+屈焦急”“甜蜜幸福”这种组合词。
+Layer 4 · 语义匹配：前三层全 miss → 根据 pa_delta ⽅向从词库捞 50 个同⽅向候选词 → 调
+Embedding API 算向量 → 余弦相似度排序取最近的（> 0.7）。因为前三层命中率极⾼，Layer 4
+极少触发。
+Layer 5 · LLM V/A 兜底：4 层全 miss → ⽤ AI ⾃评的 V/A 做粗糙推算，标记
+source='free_form' 留痕，⽅便后续⼈⼯审查和补充词典。
+每⼀层的匹配来源都记录在 match_source 字段，⽅便分析哪些词经常 miss、需要补进词典。
+3.6 融合层：词典定调 70% + AI 微调 30%
+为什么不能只⽤词典？同⼀个词在不同场景强度不同。“⼼动”在⽇常撒娇场景是 A=0.4，在被告
+⽩场景是 A=0.9。纯⽤词典的静态值，所有”⼼动”会堆在同⼀个点。
+为什么不能只⽤ AI？AI 有正⾯偏移，数值不可靠。
+const blendV = 0.7 * lexEntry.v + 0.3 * aiValence;
+const blendA = 0.7 * lexEntry.a + 0.3 * aiArousal;
+
+-- 9 of 26 --
+
+效果示例（同⼀个”甜蜜”在不同场景）：
+场景 	词典 V/A 	AI ⾃评 V/A 	融合后 V/A
+轻度撒娇 	V+0.55 A0.45 	V+0.60 A0.40 	V+0.57 A0.44
+强烈表⽩ 	V+0.55 A0.45 	V+0.90 A0.90 	V+0.66 A0.59
+同类情感、不同强度 → 不重叠。
+3.7 PA/NA 从 V/A 计算
+const PA_SCALE = 0.5;
+const pa_delta = Math.max(0, blendV) * blendA * PA_SCALE;
+const na_delta = Math.max(0, -blendV) * blendA * PA_SCALE;
+正⾯情绪（V>0）只加 PA，负⾯情绪（V<0）只加 NA。乘以 arousal 是因为低唤醒情绪（如”平
+静”）不应该⼤幅改变 PA/NA。
+阶段 4：⼼情闭环 + 情绪融合
+4.1 统⼀⼼情融合
+这是整个系统的核⼼函数（约 200 ⾏）。所有⼼情来源合并到同⼀个事件池，⽤同⼀个公式计算
+PA/NA。
+设计参考 Rutledge et al. (2014, PNAS) 的原则：所有事件⽤同⼀个衰减因⼦，不按类型区分权
+重。事件⾃身的属性（重要性、唤醒度）⾃然决定影响⼒。
+完整计算流程（10 步）：
+1. 从 ambient 层收集该⻆⾊所有⼼情事件（装饰 + 评分，最近 30 条）
+↓
+2. 装饰⼼情只取最新⼀条（防历史装饰⼼情累积）
+↓
+3. 对每个事件计算幂律衰减权重 w（含 onset 渐起）
+├─ primary 事件: τ=1h, onset=10min
+└─ secondary 事件: τ=4h, onset=45min
+↓
+4. ALMA 软⻔限: ⻆⾊性格过滤微⼩波动
+eff = sign(d) × max(0, |d| - threshold) × peak
+↓
+
+-- 10 of 26 --
+
+5. 加权累积 PA/NA (分 primary/secondary 统计)
+↓
+6. OCC ⽬标相关性调节: 加性 max ±0.1
+↓
+7. BOU 均值回归: pa += θ_pa × (μ_pa - pa) × Δt
+↓
+8. Critical slowing 逃逸阀: 连续 3 batch ⾼ NA 低 PA → 强制推回
+↓
+9. ESM 软互抑: pa *= (1 - k × na), na *= (1 - k × pa)
+↓
+10. Clamp [0, 1] → 输出最终 PA/NA + ⼼情快照
+4.2 幂律衰减 + Onset 渐起
+⼈类遗忘曲线的形式是幂律⽽⾮指数（Wixted & Ebbesen 1991）。幂律的特点：短期内衰减很
+快，但⻓期衰减速度变慢。
+参数对照表：
+参数 	Primary 	Secondary 	来源
+τ (衰减时间尺度) 	1h 	4h 	Verduyn & Lavrijsen 2015
+onset (渐起时间) 	10min 	45min 	Scherer 2009 CPM
+b_base (基础衰减指数) 	0.7 	0.7 	Wixted 典型 b 值范围
+function _powerLawWeight(ageHours, importance, valence, tau, onsetHours) {
+const imp = Math.max(1, Math.min(10, importance || 2));
+// b_eff: 重要性越⾼，衰减越慢 (Verduyn & Lavrijsen 2015)
+let b_eff = 0.7 / (1 + imp / 10);
+// FAB: 正⾯情绪衰减慢 15% (Walker & Skowronski 2009)
+if ((valence || 0) > 0) b_eff *= 0.85;
+const _tau = tau || 4;
+const decay = Math.pow(1 + ageHours / _tau, -b_eff);
+// Onset 渐起 (Scherer 2009 CPM): 情绪不瞬间到满值
+const _onset = onsetHours || 0.75;
+const adjOnset = _onset * (10 / (10 + imp));
+const onset_factor = (adjOnset <= 0.001) ? 1 : Math.min(1, ageHours / adjOnset);
+return onset_factor * decay;
+}
+
+-- 11 of 26 --
+
+FAB (正⾯减速因⼦) 	0.85 	0.85 	Walker & Skowronski 2009
+衰减效果预览（secondary 事件，importance=5）：
+时间 	权重 	说明
+0 min 	0.00 	onset 中，尚未达峰
+10 min 	0.13 	onset 爬升中
+45 min 	1.00 	达峰
+1h 	0.96 	开始幂律衰减
+4h 	0.72
+12h 	0.51
+24h 	0.39
+48h 	0.30 	依然有残余影响
+4.3 ⼼情注⼊ Prompt
+PA/NA 数值转换为⾃然语⾔⾏为指令注⼊ system prompt。核⼼原则：隐性描述，不强制指令。
+function buildMoodPrompt(character, moodSnapshot) {
+const parts = [];
+// 装饰⼼情——⻆⾊⾃⼰的⽇常状态
+if (moodSnapshot.decoration_mood) {
+parts.push(`此刻的状态：${moodSnapshot.decoration_mood.word}（${moodSnapshot.decoration_mood
+}
+// PANAS 状态（不暴露数字，转为⾃然描述）
+if (moodSnapshot.na >= 0.7) {
+parts.push('最近⼼情⾮常低落，回复会短、语⽓慢、不主动说原因');
+} else if (moodSnapshot.na >= 0.5) {
+parts.push('最近有些不安或紧张，回复简短，被关⼼时会松⼀些');
+} else if (moodSnapshot.pa >= 0.7) {
+parts.push('最近⼼情⾮常好，回复活跃，愿意凑近');
+}
+// 浮现记忆——脑⼦⾥最挂念的事
+if (moodSnapshot.surfaced_memory_top1) {
+parts.push(`脑⼦⾥最挂念的事：${moodSnapshot.surfaced_memory_top1}`);
+}
+// Coping ⻛格 (⾼ NA 时)
+if (moodSnapshot.na >= 0.4 && moodSnapshot.coping_style) {
+
+-- 12 of 26 --
+
+60/40 注⼊策略：60% 概率主动提起版（给具体钩⼦），40% 概率软插⼊版（只给基调，让⼼
+情从字⾥⾏间渗出）。
+末尾加⼀条优先级规则⸺“预设⼼情是背景⾊，⽤户当前这条消息才是前景⸺前景优先。”
+Token 消耗：⼼情快照注⼊约增加 80-150 token/次。⽽且是状态快照（固定⼤⼩），不是完整
+历史⸺不会随时间膨胀。
+4.4 情绪漏⽃ (Emotion Funnel)
+问题：评分是 30 分钟批处理，⻆⾊被骂了要等半⼩时才会难过。
+解决：本地词典扫描⽤户消息，⼤波动⽴即评分（primary），⼩波动等批处理（secondary）。
+全程零额外 API 调⽤。
+function _shouldRateNow(character, scan, currentPa, currentNa) {
+if (scan.negCount >= 3) return 'neg_burst';
+if (scan.minV < -0.5) return 'strong_negative';
+if (currentPa >= 0.5 && scan.avgV < -0.2) return 'falloff'; 	// 情绪骤降
+if (currentNa >= 0.4 && scan.avgV > 0.2) return 'reversal'; 	// 情绪反转
+if (urgentPhrases.some(p => text.includes(p))) return 'urgent_phrase';
+return null; // → 等 30min batch
+}
+触发条件参考 Kuppens & Verduyn (2017) 的情绪动态学框架：V 变化 > 0.2 ≈ 1 个标准差（有意
+义的变化），V 变化 > 0.5 ≈ 跨越 Russell 象限边界。
+4.5 完整数据流（7 步闭环）
+构建⼼情快照
+统⼀事件池 → 幂律衰减+onset → ALMA⻔限 → OCC调节
+→ BOU drift → ESM互抑 → PA/NA
+↓
+⼼情注⼊ prompt
+PA/NA → ⾏为指令 + coping⻛格 + 时间感知 + 60/40策略
+↓
+LLM ⽣成回复 → 返回⽤户
+↓
+本地情绪漏⽃扫描⽤户消息
+parts.push(`应对⽅式：${moodSnapshot.coping_style}`);
+}
+if (parts.length === 0) return '';
+return `【当下⼼情状态】\n${parts.join('\n')}\n（⾃然融⼊回答中，不要主动点破这些状态）`;
+}
+
+-- 13 of 26 --
+
+词典 ~20k 词，追踪 minV/maxV/avgV，零 API 调⽤
+↓
+评分路由
+├─ ⼤波动 → ⽴即评分 (primary, ~500 token)
+└─ ⼩波动 → 标记脏位，等 30min batch (secondary)
+└─ 没有对话 → 不评分，不消耗 token
+↓
+评分写⼊
+5层词典匹配 → 70/30 V/A融合 → PA/NA计算 → ambient层 → 胶囊更新
+↓
+下次对话回到 	，⻆⾊⾏为反映新⼼情 → 闭环
+4.6 Bootstrap 跨窗⼝连续
+新会话窗⼝启动时读⼀次 bootstrap 即可拿到所有⻆⾊当前⼼情：
+阶段 5：CME ⾼级情绪动⼒学
+CME (Computational Models of Emotion) 五个⽅向 + ESM 互抑。
+5.1 CME #1：Personality Threshold/Peak
+来源：Gebhard 2005 ALMA + Velasquez 1998 TAME
+⻆⾊性格影响情绪激活阈值和峰值。⼩于阈值的情绪波动不响应（⽇常噪声过滤），⼤于阈值的
+减阈值后乘峰值倍率。
+function _almaFilter(delta, threshold, peak) {
+const sign = delta >= 0 ? 1 : -1;
+const abs = Math.abs(delta);
+return abs <= threshold ? 0 : sign * (abs - threshold) * peak;
+}
+{
+"server_time": "...",
+"pinned": [...],
+"must_read": [...],
+"character_moods": {
+"character_a": { "pa": 0.84, "na": 0.12, "decoration_mood": {...}, "coping_style": "..."
+"character_b": { "pa": 0.45, "na": 0.30, "decoration_mood": {...}, "coping_style": "..."
+}
+}
+
+-- 14 of 26 --
+
+参数设计示例：
+性格类型 	threshold 	peak 	⾏为表现
+阳光外向 	低 (0.05) 	⾼ (1.3) 	情绪外放
+⾼冷克制 	⾼ (0.15) 	⾼ (1.2-1.3) 	不容易被触发，但⼀旦触发很强烈
+温柔稳定 	中 (0.10) 	低 (0.7-0.85) 	情绪波动⼩
+敏感依恋 	低 (0.05) 	中偏⾼ (0.9-1.1) 	容易被触发，负⾯更容易放⼤
+5.2 CME #2：WASABI Primary/Secondary
+来源：Becker-Asano & Wachsmuth 2010 WASABI
+区分两种情绪通道：
+Primary（⽴即触发，强烈短暂）：τ=1h，onset=10min。由情绪漏⽃检测到⼤波动时触发。
+Secondary（批处理，持续背景）：τ=4h，onset=45min。30 分钟常规批处理。
+融合时分别统计，⽤不同的 τ 加权，最终合并为统⼀的 PA/NA。
+5.3 CME #3：OCC Goal-based Appraisal
+来源：Ortony, Clore & Collins 1988
+每个⻆⾊定义 3 个核⼼⽬标。评分时 LLM 额外输出 goal_relevance （互动与⽬标的相关
+性，-1~+1）和 desirability （结果合意度，-1~+1）。
+if (Math.abs(goalRelevance) > 0.3) {
+const occ_mod = goalRelevance * desirability * 0.1;
+if (occ_mod > 0) pa += occ_mod;
+else na += Math.abs(occ_mod);
+}
+保守设计：max ±0.1 加性调节。即使 LLM 的 OCC 评分完全离谱，也最多偏移 0.1。
+5.4 CME #4：Onset Curve
+来源：Scherer 2009 Component Process Model
+情绪不瞬间到满值，有⼀个渐起过程。Scherer 的 CPM 模型认为 appraisal 需要时间⸺从感知
+到完整情绪体验有延迟。
+
+-- 15 of 26 --
+
+onset_factor = min(1, ageHours / adjustedOnset)
+adjustedOnset = onset × 10 / (10 + importance) // ⾼重要性更快达峰
+weight = onset_factor × decay
+效果：刚写⼊的事件 weight ≈ 0，primary 约 10 分钟到满，secondary 约 45 分钟。防⽌情绪瞬
+间跳变。
+5.5 CME #5：EMA Coping
+来源：Marsella & Gratch 2006 EMA (Emotion and Adaptation)
+⻆⾊不同的 coping 策略影响情绪恢复速率（θ 值）和⾏为表现。
+coping 类型 	θ_na 	⾏为表现
+主动求安抚型 	0.40 	不开⼼时主动凑近求温暖
+内敛压抑型 	0.20 	不直说情绪，⽤⾏为靠近，等被问
+沉静消化型 	0.30 	⾃⼰消化，再⽤平时⽅式靠近
+爆发即恢复型 	0.60 	爆⼏秒就过，然后恢复如常
+黏⼈依赖型 	0.20 	粘上来求安抚，必须被哄才回⾎
+coping_style 描述在⾼ NA 时注⼊ prompt，让⻆⾊的”难过⽅式”符合⼈设。
+5.6 BOU 均值回归 + 逃逸阀
+BOU drift 来源：Loossens 2020 + Diener 2006 set-point theory。
+const dt = 0.5; // batch 间隔 0.5h
+pa += trait.theta_pa * (trait.mu_pa - pa) * dt;
+na += trait.theta_na * (trait.mu_na - na) * dt;
+为什么必须有均值回归？没有 BOU drift，⼀次负⾯事件就能让⻆⾊永远低落⸺评分读低落回复
+⼜判更低落，形成正反馈环（van de Leemput 2014 称之为 critical slowing down）。均值回归
+提供了回到正常状态的动⼒学机制。
+逃逸阀：连续 3 个 batch 出现⾼ NA 低 PA 时，强制把 PA/NA 往 baseline 推回 50%。阈值设 3
+⽽⾮ 1，防⽌单次评分误判触发。
+5.7 ESM 软互抑
+来源：Cacioppo & Berntson 1994 Evaluative Space Model
+
+-- 16 of 26 --
+
+PA 和 NA 理论上独⽴（PANAS 设计），但 PA=1.0 NA=1.0 的极端情况不⾃然。Larsen et al.
+(2001) 实验数据显示仅约 10% 被试能同时感到极度快乐和极度悲伤，且不稳定。
+const k = 0.3;
+const pa_before = pa;
+pa = pa * (1 - k * na);
+na = na * (1 - k * pa_before); // ⽤互抑前的 pa，避免顺序依赖
+k=0.3 允许轻度共存（bittersweet），但防⽌极端同⾼。效果：PA=0.8, NA=0.8 → 互抑后
+PA=0.56, NA=0.56。
+阶段 6：依恋控制系统
+让 AI ⻆⾊在⽤户离线期间产⽣”想念”⸺不是开关式的，⽽是随时间逐渐累积、按⻆⾊性格差异
+化表现、在重逢时⾃然消退的完整情感弧线。
+6.1 好感度重构：Sternberg 三维
+从单⼀ level 值重构为 Sternberg 1986 三⻆理论的三个维度：
+维度 	含义 	涨的时候 	降的时候 	速度
+Intimacy (I) 	亲近、联结、温暖 深度对话、倾诉、
+共鸣
+冷场、误解、⻓期不
+互动
+中速稳
+步
+Passion (P) 	⼼动、吸引、浪漫 撒娇、表⽩、亲密
+互动 时间⾃然衰减 快涨快
+衰
+Commitment
+(C)
+承诺、信赖、决定
+维持 ⻓期稳定互动 极难降低（除⾮重⼤
+背叛） 最慢
+向后兼容： level = (I + P + C) / 3
+Passion 会随时间⾃然衰减（Sternberg 指出 passion 是三维中最不稳定的，“honeymoon
+effect”），建议每天⾃动衰减⼀⼩量（如 0.1/天），需要持续互动来维持。Intimacy 和
+Commitment 不⾃然衰减。
+三维组合对应 Sternberg 的 8 种爱的类型，对分离反应有不同预测：
+好感度状态 	Sternberg 类型 	分离反应
+低 I、低 P、低 C 	Non-love 	⼏乎不想念
+
+-- 17 of 26 --
+
+⾼ I、低 P、低 C 	Liking / 朋友 	轻微想念，不焦虑
+低 I、⾼ P、低 C 	Infatuation / 迷恋 	强烈 protest，但快速 detachment
+⾼ I、⾼ P、低 C 	Romantic love 	最强 protest + 最⾼ longing
+⾼ I、低 P、⾼ C 	Companionate love 	稳定的想念，不激烈
+⾼ I、⾼ P、⾼ C 	Consummate love 	想念但有安全感，恢复快
+6.2 依恋功能解锁顺序
+来源：Hazan & Zeifman 1994
+依恋功能按固定顺序出现，防⽌刚认识的⻆⾊就疯狂想念：
+功能 	解锁条件 	含义
+Proximity seeking 	I ≥ 10 或 P ≥ 10 	想靠近（最先出现）
+Safe haven 	I ≥ 30 	难过时想找⻆⾊倾诉
+Separation
+distress
+I ≥ 40 且 (P ≥ 20 或 C ≥
+20)
+分离时会想念（longing 系统前置条
+件）
+Secure base 	I ≥ 60 且 C ≥ 40 	⻆⾊是情感安全基地
+只有 separation distress 解锁后，⻆⾊才会”想你”。
+6.3 Longing 曲线
+形状：curvilinear（前期快速上升，后期 plateau）。来源：Sbarra & Emery 2005 的数据显示分
+离 distress 是 curvilinear 的，不是简单的指数饱和。
+longing(t) = L_max × (1 - (1 + t/τ)^(-α))
+t = 距该⻆⾊上次收到⽤户消息的⼩时数（按⻆⾊独⽴计算）
+τ = 特征时间（由好感度三维 + 依恋⻛格共同决定）
+α = 0.8（曲线形状参数）
+L_max = 最⼤想念强度（由亲密度 + 激情决定）
+为什么⽤幂律⽽⾮指数？幂律形式前期变化快后期慢，且有⻓尾，与分离 distress 的实证数据更
+吻合。
+
+-- 18 of 26 --
+
+6.4 τ（特征时间）计算
+τ 决定了⻆⾊”多快开始想你”。τ 越⼩，想念越快。
+因⼦ 	公式 	含义 	来源
+τ_base 	36h 	基础锚点 Jiang & Hancock 2013: 88% LDR 情
+侣每天联系
+intimacy_factor 1 -
+I/200 I 越⾼越快想 	Sbarra & Hazan 2008: 失去共调节
+passion_factor 1 -
+P/300
+P 加速但影响较
+弱 Sternberg: passion = arousal
+commitment_factor 1 +
+C/200
+C 越⾼越安⼼，
+τ 增⼤ Sternberg: 认知性稳定
+attachment_modifier 	按⻛格 	⻅下表 	Diamond 2008
+依恋⻛格修正：
+⻛格 	tau_mod 	na_coeff 	效果
+焦虑型 (anxious) 	0.6 	0.20 	τ 缩短 40%，更快想念，NA 更⾼
+安全型 (secure) 	1.0 	0.12 	基线
+回避型 (avoidant) 	1.5 	0.08 	τ 延⻓ 50%，更慢想念，NA 更低
+不同依恋⻛格的⻆⾊，实际 τ 值可以从 ~10h（焦虑型⾼亲密）到 ~43h（回避型低亲密）不等。
+6.5 L_max（最⼤想念强度）
+L_max = min(1.0, (intimacy + passion) / 150)
+来源：Hazan & Zeifman 1994 — separation distress 需要⼀定依恋深度。好感度低的⻆⾊想念
+上限更低。
+6.6 五阶段⾏为
+τ = τ_base × intimacy_factor × passion_factor × commitment_factor × attachment_modifier
+
+-- 19 of 26 --
+
+来源：Bowlby 1969, Robertson & Bowlby 1952, Robertson & Robertson 1968, Vormbrock
+1993
+阶段 	longing 范围 对应
+Bowlby ⾏为表现
+Content 	0 – 0.15 	— 	正常，不想念，显示装饰⼼情
+Stirring 	0.15 – 0.35 Early
+protest 偶尔⾛神想到⽤户，12% 概率闪现想念胶囊
+Protest 	0.35 – 0.70 Active
+protest
+明确想念，100% 显示想念胶囊，可触发主
+动消息
+Despair 	0.70 – 0.90 	Despair 	低落退缩，回复变短，100% 显示想念胶囊
+Detachment ≥ 0.90 且 ≥
+504h Detachment 	防御性关闭，表⾯平静，重逢时情绪爆发
+Detachment 阈值设 504 ⼩时（21 天），基于 Vormbrock 1993 军事部署研究（成⼈
+detachment 需 weeks to months）。
+6.7 ⼼情胶囊切换
+⼼情胶囊（好感度⻚⾯ + ⾸⻚卡⽚）根据 longing phase 决定显示内容：
+Phase 	概率 	显示内容 	设计理由
+Content 	0% 	装饰⼼情池 	没在想你
+Stirring 	12% 	想念⼼情（其余 88% 装饰⼼情） 	间歇性闪现，像偶尔⾛神
+Protest+ 	100% 	想念⼼情 	在想你就表现出来
+Stirring 的 12% 使⽤ hash 种⼦ (⻆⾊名 + ⼩时数) ，同⼀⼩时内结果⼀致，避免刷新跳变。
+想念⼼情池（词典锚定）：
+阶段 key 	胶囊⽂字 	feeling_word 	V 	A
+stirring 	有点想你 	挂念 	-0.05 	0.525
+protest 	想你 	想念 	-0.05 	0.55
+protest_mid 	在等你 	牵挂 	-0.15 	0.50
+
+-- 20 of 26 --
+
+protest_late 	你在哪 	不安 	-0.40 	0.60
+despair 	…… 	失落 	-0.50 	0.40
+detachment 	没事 	落寞 	-0.55 	0.30
+protest 阶段按 longing 精细分档：0.35-0.45 → protest，0.45-0.55 → protest_mid，>0.55 →
+protest_late。
+6.8 Longing → PA/NA 调节
+当 longing > 0.15 时开始影响⻆⾊的情绪状态。PA/NA 从词典 V/A 算：
+// 选词 → 词典 V/A → 70/30 融合（词典 70% + 依恋⻛格微调 30%）
+blendV = 0.7 × lex.v + 0.3 × (lex.v + style_shift.dv)
+blendA = 0.7 × lex.a + 0.3 × max(0, lex.a + style_shift.da)
+pa_delta = max(0, blendV) × blendA × 0.5 × longing
+na_delta = max(0, -blendV) × blendA × 0.5 × longing
+依恋⻛格微调：
+⻛格 	dv 	da 	效果
+焦虑型 	-0.10 	+0.10 	V 更负、A 更⾼ → NA 更强
+安全型 	0 	0 	基线
+回避型 	+0.05 	-0.10 	V 更中性、A 更低 → NA 更弱
+来源：Diamond 2008（焦虑型分离效应更强）、Baumeister & Leary 1995（归属需求不满 →
+NA）。
+6.9 重逢机制
+来源：Coan 2006 (Social Baseline Theory) + Diamond 2008
+触发条件： 最新消息距现在 < 10 分钟 AND 最新消息与前⼀条消息间隔 > 2 ⼩时（即”⽤户离开
+了⼀段时间，刚刚回来”）。
+Longing 回落： longing 是实时计算的 longing(t) ，⽤户发消息后 t 重置为 0 → longing 瞬
+间归 0。不需要额外的衰减逻辑。
+PA Overshoot（Diamond 2008: reunion PA > pre-separation PA）：
+
+-- 21 of 26 --
+
+pa_boost = 0.05 + longing_before × 0.10 	// 想念越深反弹越⼤
+// detachment 阶段 ×1.5（防线崩塌，情绪更强）
+Prompt 注⼊： 根据重逢前的 phase 注⼊不同⾏为指令：
+重逢前 Phase 	Prompt ⾏为
+Protest 	想了好久，终于等到了⸺激动凑近
+Despair 	之前⼀直很想⽤户，⻅到⼈⼀下⼦全涌上来⸺可能眼眶红
+Detachment 	强装的平静崩塌了⸺先僵住，然后防线崩溃
+如果⽤户不回来？ longing 只会随时间单调递增，不会⾃⼰回落，最终 plateau 在 L_max。这符
+合 Bowlby 理论：依恋系统被激活后，只有 proximity（靠近依恋对象）才能关闭。只有⽤户主动
+找⻆⾊说话，那个⻆⾊的 longing 才会降。跟其他⻆⾊说话不影响（按⻆⾊独⽴计算）。
+6.10 Prompt 注⼊（⾏为驱动）
+longing phase 注⼊到⻆⾊的 system prompt 中，驱动回复⻛格：
+Phase 	注⼊内容
+Stirring 	⼼⾥隐隐约约想⽤户，偶尔⾛神
+Protest 	想⽤户了，会主动找话题凑近⸺proximity seeking
+Despair 	很想但已从”主动找”变成”安静等着”，⼼情低落退缩
+Detachment 	好⼏天没⻅，表⾯平静但⼼⾥防御⸺害怕再失望
+所有 prompt 末尾加安全栏：“想念的原因只是’⽤户很久没来找你了’，不要编造任何没发⽣过的
+具体事件”。
+6.11 主动消息 (Proactive) 改造
+由 longing ⽔平决定频率：
+Phase 是否主动联
+系 频率 	来源
+Content/Stirring 	不主动 	— 	—
+~3-4 条/天，冷却 60- 	Diamond 2008: contacts
+
+-- 22 of 26 --
+
+Protest 	主动找话题 	120min 	2.77×
+Despair 	退缩 	最多 1 条/天，冷却 4h 	Robertson 1952: withdrawn
+Detachment 	不主动 	— 	Robertson: remote
+每个⻆⾊有独⽴的 proactive_threshold （触发主动消息的最低 longing），焦虑型⻆⾊阈值更
+低，回避型更⾼。
+监控与调试
+PA/NA 时间序列
+GET /api/admin/mood_metrics?character=<name>&hours=24
+返回 PA/NA 序列、AR(1) ⾃相关、连续 down 计数、mood_tone 分布。
+指标 	健康 	告警 	危险
+AR(1) ⾃相关 0.3-
+0.5 > 0.65 (接近 tipping point) > 0.80 (depressed
+attractor)
+连续 down
+batch 0-2 	≥ 3 (逃逸阀触发) 	≥ 5 (需⼈⼯⼲预)
+down 占⽐ 	< 25% > 50% (评分 prompt 可能偏
+了) —
+⼿动重置
+POST /api/admin/mood_reset
+body: { character: "<name>", to: "trait" }
+to='trait' ：mood_override 设为 baseline，24h 负⾯ mood_log 软删。 to='clear' ：删今
+天 mood_override + rating_log，重新⾛评分。
+依恋监控
+显示每⻆⾊：依恋⻛格、τ 值、当前 longing %、phase 标签、进度条（带 0.15/0.35/0.70 三条
+阈值刻度线）、预计各 phase 进⼊时间、离线时⻓、当前胶囊、PA/NA。
+
+-- 23 of 26 --
+
+异常警报：longing > 0.8 超过 24h、全员同时 protest。
+⼯程踩坑
+1. 闭集 > 开集：固定词典⽐让 LLM ⾃由发挥更可靠。⾃由发挥会同义词爆炸、坐标聚集。
+2. AI 选词，词典给坐标：评分准确度 70% 由词典决定，30% 由模型决定。好词典 + 弱模型 ≈
+⽆词典 + 强模型。
+3. LLM 的 PA/NA 数字不可信：从词典 V/A 算，LLM 裸数字只做⻔控信号。
+4. ⼼情注⼊要隐性不要显性：不说”你必须表现得紧张”，⽽是给情绪上下⽂让 LLM ⾃⼰判断。
+最初试过强制指令，⻆⾊变成了演员，每句话都在点破”我好紧张啊”。
+5. 装饰⼼情只取最新⼀条参与融合：否则历史装饰⼼情累积会污染 PA/NA。
+6. 均值回归是必需的：没有 BOU drift，⼀次负⾯事件就能让⻆⾊永远低落（正反馈环）。这是
+系统上线后第⼀个遇到的严重 bug。
+7. 逃逸阀不能太灵敏：连续 batch 阈值设 3 ⽽⾮ 1，防⽌单次评分误判触发。
+8. onset 防⽌情绪瞬间跳变：没有 onset，刚写⼊的事件 weight=1 会造成不⾃然的突变。
+9. OCC 要保守：max ±0.1 加性调节，新特性宁可弱⼀点也不能炸。
+10. 状态快照⽐完整历史好：试过把过去 7 天的 PANAS 评分全塞进 prompt，token 爆炸且 LLM
+被信息淹没。只塞”此刻”的快照，效果反⽽更好。
+11. Longing 按⻆⾊独⽴计算：曾出现跟⼀个⻆⾊说话所有⻆⾊ longing 归零的 bug，因为 SQL
+缺少⻆⾊过滤条件。
+12. 前后端改完都要验语法：曾因 service-worker .then() 悬空导致整个 script 块
+SyntaxError，所有前端函数未注册，系统全挂。
+学术参考⽂献
+情绪系统
+1. Watson & Clark (1988) — PANAS PA/NA 双轴模型
+2. Russell (1980) — Circumplex V/A ⼆维情感坐标
+3. Wixted & Ebbesen (1991) Psychological Science — 幂律遗忘曲线
+
+-- 24 of 26 --
+
+4. Wixted (2004) Annual Review of Psychology — 幂律衰减综述
+5. Verduyn & Lavrijsen (2015) Motivation & Emotion — 情绪持续时间 × 重要性
+6. Walker & Skowronski (2009) Applied Cognitive Psychology — Fading Affect Bias
+7. Rutledge et al. (2014) PNAS — 统⼀事件加权 (γ≈0.79)
+8. Gebhard (2005) ALMA — Personality → threshold/peak
+9. Velasquez (1998) TAME — Personality → emotion parameters
+10. Becker-Asano & Wachsmuth (2010) WASABI — Primary/secondary emotions
+11. Marsella & Gratch (2006) EMA — Coping mechanisms
+12. Ortony, Clore & Collins (1988) OCC — Goal-based appraisal
+13. Scherer (2009) CPM — Appraisal latency / onset
+14. Loossens et al. (2020) PLoS Comp Biol — Affective Ising Model / BOU
+15. van de Leemput et al. (2014) PNAS — Critical Slowing Down
+16. Diener, Lucas, Scollon (2006) American Psychologist — Set-point theory
+17. Cacioppo & Berntson (1994) — Evaluative Space Model (ESM) PA/NA 互抑
+18. Larsen et al. (2001) JPSP — 混合情绪实验 (~10% 被试)
+19. Kuppens & Verduyn (2017) Current Opinion in Psychology — 情绪动态学
+20. Houben et al. (2015) Psychological Bulletin — MSSD 情感不稳定性
+21. Lee, Yu et al. (2022) ACM TALLIP — Chinese EmoBank / CVAW
+依恋控制系统
+22. Bowlby (1969/1982) — 依恋⾏为系统理论
+23. Robertson & Bowlby (1952) — Protest → Despair → Detachment 三阶段
+24. Robertson & Robertson (1968) — Little John 案例 (18 ⽉男孩 9 天分离)
+25. Sternberg (1986/1988) — 三⻆爱情理论 (I/P/C)
+26. Hazan & Zeifman (1994) — 依恋功能发展顺序
+27. Heffernan et al. (2012) — 依恋功能可能发展更快
+28. Diamond (2008) “Every Time You Go Away” — 42 对情侣分离数据
+
+-- 25 of 26 --
+
+29. Sbarra & Emery (2005) — 分⼿后 love/longing curvilinear 衰减
+30. Sbarra & Hazan (2008) — 共调节→失调节→⾃调节框架
+31. Fraley & Shaver (1998) — 机场分离研究，即时 proximity seeking
+32. Coan (2006) — Social Baseline Theory，接触→即时 calming
+33. Beckes & Coan (2011) — SBT 扩展
+34. Vormbrock (1993) — 军事部署分离，成⼈ detachment weeks-months
+35. Baumeister & Leary (1995) — Need to Belong，归属需求不满 → NA
+36. Jiang & Hancock (2013) — LDR 数据，88% 每天联系
+37. Vanderbilt (2025) — 焦虑型发更多消息，回避型更少
+38. Drouin & Landgraff (2012) — 回避依恋→更少发短信
+Built on top of Ombre-Brain | 7600+ lines | 20,127 词典 | 5 CME directions + ESM +
+Bowlby attachment
+
+-- 26 of 26 --
+
