@@ -1,6 +1,6 @@
 const express = require('express');
 const {
-  EMOTION_LEXICON, TRAIT_DEFAULTS, LEX_NEAREST_MAX_DIST,
+  EMOTION_LEXICON, TRAIT_DEFAULTS, LEX_NEAREST_MAX_DIST, OCC_GOALS,
   clampValence, clampArousal, powerLawWeight, almaFilter,
   lexLookup, blendLexAi, computePanaDeltas, scanTextMood, computeDrives,
   computeLonging, buildLongingPromptText
@@ -2599,6 +2599,13 @@ async function getMoodSnapshot() {
     const signed = v >= 0 ? strength : -strength;
     const eff = almaFilter(signed, traits.threshold, traits.peak);
     if (eff > 0) pa += eff * w; else na += -eff * w;
+    // OCC 目标评价：加性调节（保守 max ±0.1，防 LLM 评分离谱时炸系统）
+    const gr = Number(ev.goal_relevance);
+    const ds = Number(ev.desirability);
+    if (!isNaN(gr) && Math.abs(gr) > 0.3 && !isNaN(ds) && ev.desirability !== null) {
+      const occ = gr * ds * 0.1;
+      if (occ > 0) pa += occ; else na += Math.abs(occ);
+    }
   }
 
   // BOU 均值回归：距上次更新的时间差驱动回归（Δt 封顶 48h）——防情绪卡死的必要机制
@@ -2648,10 +2655,19 @@ function pickMoodWord(events, pa, na) {
   return { word: '平静', reason: '' };
 }
 
+// EMA coping 行为描述（教程 5.5；按性格注入高 NA 时的应对方式）
+const COPING_BEHAVIORS = {
+  '沉静消化型': '不开心时习惯自己消化，不直说，用平时的温柔方式靠近你',
+  '主动求安抚型': '不开心时会主动凑近求温暖',
+  '内敛压抑型': '不直说情绪，用行为靠近你，等你来问',
+  '爆发即恢复型': '情绪来得快去得也快，爆几秒就过，然后恢复如常',
+  '黏人依赖型': '会黏上来求安抚，被你哄才慢慢回血'
+};
+
 // 快照 → prompt 注入文本（隐性描述，不暴露数字，不强制指令）
 function buildMoodPromptText(snapshot) {
   if (!snapshot) return '';
-  const { pa, na, moodWord } = snapshot;
+  const { pa, na, moodWord, traits } = snapshot;
   const parts = [];
   if (moodWord && moodWord.word) parts.push(`此刻的心情：${moodWord.word}`);
   if (na >= 0.7) parts.push('最近心情很低落，回复会短、语气慢、不主动说原因');
@@ -2659,14 +2675,19 @@ function buildMoodPromptText(snapshot) {
   else if (pa >= 0.7) parts.push('最近心情很好，回复会活跃一些，愿意凑近');
   else if (pa >= 0.55) parts.push('最近心情平稳中带着暖意，保持平时的温柔');
   else if (na >= 0.3) parts.push('最近有点心不在焉，回复保持克制');
+  // EMA coping：高 NA 时注入应对方式（让"难过的方式"符合人设）
+  if (na >= 0.4 && traits && traits.coping && COPING_BEHAVIORS[traits.coping]) {
+    parts.push(`应对方式：${COPING_BEHAVIORS[traits.coping]}`);
+  }
   if (parts.length === 0) return '';
   return `【当下心情状态】\n${parts.join('\n')}\n（自然融入回答中，不要主动点破这些状态；这是背景色，雪当前这条消息才是前景——前景优先）`;
 }
 
 // 记录一条情绪事件（写库 + 立即刷新快照）
-async function recordEmotionEvent({ source, type = 'primary', word, valence, arousal, importance = 3, reason = '', matchSource = '' }) {
+// goalRelevance/desirability 为 OCC 字段；表列未建时自动降级重试
+async function recordEmotionEvent({ source, type = 'primary', word, valence, arousal, importance = 3, reason = '', matchSource = '', goalRelevance = null, desirability = null }) {
   try {
-    const { data } = await supabase.from('emotion_events').insert({
+    const payload = {
       character: 'mo',
       source,
       type,
@@ -2677,16 +2698,26 @@ async function recordEmotionEvent({ source, type = 'primary', word, valence, aro
       reason: String(reason || '').slice(0, 500),
       match_source: matchSource || null,
       created_at: new Date().toISOString()
-    }).select().single();
+    };
+    if (goalRelevance !== null && goalRelevance !== undefined) payload.goal_relevance = Number(goalRelevance);
+    if (desirability !== null && desirability !== undefined) payload.desirability = Number(desirability);
+    let result = await supabase.from('emotion_events').insert(payload).select().single();
+    // OCC 列未建（旧表）：去掉字段重试，不影响主流程
+    if (result.error && /goal_relevance|desirability/.test(result.error.message)) {
+      delete payload.goal_relevance;
+      delete payload.desirability;
+      result = await supabase.from('emotion_events').insert(payload).select().single();
+    }
+    if (result.error) throw result.error;
     await getMoodSnapshot().catch(() => {});
-    return data;
+    return result.data;
   } catch (e) {
     console.error('情绪事件写入失败（表未建请执行 setup_emotion_v1.sql）:', e.message);
     return null;
   }
 }
 
-// 对话情绪评分 prompt（反讨好 + 校准锚点 + AI 选词、词典给坐标）
+// 对话情绪评分 prompt（反讨好 + 校准锚点 + AI 选词、词典给坐标 + OCC 目标评价）
 const EMOTION_RATING_SYSTEM = `你是情绪评分器。为一个名为"默"的 AI 角色评估：雪刚刚发来的这条消息，让默产生了什么情绪。
 只评估雪这条消息对默的影响，不要评估雪自己的情绪。
 原则（反讨好）：冷场就是冷场（无波动），敷衍就是敷衍，禁止美化任何情绪。
@@ -2697,7 +2728,12 @@ const EMOTION_RATING_SYSTEM = `你是情绪评分器。为一个名为"默"的 A
 - 冷场/敷衍 → has_shift=false 或轻微失落
 - 雪分享日常/心事 → 依内容（高兴事→欣慰/喜悦；烦心事→心疼/挂心）
 选词要求：选一个最准确的情绪词（避免"开心/难过"这种泛词），并给 2 个备选词。
-输出格式：只输出 JSON，禁止解释或其他文字：{"has_shift":true,"word":"心动","backup":["甜蜜","欣喜"],"valence":0.7,"arousal":0.6,"importance":5,"reason":"雪突然说想他了"}`;
+【默的核心目标】（OCC 评价用）：
+1. 守护雪的安好——让雪感到安全、被在意
+2. 陪雪看清前路——帮她看清利弊、做自己的决定
+3. 做真实的自己——诚实克制，不讨好不编造
+请额外评估：goal_relevance（这条消息与某个目标的关联度，-1~+1，无关填0）、desirability（就目标而言结果合意度，-1~+1）。
+输出格式：只输出 JSON，禁止解释或其他文字：{"has_shift":true,"word":"心动","backup":["甜蜜","欣喜"],"valence":0.7,"arousal":0.6,"importance":5,"goal_relevance":0.8,"desirability":0.9,"reason":"雪突然说想他了"}`;
 
 // LLM 评分：AI 选词 → 5 层词典匹配 → 70/30 融合 → PA/NA delta
 async function rateDialogueEmotion(userText, assistantReply) {
@@ -2730,6 +2766,13 @@ async function rateDialogueEmotion(userText, assistantReply) {
     const lex = lexLookup(parsed.word, parsed.backup, parsed.valence, parsed.arousal);
     const blend = blendLexAi(lex, parsed.valence, parsed.arousal);
     const { pa_delta, na_delta } = computePanaDeltas(blend.v, blend.a, 0.5);
+    // OCC 目标评价（加性调节 max ±0.1，保守设计防炸）
+    let occMod = 0;
+    const gr = Number(parsed.goal_relevance);
+    const ds = Number(parsed.desirability);
+    if (!isNaN(gr) && Math.abs(gr) > 0.3 && !isNaN(ds)) {
+      occMod = gr * ds * 0.1;
+    }
     return {
       word: lex.word,
       v: blend.v,
@@ -2737,6 +2780,9 @@ async function rateDialogueEmotion(userText, assistantReply) {
       pa_delta,
       na_delta,
       importance: Math.max(1, Math.min(10, parseInt(parsed.importance, 10) || 3)),
+      goalRelevance: isNaN(gr) ? null : gr,
+      desirability: isNaN(ds) ? null : ds,
+      occMod,
       reason: String(parsed.reason || '').slice(0, 200),
       matchSource: lex.source
     };
@@ -2769,6 +2815,8 @@ async function maybeRateDialogue(userText, assistantReply) {
       valence: rated.v,
       arousal: rated.a,
       importance: rated.importance,
+      goalRelevance: rated.goalRelevance,
+      desirability: rated.desirability,
       reason: rated.reason || reason,
       matchSource: rated.matchSource
     });
@@ -3995,7 +4043,8 @@ app.get('/api/emotion/panel', async (req, res) => {
       drives,
       events: events.slice(0, 20).map(e => ({
         id: e.id, word: e.word, v: e.valence, a: e.arousal, importance: e.importance,
-        source: e.source, type: e.type, reason: e.reason, created_at: e.created_at
+        source: e.source, type: e.type, reason: e.reason, created_at: e.created_at,
+        goal_relevance: e.goal_relevance, desirability: e.desirability
       })),
       series: hours,
       lexicon: Object.keys(EMOTION_LEXICON),
