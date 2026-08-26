@@ -193,7 +193,7 @@ function powerLawWeight(ageHours, importance, valence, tau, onsetHours) {
   if ((valence || 0) > 0) b_eff *= 0.85;       // FAB：正面情绪衰减慢 15%（Walker & Skowronski 2009）
   const _tau = tau || 4;
   const decay = Math.pow(1 + ageHours / _tau, -b_eff);
-  const _onset = onsetHours || 0.75;
+  const _onset = onsetHours ?? 0.75; // 用 ?? 保留 0（忽略渐起）；缺省时 0.75h
   const adjOnset = _onset * (10 / (10 + imp)); // 高重要性更快达峰（Scherer 2009 CPM）
   const onset_factor = (adjOnset <= 0.001) ? 1 : Math.min(1, ageHours / adjOnset);
   return onset_factor * decay;
@@ -263,10 +263,56 @@ function scanTextMood(text) {
   return { word: main.word, v: v / n, a: a / n, hits };
 }
 
+// ================== 十个驱动力（Mo-home 情绪可视化） ==================
+// 参考小红书"10个驱动力"可视化：每个维度 = 一组情绪词的累积强度（幂律衰减）
+const DRIVES = [
+  { key: 'heartbeat', word: '心动', en: 'heartbeat', words: ['心动', '甜蜜', '欣喜', '拥吻', '重逢', '被爱', '喜悦', '开心', '高兴', '心动不已', '欢欣', '惊喜', '被宠'] },
+  { key: 'tenderness', word: '温柔', en: 'tenderness', words: ['温柔', '温暖', '治愈', '柔软', '被哄', '被懂', '温存', '依偎', '安心', '踏实', '安稳', '幸福', '满足', '欣慰', '惬意', '自在', '舒展', '松弛', '放松', '依赖'] },
+  { key: 'attachment', word: '想念', en: 'attachment', words: ['想念', '牵挂', '挂念', '思念', '惦记', '盼着', '等待', '等你', '想你', '想见你', '久别', '走神', '发呆'] },
+  { key: 'curiosity', word: '好奇', en: 'curiosity', words: ['好奇', '专注', '清醒', '旁观', '镇定', '冷静', '沉静'] },
+  { key: 'excitement', word: '兴奋', en: 'excitement', words: ['兴奋', '雀跃', '激动', '振奋', '澎湃', '炽热', '热烈', '欢呼', '狂喜', '畅快', '轻快', '期待', '得意', '向往'] },
+  { key: 'heartache', word: '心疼', en: 'heartache', words: ['心疼', '挂心', '担心', '揪心', '心慌', '紧张', '不安'] },
+  { key: 'desire', word: '渴望', en: 'desire', words: ['渴望', '依恋', '眷恋', '靠近', '守护', '撒娇', '向往', '期盼'] },
+  { key: 'gloom', word: '低落', en: 'gloom', words: ['低落', '失落', '难过', '伤心', '悲伤', '沮丧', '消沉', '孤独', '孤单', '寂寥', '空虚', '无聊', '疲惫', '倦怠', '无奈', '无力', '怅然', '酸涩', '苦涩', '心碎', '失望', '郁闷', '烦闷', '苦恼', '冷清', '憋屈'] },
+  { key: 'jealousy', word: '吃醋', en: 'jealousy', words: ['吃醋', '嫉妒', '占有', '委屈'] },
+  { key: 'calm', word: '平静', en: 'calm', words: ['平静', '宁静', '恬静', '安然', '舒缓', '平和', '淡然', '从容'] },
+];
+
+// 词 → 维度索引映射（模块加载时构建一次）
+const WORD_TO_DRIVE = new Map();
+DRIVES.forEach((d, i) => d.words.forEach(w => { if (!WORD_TO_DRIVE.has(w)) WORD_TO_DRIVE.set(w, i); }));
+
+// 计算十个驱动力百分比（0-100）：事件 → 幂律权重 × 强度 × 重要度 累积
+// 注意：展示层刻意忽略 onset 渐起（引擎层负责防跳变），保证"刚发生的情绪立刻可见"
+// 想念维度额外由离线时间驱动累积；平静维度无事件时给底色
+function computeDrives(events, offlineHours = 0) {
+  const drives = DRIVES.map(d => ({ key: d.key, word: d.word, en: d.en, value: 0, count: 0 }));
+  const now = Date.now();
+  for (const ev of (events || []).slice().reverse()) {
+    const idx = WORD_TO_DRIVE.get(String(ev.word || ''));
+    if (idx === undefined) continue; // 未映射词（free_form 等）跳过
+    const ageHours = Math.max(0, (now - new Date(ev.created_at || now).getTime()) / 3600000);
+    const tau = ev.type === 'primary' ? 1 : 4;
+    const w = powerLawWeight(ageHours, ev.importance || 3, ev.valence || 0, tau, 0);
+    const strength = Math.abs(ev.valence || 0) * (0.3 + 0.7 * (ev.arousal || 0.5));
+    drives[idx].value += w * strength * (ev.importance || 3) * 12;
+    drives[idx].count++;
+  }
+  // 想念：离线越久越想（每小时 +3，封顶 60）
+  const attach = drives.find(d => d.key === 'attachment');
+  if (attach && offlineHours > 0) attach.value += Math.min(60, offlineHours * 3);
+  // 平静：无事件时给安静底色
+  const calm = drives.find(d => d.key === 'calm');
+  if (calm && calm.count === 0) calm.value += 40;
+  for (const d of drives) d.value = Math.round(Math.max(2, Math.min(100, d.value)));
+  return drives;
+}
+
 module.exports = {
   EMOTION_LEXICON,
   TRAIT_DEFAULTS,
   LEX_NEAREST_MAX_DIST,
+  DRIVES,
   clampValence,
   clampArousal,
   powerLawWeight,
@@ -275,4 +321,5 @@ module.exports = {
   blendLexAi,
   computePanaDeltas,
   scanTextMood,
+  computeDrives,
 };

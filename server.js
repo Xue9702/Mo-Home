@@ -2,7 +2,7 @@ const express = require('express');
 const {
   EMOTION_LEXICON, TRAIT_DEFAULTS, LEX_NEAREST_MAX_DIST,
   clampValence, clampArousal, powerLawWeight, almaFilter,
-  lexLookup, blendLexAi, computePanaDeltas, scanTextMood
+  lexLookup, blendLexAi, computePanaDeltas, scanTextMood, computeDrives
 } = require('./emotion-lexicon');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
@@ -3871,6 +3871,17 @@ app.get('/api/home-state', async (req, res) => {
     }
     const todayLogs = await getTodayActionLog(getDateStr(timeInfo.now));
     const collection = await getCollectionState();
+    // 情绪系统：十个驱动力（事件累积 + 离线想念）
+    let drives = null;
+    try {
+      const events = await getRecentEmotionEvents(30);
+      const offlineHours = lastActivity
+        ? Math.max(0, (timeInfo.now.getTime() - new Date(lastActivity).getTime()) / 3600000)
+        : 0;
+      drives = computeDrives(events, offlineHours);
+    } catch (e) {
+      console.error('驱动力计算失败:', e.message);
+    }
     res.json({
       mo_mood: clampMood(state.mo_mood ?? 60),
       xue_mood: clampMood(state.xue_mood ?? 60),
@@ -3880,6 +3891,7 @@ app.get('/api/home-state', async (req, res) => {
       na: Number(state.na) || 0.15,
       mood_word: state.mood_word || '',
       mood_reason: state.mood_reason || '',
+      drives,
       virtual_activity: state.virtual_activity || '',
       collection,
       her_status: herStatus,

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -2335,9 +2335,17 @@
           box.innerHTML = `
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="font-size:15px;font-weight:600;color:var(--dark);">默</div>
-              <div style="font-size:13px;color:var(--dark);opacity:.75;margin-top:6px;">心情：${state.mo_mood} / 100</div>
-              ${moodBar(state.mo_mood)}
-              <div style="font-size:13px;color:var(--dark);opacity:.75;margin-top:10px;">今日唤醒：${state.today_wakes} 次 · 每次体力 ${state.today_energy} 点</div>
+              <div style="font-size:13px;color:var(--dark);opacity:.8;margin-top:6px;">此刻：${escapeHtml2(state.mood_word || '平静')}${state.mood_reason ? '<span style="color:var(--muted);font-size:11px;"> · ' + escapeHtml2(String(state.mood_reason).slice(0, 30)) + '</span>' : ''}</div>
+              ${state.drives && state.drives.length ? state.drives.map(d => `
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                  <span style="width:36px;font-size:12px;color:var(--dark);white-space:nowrap;">${d.word}</span>
+                  <div style="flex:1;height:10px;border-radius:5px;background:#F1EBE1;overflow:hidden;">
+                    <div style="height:100%;width:${Math.max(0, Math.min(100, d.value))}%;background:linear-gradient(90deg,#FFC09F,#FF8A5C);border-radius:5px;transition:width .5s;"></div>
+                  </div>
+                  <span style="width:34px;text-align:right;font-size:11px;color:var(--muted);">${d.value}%</span>
+                </div>`).join('') : moodBar(state.mo_mood)}
+              <div style="font-size:11px;color:var(--muted);margin-top:10px;">每 10 分钟心跳一次，情绪缓慢衰减，有惯性</div>
+              <div style="font-size:13px;color:var(--dark);opacity:.75;margin-top:8px;">今日唤醒：${state.today_wakes} 次 · 每次体力 ${state.today_energy} 点</div>
             </div>
             <div class="feature-card" style="align-items:flex-start;text-align:left;">
               <div style="font-size:15px;font-weight:600;color:var(--dark);margin-bottom:8px;">彩蛋图鉴（${state.collection ? state.collection.found : 0}/${state.collection ? state.collection.total : 0}）</div>
