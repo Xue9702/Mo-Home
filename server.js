@@ -2720,25 +2720,19 @@ async function rateDialogueEmotion(userText, assistantReply) {
   }
 }
 
-// 对话后入口：本地情绪漏斗（词典扫描，零 API）→ 大波动立即评分；无波动不评分
-const lastRateAt = new Map(); // 节流：同一角色 15 秒内不重复评分
+// 对话后入口：本地情绪漏斗（词典扫描，零 API）→ 命中情绪词即评（LLM 判定 has_shift）
+// 无命中不评分（省成本）；15 秒节流防连发
+const lastRateAt = new Map();
 async function maybeRateDialogue(userText, assistantReply) {
   try {
     const now = Date.now();
     const last = lastRateAt.get('mo') || 0;
     if (now - last < 15000) return;
     const scan = scanTextMood(userText);
-    let shouldRate = false, reason = '';
-    if (scan) {
-      const negHits = scan.hits.filter(h => h.v < -0.2).length;
-      const posHits = scan.hits.filter(h => h.v > 0.2).length;
-      const minV = Math.min(...scan.hits.map(h => h.v));
-      const maxV = Math.max(...scan.hits.map(h => h.v));
-      if (negHits >= 3) { shouldRate = true; reason = 'neg_burst'; }
-      else if (minV < -0.5) { shouldRate = true; reason = 'strong_negative'; }
-      else if (posHits >= 3 || maxV > 0.65) { shouldRate = true; reason = 'strong_positive'; }
-    }
-    if (!shouldRate) return;
+    if (!scan || !scan.hits || !scan.hits.length) return; // 无情绪词：不评分
+    let reason = 'mood_word';
+    if (scan.hits.some(h => h.v < -0.2)) reason = 'neg_word';
+    else if (scan.hits.some(h => h.v > 0.2)) reason = 'pos_word';
     lastRateAt.set('mo', now);
     const rated = await rateDialogueEmotion(userText, assistantReply);
     if (!rated) return;
@@ -3922,6 +3916,97 @@ app.post('/api/home-state', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: '保存失败' });
+  }
+});
+
+// ================== 情绪面板调试 API ==================
+// 完整调试数据：当前快照 + 十个驱动力 + 最近事件 + PA/NA 24h 序列 + 词典 + 性格参数
+app.get('/api/emotion/panel', async (req, res) => {
+  try {
+    const [snapshot, events, traits, lastActivity] = await Promise.all([
+      getMoodSnapshot(),
+      getRecentEmotionEvents(200),
+      getCharacterTraits(),
+      getLastUserActivity()
+    ]);
+    // PA/NA 24h 小时序列（本地时间）
+    const now = Date.now();
+    const hours = [];
+    for (let i = 23; i >= 0; i--) {
+      const h = new Date(now - i * 3600000);
+      hours.push({ hour: `${String(h.getHours()).padStart(2, '0')}:00`, pa: 0, na: 0, count: 0 });
+    }
+    for (const ev of events) {
+      const t = new Date(ev.created_at);
+      const ageH = (now - t.getTime()) / 3600000;
+      if (ageH > 24 || ageH < 0) continue;
+      const idx = 23 - Math.floor(ageH);
+      if (idx < 0 || idx > 23) continue;
+      const v = clampValence(ev.valence), a = clampArousal(ev.arousal), imp = ev.importance || 3;
+      if (v >= 0) hours[idx].pa += v * a * imp; else hours[idx].na += -v * a * imp;
+      hours[idx].count++;
+    }
+    const offlineHours = lastActivity ? Math.max(0, (now - new Date(lastActivity).getTime()) / 3600000) : 0;
+    const drives = computeDrives(events.slice(0, 30), offlineHours);
+    res.json({
+      pa: Number(snapshot.pa) || 0,
+      na: Number(snapshot.na) || 0,
+      mood_word: snapshot.moodWord.word,
+      mood_reason: snapshot.moodWord.reason,
+      drives,
+      events: events.slice(0, 20).map(e => ({
+        id: e.id, word: e.word, v: e.valence, a: e.arousal, importance: e.importance,
+        source: e.source, type: e.type, reason: e.reason, created_at: e.created_at
+      })),
+      series: hours,
+      lexicon: Object.keys(EMOTION_LEXICON),
+      traits: {
+        threshold: traits.threshold, peak: traits.peak, mu_pa: traits.mu_pa, mu_na: traits.mu_na,
+        theta_pa: traits.theta_pa, theta_na: traits.theta_na,
+        coping: traits.coping, attachment: traits.attachment
+      }
+    });
+  } catch (e) {
+    console.error('情绪面板错误:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 手动写入情绪事件（调试/演示用）
+app.post('/api/emotion/event', async (req, res) => {
+  const { word, valence, arousal, importance, reason } = req.body || {};
+  const w = String(word || '').trim();
+  if (!w) return res.status(400).json({ error: '缺少 word' });
+  const lex = EMOTION_LEXICON[w] || null;
+  const ev = await recordEmotionEvent({
+    source: 'manual',
+    type: 'primary',
+    word: w,
+    valence: lex ? lex.v : Number(valence) || 0,
+    arousal: lex ? lex.a : Number(arousal) || 0.5,
+    importance: parseInt(importance, 10) || 3,
+    reason: String(reason || '情绪面板手动写入'),
+    matchSource: lex ? 'exact' : 'manual'
+  });
+  res.json({ ok: !!ev, event: ev });
+});
+
+// 重置情绪（scope=today 只清今天；缺省清全部）
+app.post('/api/emotion/reset', async (req, res) => {
+  try {
+    const { scope } = req.body || {};
+    let q = supabase.from('emotion_events').delete().eq('character', 'mo');
+    if (scope === 'today') {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      q = q.gte('created_at', start.toISOString());
+    }
+    const { error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    await getMoodSnapshot().catch(() => {});
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

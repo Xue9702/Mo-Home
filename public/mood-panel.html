@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>默的情绪面板</title>
+<style>
+  :root {
+    --bg: #FBF7F1; --card: #FFFFFF; --dark: #4A4038; --muted: #9A9188;
+    --line: #EFE7DC; --orange1: #F4A36C; --orange2: #E87A4D;
+    --blue: #7E9FB3; --track: #F5EFE8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--dark); font-family: "LXGW WenKai", "PingFang SC", "Microsoft YaHei", sans-serif; padding: 16px; max-width: 720px; margin: 0 auto; }
+  .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .head h1 { font-size: 20px; font-weight: 600; }
+  .head a { color: var(--blue); text-decoration: none; font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; color: var(--muted); font-weight: 500; margin-bottom: 10px; }
+  .mood-big { font-size: 22px; font-weight: 600; }
+  .mood-reason { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .pana-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; }
+  .pana-label { width: 28px; }
+  .pana-track { flex: 1; height: 10px; border-radius: 5px; background: var(--track); overflow: hidden; }
+  .pana-fill { height: 100%; border-radius: 5px; transition: width .5s; }
+  .pana-val { width: 40px; text-align: right; color: var(--muted); }
+  .drive-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .drive-name { width: 60px; font-size: 12px; line-height: 1.2; }
+  .drive-name small { display: block; font-size: 9px; color: var(--muted); opacity: .7; }
+  .drive-track { flex: 1; height: 12px; border-radius: 6px; background: var(--track); overflow: hidden; }
+  .drive-fill { height: 100%; background: linear-gradient(90deg, var(--orange1), var(--orange2)); border-radius: 6px; transition: width .5s; }
+  .drive-val { width: 38px; text-align: right; font-size: 12px; }
+  canvas { width: 100%; height: 160px; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 6px; font-size: 10px; }
+  .tag.dialogue { background: rgba(126,159,179,.15); color: var(--blue); }
+  .tag.wake_action { background: rgba(244,163,108,.18); color: var(--orange2); }
+  .tag.manual { background: rgba(154,145,136,.15); color: var(--muted); }
+  .tool-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  input, select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 13px; background: #fff; color: var(--dark); }
+  button { border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; background: linear-gradient(90deg, var(--orange1), var(--orange2)); color: #fff; }
+  button.ghost { background: var(--track); color: var(--muted); }
+  button.danger { background: #D98C8C; }
+  .traits { font-size: 12px; color: var(--muted); line-height: 1.8; }
+  .footer { text-align: center; color: var(--muted); font-size: 11px; margin: 18px 0 8px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>❤️ 默的情绪面板</h1>
+    <a href="/" onclick="history.back();return false;">← 返回小屋</a>
+  </div>
+
+  <div class="card">
+    <h2>此刻状态</h2>
+    <div id="moodBig" class="mood-big">加载中…</div>
+    <div id="moodReason" class="mood-reason"></div>
+    <div class="pana-row"><span class="pana-label">PA</span><div class="pana-track"><div id="paFill" class="pana-fill" style="background:linear-gradient(90deg,var(--orange1),var(--orange2));width:0%"></div></div><span id="paVal" class="pana-val">0%</span></div>
+    <div class="pana-row"><span class="pana-label">NA</span><div class="pana-track"><div id="naFill" class="pana-fill" style="background:linear-gradient(90deg,#A8BCC9,#7E9FB3);width:0%"></div></div><span id="naVal" class="pana-val">0%</span></div>
+  </div>
+
+  <div class="card">
+    <h2>十个驱动力 · 持续运转</h2>
+    <div id="drives"></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:10px;">每 10 分钟心跳一次，情绪缓慢衰减，有惯性</div>
+  </div>
+
+  <div class="card">
+    <h2>PA / NA · 近 24 小时</h2>
+    <canvas id="chart" width="688" height="160"></canvas>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px;"><span style="color:var(--orange2);">━</span> PA（正向）&nbsp;&nbsp;<span style="color:var(--blue);">━</span> NA（负向）</div>
+  </div>
+
+  <div class="card">
+    <h2>最近情绪事件</h2>
+    <div id="events"><div style="font-size:12px;color:var(--muted);">加载中…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>调试工具</h2>
+    <div class="tool-row">
+      <input id="wordInput" list="lexList" placeholder="情绪词（如：温暖）" style="flex:1;min-width:120px;">
+      <datalist id="lexList"></datalist>
+      <label style="font-size:12px;color:var(--muted);">V <input id="vInput" type="range" min="-1" max="1" step="0.05" value="0.5" style="width:100px;"></label>
+      <label style="font-size:12px;color:var(--muted);">A <input id="aInput" type="range" min="0" max="1" step="0.05" value="0.5" style="width:100px;"></label>
+      <input id="impInput" type="number" min="1" max="10" value="3" style="width:56px;" title="重要度">
+      <button onclick="manualWrite()">写入</button>
+    </div>
+    <div class="tool-row">
+      <button class="ghost" onclick="resetMood('today')">重置今天</button>
+      <button class="danger" onclick="resetMood('all')">清空全部事件</button>
+    </div>
+    <div class="traits" id="traits" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="footer">每 30 秒自动刷新 · 情绪系统 v1</div>
+
+<script>
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let lastData = null;
+
+async function load() {
+  try {
+    const r = await fetch('/api/emotion/panel');
+    const d = await r.json();
+    lastData = d;
+    // 此刻状态
+    document.getElementById('moodBig').textContent = d.mood_word || '平静';
+    document.getElementById('moodReason').textContent = d.mood_reason || '';
+    document.getElementById('paFill').style.width = Math.round(d.pa * 100) + '%';
+    document.getElementById('naFill').style.width = Math.round(d.na * 100) + '%';
+    document.getElementById('paVal').textContent = Math.round(d.pa * 100) + '%';
+    document.getElementById('naVal').textContent = Math.round(d.na * 100) + '%';
+    // 驱动力
+    document.getElementById('drives').innerHTML = (d.drives || []).map(x => `
+      <div class="drive-row">
+        <span class="drive-name">${esc(x.word)}<small>${esc(x.en)}</small></span>
+        <div class="drive-track"><div class="drive-fill" style="width:${Math.max(0, Math.min(100, x.value))}%"></div></div>
+        <span class="drive-val">${x.value}%</span>
+      </div>`).join('');
+    // 词典 datalist
+    document.getElementById('lexList').innerHTML = (d.lexicon || []).map(w => `<option value="${esc(w)}">`).join('');
+    // 事件表
+    document.getElementById('events').innerHTML = (d.events && d.events.length)
+      ? `<table><tr><th>时间</th><th>词</th><th>V</th><th>A</th><th>来源</th><th>原因</th></tr>` + d.events.map(e => `
+        <tr>
+          <td style="white-space:nowrap;">${new Date(e.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+          <td>${esc(e.word)}</td>
+          <td>${Number(e.v).toFixed(2)}</td>
+          <td>${Number(e.a).toFixed(2)}</td>
+          <td><span class="tag ${esc(e.source)}">${esc(e.source)}</span></td>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(e.reason || '')}">${esc((e.reason || '').slice(0, 24))}</td>
+        </tr>`).join('') + `</table>`
+      : '<div style="font-size:12px;color:var(--muted);">还没有情绪事件——去和默说句带情绪的话吧</div>';
+    // 曲线
+    drawChart(d.series || []);
+    // 性格参数
+    const t = d.traits || {};
+    document.getElementById('traits').innerHTML =
+      `性格：${esc(t.coping || '-')}（threshold ${t.threshold} / peak ${t.peak}）· 依恋：${esc(t.attachment || '-')}<br>` +
+      `设定点 PA ${t.mu_pa} / NA ${t.mu_na} · 回归速率 ${t.theta_pa} / ${t.theta_na}`;
+  } catch (e) {
+    console.error(e);
+    document.getElementById('moodBig').textContent = '加载失败：' + e.message;
+  }
+}
+
+function drawChart(series) {
+  const cv = document.getElementById('chart');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height, padL = 26, padR = 8, padT = 8, padB = 18;
+  ctx.clearRect(0, 0, W, H);
+  if (!series.length) return;
+  const maxV = 1.0;
+  const x = i => padL + (W - padL - padR) * i / (series.length - 1);
+  const y = v => padT + (H - padT - padB) * (1 - Math.min(maxV, Math.max(0, v)));
+  // 网格
+  ctx.strokeStyle = '#EFE7DC'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 4; g++) {
+    const gy = padT + (H - padT - padB) * g / 4;
+    ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
+    ctx.fillStyle = '#9A9188'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText((1 - g / 4).toFixed(2), padL - 4, gy + 3);
+  }
+  // PA 线
+  ctx.strokeStyle = '#E87A4D'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  series.forEach((s, i) => { const px = x(i), py = y(s.pa / 3); i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py); });
+  ctx.stroke();
+  // NA 线
+  ctx.strokeStyle = '#7E9FB3'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  series.forEach((s, i) => { const px = x(i), py = y(s.na / 3); i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py); });
+  ctx.stroke();
+  // X 轴标签
+  ctx.fillStyle = '#9A9188'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  [0, 6, 12, 18, 23].forEach(i => ctx.fillText(series[i] ? series[i].hour : '', x(i), H - 6));
+}
+
+async function manualWrite() {
+  const word = document.getElementById('wordInput').value.trim();
+  if (!word) { alert('请输入情绪词'); return; }
+  const body = {
+    word,
+    valence: parseFloat(document.getElementById('vInput').value),
+    arousal: parseFloat(document.getElementById('aInput').value),
+    importance: parseInt(document.getElementById('impInput').value, 10) || 3,
+    reason: '情绪面板手动写入'
+  };
+  const r = await fetch('/api/emotion/event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  alert(d.ok ? '已写入：' + word : '写入失败：' + (d.error || ''));
+  if (d.ok) load();
+}
+
+async function resetMood(scope) {
+  const tip = scope === 'today' ? '清空今天的情绪事件？' : '清空全部情绪事件？';
+  if (!confirm(tip)) return;
+  const r = await fetch('/api/emotion/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope })
+  });
+  const d = await r.json();
+  alert(d.ok ? '已重置' : '重置失败：' + (d.error || ''));
+  if (d.ok) load();
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
