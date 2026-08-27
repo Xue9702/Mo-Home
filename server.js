@@ -2806,22 +2806,34 @@ async function rateDialogueEmotion(userText, assistantReply) {
   }
 }
 
-// 对话后入口：本地情绪漏斗（词典扫描，零 API）→ 命中情绪词即评（LLM 判定 has_shift）
-// 无命中不评分（省成本）；15 秒节流防连发
+// 对话后入口：情绪触发（本地词典命中 或 消息有实质内容 → LLM 评分判定 has_shift）
+// 触发条件：
+//   1) 消息文本含词典情绪词（283 词）→ 立即评
+//   2) 消息 ≥6 字（有实质内容，如"着火出警""画完达标"）→ 也评（LLM 判断是否真波动）
+//   3) 短消息（<6 字，如"嗯""哈哈哈"）→ 不评（省成本）
+// 15 秒节流防连发；评分结果 has_shift=false 不写事件
 const lastRateAt = new Map();
 async function maybeRateDialogue(userText, assistantReply) {
   try {
     const now = Date.now();
     const last = lastRateAt.get('mo') || 0;
     if (now - last < 15000) return;
-    const scan = scanTextMood(userText);
-    if (!scan || !scan.hits || !scan.hits.length) return; // 无情绪词：不评分
-    let reason = 'mood_word';
-    if (scan.hits.some(h => h.v < -0.2)) reason = 'neg_word';
-    else if (scan.hits.some(h => h.v > 0.2)) reason = 'pos_word';
+    const text = String(userText || '').trim();
+    const scan = scanTextMood(text);
+    let reason = '';
+    if (scan && scan.hits && scan.hits.length) {
+      reason = scan.hits.some(h => h.v < -0.2) ? 'neg_word'
+        : scan.hits.some(h => h.v > 0.2) ? 'pos_word' : 'mood_word';
+    } else if (text.length >= 6) {
+      reason = 'event_msg'; // 无情绪词但有实质内容：交给 LLM 判断
+    }
+    if (!reason) return; // 短消息 / 空消息：不评
     lastRateAt.set('mo', now);
-    const rated = await rateDialogueEmotion(userText, assistantReply);
-    if (!rated) return;
+    const rated = await rateDialogueEmotion(text, assistantReply);
+    if (!rated) {
+      console.log(`ℹ️ 情绪评分触发但未写事件 [${reason}]（LLM 判定无波动或失败）: ${text.slice(0, 40)}`);
+      return;
+    }
     await recordEmotionEvent({
       source: 'dialogue',
       type: 'primary',
