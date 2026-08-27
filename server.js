@@ -8174,6 +8174,22 @@ app.post('/api/edit-message', async (req, res) => {
 });
 
 // 修正记忆的事件时间（时间戳错乱时用；格式 YYYY-MM-DD HH:mm 按北京时间解析）
+// 记忆了结标记（resolved）：切换"情绪/事件是否已被后续了结"（沉底权重 ×0.05）
+app.post('/api/aevum/:id/resolved', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'id 无效' });
+    const { data: row, error: getErr } = await supabase.from('aevum_memories').select('resolved').eq('id', id).single();
+    if (getErr && !row) return res.status(404).json({ error: '记忆不存在或表未建（请执行 setup_memory_decay.sql）' });
+    const next = !(row && row.resolved);
+    const { error } = await supabase.from('aevum_memories').update({ resolved: next }).eq('id', id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, resolved: next });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/aevum/:id/event-time', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'ID 无效' });

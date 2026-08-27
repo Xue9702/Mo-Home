@@ -4145,6 +4145,7 @@
               ${m.occurrence > 1 ? `<span title="这件事反复出现过" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#fdf3e7;color:#c0846b;">x${m.occurrence}</span>` : ''}
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
+              ${m.resolved ? '<span title="这段情绪/事件已被后续了结，召回时大幅沉底" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#eef1f5;color:#8a97a5;">已了结 ✓</span>' : ''}
             </div>
             ${!hideCtx && fullCtx ? `<div style="font-size:12px;color:#666;background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:8px;line-height:1.7;white-space:pre-wrap;">📄 原文：${escapeHtml2(aevumViewText(fullCtx))}</div>` : ''}
             <div style="font-size:14px;color:#444;line-height:1.6;white-space:pre-wrap;">${escapeHtml2(aevumViewText(m.content))}</div>
@@ -4155,6 +4156,7 @@
               ${m.status === 'archived' || m.status === 'rejected'
                 ? `<span style="cursor:pointer;color:#1e90ff;" onclick="aevumReview(${m.id},'approve')">↺ 恢复</span>`
                 : `<span style="cursor:pointer;color:#888;" onclick="aevumArchive(${m.id})">归档</span>`}
+              <span style="cursor:pointer;color:#7f9fd9;" onclick="aevumToggleResolved(${m.id})">${m.resolved ? '↺ 解除了结' : '✓ 标记了结'}</span>
               <span style="cursor:pointer;color:#c084fc;" onclick="aevumReanalyze(${m.id})">🔄 重新分析</span>
               <span style="cursor:pointer;color:#888;" onclick="aevumEdit(${m.id})">✎ 修改</span>
             </div>
@@ -4193,6 +4195,16 @@
         for (const m of singles) html += renderSeaCard(m);
         return html;
       }
+
+      async function aevumToggleResolved(id) {
+        try {
+          const r = await fetch(`/api/aevum/${id}/resolved`, { method: 'POST' });
+          const d = await r.json();
+          if (!d.ok) alert('操作失败：' + (d.error || '请确认已执行 setup_memory_decay.sql'));
+          renderAevum();
+        } catch (e) { alert('操作失败'); }
+      }
+      window.aevumToggleResolved = aevumToggleResolved;
 
       function aevumToggleEpisode(btn) {
         if (!btn || !btn.closest) return;
