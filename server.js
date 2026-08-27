@@ -2023,6 +2023,8 @@ app.post('/api/chat', async (req, res) => {
 
     // 情绪系统：本地漏斗扫描雪的消息 → 大波动立即评分写情绪事件（不阻塞回复）
     maybeRateDialogue(finalUserContent, fullReply).catch(e => console.error('情绪评分失败:', e.message));
+    // resolved 自动标记：对话里出现"病好了/不疼了/过去了"类了结信号 → 负面 debuff 记忆沉底
+    maybeResolveMemories(finalUserContent + '\n' + fullReply).catch(e => console.error('resolved 自动标记失败:', e.message));
 
     // 发送完成信号，包含消息ID
     sendSSE({
@@ -2803,6 +2805,42 @@ async function rateDialogueEmotion(userText, assistantReply) {
   } catch (e) {
     console.error('情绪评分失败:', e.message);
     return null;
+  }
+}
+
+// ================== resolved 自动标记（关键词触发，零 API） ==================
+// 对话出现"了结信号"（病好了/不疼了/过去了/和好了）时，把最近的负面 debuff 记忆
+// （生病/难受/疼/月经/吵架等）标记 resolved → 召回时 decay ×0.05 沉底
+// 触发词命中 + 存在匹配的旧记忆，两条同时满足才标记，避免误伤
+const RESOLVE_TRIGGERS = ['好了', '痊愈', '康复', '恢复', '不疼', '不痛', '不难受', '没事了', '过去了', '结束了', '退烧', '满血', '缓过来', '熬过去', '好多了', '消了', '结痂', '愈合', '和解', '和好了'];
+const RESOLVE_DEBUFFS = ['生病', '难受', '疼', '痛', '不舒服', '月经', '感冒', '发烧', '头疼', '胃疼', '肚子疼', '失眠', '焦虑', '低落', '难过', '哭', '吵架', '冷战', '生气', '郁闷'];
+const resolveResentAt = new Map(); // 60s 节流
+async function maybeResolveMemories(text) {
+  try {
+    const now = Date.now();
+    if (now - (resolveResentAt.get('mo') || 0) < 60000) return;
+    const s = String(text || '');
+    if (!RESOLVE_TRIGGERS.some(t => s.includes(t))) return;
+    const since = new Date(now - 30 * 86400000).toISOString();
+    const { data } = await supabase
+      .from('aevum_memories')
+      .select('id, content, emotion')
+      .eq('status', 'active')
+      .eq('resolved', false)
+      .gte('created_at', since)
+      .limit(50);
+    const targets = (data || []).filter(m => {
+      const emo = m.emotion && typeof m.emotion === 'object' ? m.emotion : {};
+      const neg = Number(emo.valence) < -0.1;
+      const hasDebuff = RESOLVE_DEBUFFS.some(d => String(m.content || '').includes(d));
+      return neg && hasDebuff;
+    });
+    if (!targets.length) return;
+    resolveResentAt.set('mo', now);
+    await supabase.from('aevum_memories').update({ resolved: true }).in('id', targets.map(t => t.id));
+    console.log(`✅ 自动标记了结 ${targets.length} 条记忆（${targets.map(t => String(t.content || '').slice(0, 14)).join(' / ')}）`);
+  } catch (e) {
+    console.error('resolved 自动标记失败:', e.message);
   }
 }
 
