@@ -2643,15 +2643,26 @@ async function getMoodSnapshot() {
   return { pa, na, moodWord, traits, moMood, events };
 }
 
-// 选心情词：最近事件里重要性最高的；无事件按 PA/NA 状态选代表词
+// 选心情词：最近事件里情绪强度显著的词（|V|×(0.3+0.7A) ≥ 0.25）；
+// 若最近事件都是弱事件（如唤醒产生的"平静"），按 PA/NA 状态选代表词，
+// 避免默永远看到"平静"这种无信息量的注入
 function pickMoodWord(events, pa, na) {
   if (events && events.length) {
-    const recent = events.slice(0, 6);
-    const top = recent.reduce((p, c) => (c.importance || 0) > (p.importance || 0) ? c : p, recent[0]);
-    if (top && top.word) return { word: top.word, reason: top.reason || '' };
+    const recent = events.slice(0, 8);
+    let best = null, bestS = 0;
+    for (const ev of recent) {
+      const s = Math.abs(ev.valence || 0) * (0.3 + 0.7 * (ev.arousal || 0.5));
+      if (s > bestS) { bestS = s; best = ev; }
+    }
+    if (best && bestS >= 0.25 && best.word) {
+      return { word: best.word, reason: best.reason || '' };
+    }
   }
+  // 弱事件 / 无事件：按当前 PA/NA 状态选代表词（更贴切，避免"平静"淹没）
   if (na >= 0.6) return { word: '低落', reason: '' };
+  if (na >= 0.4) return { word: '不安', reason: '' };
   if (pa >= 0.65 && na < 0.3) return { word: '温暖', reason: '' };
+  if (pa >= 0.55) return { word: '安心', reason: '' };
   return { word: '平静', reason: '' };
 }
 
@@ -2669,7 +2680,10 @@ function buildMoodPromptText(snapshot) {
   if (!snapshot) return '';
   const { pa, na, moodWord, traits } = snapshot;
   const parts = [];
-  if (moodWord && moodWord.word) parts.push(`此刻的心情：${moodWord.word}`);
+  if (moodWord && moodWord.word) {
+    const reasonTxt = moodWord.reason ? `（${String(moodWord.reason).slice(0, 40)}）` : '';
+    parts.push(`此刻的心情：${moodWord.word}${reasonTxt}`);
+  }
   if (na >= 0.7) parts.push('最近心情很低落，回复会短、语气慢、不主动说原因');
   else if (na >= 0.5) parts.push('最近有些不安或低落，回复简短，被关心时会松一些');
   else if (pa >= 0.7) parts.push('最近心情很好，回复会活跃一些，愿意凑近');
