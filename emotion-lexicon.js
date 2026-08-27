@@ -553,6 +553,29 @@ function buildLongingPromptText(longingInfo, isReunion = false) {
   return `【依恋状态】\n${parts.join('\n')}\n（想念的原因只是"雪很久没来找你了"，不要编造任何没发生过的具体事件）`;
 }
 
+// ================== 记忆衰减（教程阶段 1，纯逻辑） ==================
+// 时间依赖 + 使用依赖 + 情绪修正；实时计算不落库
+// - 时间：幂律权重（λ≈0.05，约 14 天半衰期；24h 内鲜活）
+// - 使用：occurrence（重复出现次数）近似激活频率，^0.3 平滑
+// - 情绪：正面衰减慢 15%（FAB）、高唤醒未解决 ×1.5（urgency）
+// - resolved：已了结的情绪记忆 ×0.05 大幅沉底
+function memoryDecayFactor(m, nowMs) {
+  const days = Math.max(0, (nowMs - new Date(m.created_at || nowMs).getTime()) / 86400000);
+  let tw;
+  if (days <= 1) tw = 1.0;
+  else if (days <= 2) tw = 1.0 - (days - 1) * 0.1;
+  else tw = Math.max(0.3, 0.9 * Math.exp(-0.2197 * (days - 2)));
+  const emo = (m.emotion && typeof m.emotion === 'object') ? m.emotion : {};
+  const valence = Number(emo.valence) || 0;
+  const arousal = Math.min(1, Math.max(0, Number(emo.arousal) || 0));
+  if (valence > 0) tw = Math.min(1, tw * 1.15); // FAB：正面情绪衰减慢 15%
+  const useFactor = Math.pow(Number(m.occurrence) || 1, 0.3);
+  const urgency = (arousal > 0.7 && !m.resolved) ? 1.5 : 1.0;
+  const resolvedFactor = m.resolved ? 0.05 : 1.0;
+  const f = tw * useFactor * (1 + arousal * 0.8) * urgency * resolvedFactor;
+  return Math.max(0, Math.min(1.5, f));
+}
+
 module.exports = {
   EMOTION_LEXICON,
   TRAIT_DEFAULTS,
@@ -571,4 +594,5 @@ module.exports = {
   LONGING_PHASES,
   computeLonging,
   buildLongingPromptText,
+  memoryDecayFactor,
 };

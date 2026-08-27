@@ -3,7 +3,7 @@ const {
   EMOTION_LEXICON, TRAIT_DEFAULTS, LEX_NEAREST_MAX_DIST, OCC_GOALS,
   clampValence, clampArousal, powerLawWeight, almaFilter,
   lexLookup, blendLexAi, computePanaDeltas, scanTextMood, computeDrives,
-  computeLonging, buildLongingPromptText
+  computeLonging, buildLongingPromptText, memoryDecayFactor
 } = require('./emotion-lexicon');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
@@ -5159,7 +5159,8 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     // 任务状态过滤：已完成/已取消的承诺不参与常规召回（除非主动翻查）
     items = items.filter(m => !(m.task_status === 'done' || m.task_status === 'cancelled'));
     if (!items.length) return '';
-    // v3.0 混合打分：0.5×相似度 + 0.25×(重要度/10) + 0.15×情绪强度 + 0.1×时间衰减 + 频率小权重
+    // v3.1 混合打分：0.5×相似度 + 0.25×(重要度/10) + 0.15×情绪强度 + 0.15×记忆衰减 + 频率小权重
+    // 记忆衰减（decay）替代原 0.1×时间衰减：decay 是时间+使用+情绪+resolved 的超集
     const nowMs = Date.now();
     // 人物/谓词索引加分：查询里提到的人/动作，命中对应索引的记忆优先召回
     const peopleIdx = await getIndexConfig('people');
@@ -5167,9 +5168,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     const qPeople = [...peopleIdx].filter(p => q.includes(p));
     const qPreds = [...predIdx].filter(p => q.includes(p));
     const scored = items.map(m => {
-      const ageDays = Math.max(0, (nowMs - new Date(m.created_at || nowMs).getTime()) / 86400000);
-      // 24h 内不衰减（满分 1.0），24h 之后再按 90 天曲线下降，0.1 保底
-      const temporal = ageDays < 1 ? 1 : Math.max(0.1, 1 - ageDays / 90);
+      const decayF = memoryDecayFactor(m, nowMs);
       const emo = (m.emotion && typeof m.emotion === 'object') ? m.emotion : {};
       const emoIntensity = (Math.abs(Number(emo.valence) || 0) + Math.min(1, Math.max(0, Number(emo.arousal) || 0))) / 2;
       const freq = 0.02 * Math.min(Math.max(0, (Number(m.occurrence) || 1) - 1), 4);
@@ -5186,7 +5185,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
       const score = 0.5 * (m._sim || 0)
         + 0.25 * ((m.importance || 0) / 10)
         + 0.15 * emoIntensity
-        + 0.1 * temporal
+        + 0.15 * Math.min(1, decayF)
         + freq
         + idxBonus;
       return { m, score };
@@ -5195,6 +5194,27 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     let picked = scored.sort((a, b) => b.score - a.score);
     const aboveFloor = picked.filter(x => x.score >= 0.3);
     picked = aboveFloor.length ? aboveFloor.slice(0, limit) : picked.slice(0, 1);
+    // 忽然想起：召回不足时，40% 概率从旧记忆随机浮现 1-3 条（模拟"突然想到很久以前的事"）
+    if (picked.length < limit && Math.random() < 0.4) {
+      try {
+        const pickedIds = new Set(picked.map(x => String(x.m.id)));
+        const { data: oldOnes } = await supabase
+          .from('aevum_memories')
+          .select('*')
+          .eq('status', 'active')
+          .lt('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
+          .limit(15);
+        const candidates = (oldOnes || []).filter(m => !pickedIds.has(String(m.id)));
+        if (candidates.length) {
+          const n = 1 + Math.floor(Math.random() * Math.min(3, candidates.length));
+          const chosen = candidates.sort(() => Math.random() - 0.5).slice(0, n);
+          for (const m of chosen) {
+            m._surfaced = true;
+            picked.push({ m, score: 0.3 });
+          }
+        }
+      } catch (e) { /* 忽然想起失败不影响 */ }
+    }
     // 兜底降权：open 承诺若存在更晚的未挂链完成事件 → 标注"疑似已完成"并降权
     for (const x of picked) {
       if (x.m.task_status !== 'open') continue;
@@ -5230,6 +5250,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
       // 视角转换只作用于 AI 压缩后的内容（标题/概述），原文保持原样
       const contentConverted = perspectiveConvert(m.content);
       let line = `- [${label ? label + '｜' : ''}${AEVUM_TYPE_CN[m.type] || '事件'}${m.domain && m.domain.length ? '/' + m.domain[0] : ''}${when ? ' ' + when : ''}] `;
+      if (m._surfaced) line = '（忽然想起）' + line; // 低权重旧记忆随机浮现
       if (m._suspectedDone) line += '（疑似已完成，建议与雪确认）';
       // 重要度 >7 的单元召回时附带"AI 用来概括的那几轮"完整原文（原文不做视角转换）；
       // 原文放在内容前面，即使后面被总字数截断，重要原文也一定保留
