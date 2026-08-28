@@ -3790,13 +3790,6 @@
           let list = (await listRes.json()).memories || [];
           const stats = await statsRes.json();
           const bookData = bookRes && bookRes.ok ? await bookRes.json() : { books: [] };
-          // 记忆书更新提醒：新更新（超过上次查看）→ 弹窗（每批更新只弹一次）
-          const lastBookView = Number(localStorage.getItem('aevumBookLastView') || 0);
-          const lastBookUpd = Number(bookData.last_book_update || 0);
-          if (lastBookUpd > lastBookView && lastBookUpd !== (window.__bookToastShownFor || 0)) {
-            window.__bookToastShownFor = lastBookUpd;
-            setTimeout(showBookUpdateToast, 600);
-          }
           const planData = planRes && planRes.ok ? await planRes.json() : { active: [], expired: [] };
           const todoData = todoRes && todoRes.ok ? await todoRes.json() : { items: [] };
           const candData = candRes && candRes.ok ? await candRes.json() : { groups: [] };
@@ -3875,6 +3868,17 @@
             </div>` : ''}`;
           }
           box.innerHTML = html;
+          // 记忆书更新提醒：新更新（超过上次查看）→ 弹窗（每批更新只弹一次）
+          if (aevumState.view === 'book') {
+            const lbv = Number(localStorage.getItem('aevumBookLastView') || 0);
+            const lbu = Number(bookData.last_book_update || 0);
+            if (lbu > lbv && lbu !== (window.__bookToastShownFor || 0)) {
+              window.__bookToastShownFor = lbu;
+              setTimeout(showBookUpdateToast, 600);
+            }
+          }
+          // 未串联/跳转定位：渲染完成后展开分组并高亮目标
+          setTimeout(aevumLocateMemory, 200);
         } catch (e) {
           box.innerHTML = '<div class="weather-loading">加载失败，请先执行 setup_aevum.sql 并确认后端已部署</div>';
         }
@@ -4001,6 +4005,7 @@
                 <span style="cursor:pointer;font-size:14px;font-weight:600;color:#333;" onclick="aevumToggleBook(${b.id})">${escapeHtml2(aevumViewText(b.label || '（无标签）'))}</span>
                 <span style="font-size:11px;color:#8a83a8;">${b.unit_count || 0} 个事件单元</span>
                 ${updText ? `<span style="font-size:11px;color:#b0a6c4;">更新于 ${updText}</span>` : ''}
+                ${(b.updated_count || 0) > 0 ? `<span style="font-size:11px;color:#e1789a;font-weight:600;">更新 ${b.updated_count} 次</span>` : ''}
                 <span style="margin-left:auto;display:flex;gap:10px;">
                   <span style="cursor:pointer;color:var(--blue-deep);font-size:12px;" onclick="aevumViewBookVersions(${b.id})">📜 看这个故事怎么变化的</span>
                   <span style="cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumEditBook(${b.id}, this)">✎ 编辑</span>
@@ -4022,9 +4027,9 @@
             <div class="unlinked-list" style="display:none;flex-direction:column;gap:4px;">
               ${unlinkedData.samples.map(u => `
                 <div style="font-size:12px;color:#666;padding:3px 0;border-bottom:1px solid #f6f2f8;">
-                  <span>${escapeHtml2(aevumViewText(u.title || '（无标题）'))}</span>
+                  <span>${escapeHtml2(aevumViewText(u.content || u.title || '（无标题）'))}</span>
                   ${u.time ? `<span style="color:#b0a6c4;"> · ${new Date(u.time).toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })}</span>` : ''}
-                  <span style="cursor:pointer;color:var(--blue-deep);margin-left:8px;" onclick="aevumJumpToSea()">去记忆海看 →</span>
+                  <span style="cursor:pointer;color:var(--blue-deep);margin-left:8px;" onclick="aevumJumpToSea(${u.id})">定位 →</span>
                 </div>`).join('')}
               ${unlinkedData.count > 10 ? `<div style="font-size:11px;color:var(--muted);">…还有 ${unlinkedData.count - 10} 个</div>` : ''}
             </div>
@@ -4035,7 +4040,6 @@
               <span style="font-size:14px;font-weight:600;color:#333;">记忆书 · 故事线</span>
               <span style="font-size:11px;color:#8a83a8;">把记忆海的事件单元串成完整故事，默回忆时能看到整段经过</span>
               <span style="margin-left:auto;">
-                <button data-regen-books onclick="aevumRegenerateBooks()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;" title="清掉现有故事线，用全部事件单元重新整理">♻ 重新整理</button>
                 <button data-genbooks onclick="aevumGenerateBooks()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✨ 生成记忆书</button>
               </span>
             </div>
@@ -4054,8 +4058,29 @@
         if (list) list.style.display = list.style.display === 'flex' ? 'none' : 'flex';
       }
       window.aevumToggleUnlinked = aevumToggleUnlinked;
-      function aevumJumpToSea() { aevumSetView('sea'); }
+      function aevumJumpToSea(id) { aevumState.highlightId = id; aevumSetView('sea'); }
       window.aevumJumpToSea = aevumJumpToSea;
+
+      // 记忆海精准定位：渲染完成后展开所在分组并滚动高亮目标单元
+      function aevumLocateMemory() {
+        const id = aevumState.highlightId;
+        if (!id) return;
+        aevumState.highlightId = null;
+        const el = document.querySelector('[data-mid="' + id + '"]');
+        if (!el) return;
+        const epBody = el.closest('.ep-body');
+        if (epBody && epBody.style.display !== 'flex') {
+          const card = epBody.closest('.feature-card');
+          const toggle = card && card.querySelector('[onclick*="aevumToggleEpisode"]');
+          if (toggle) aevumToggleEpisode(toggle);
+        }
+        setTimeout(() => {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.style.transition = 'box-shadow .4s';
+          el.style.boxShadow = '0 0 0 3px var(--blue)';
+          setTimeout(() => { el.style.boxShadow = ''; }, 3000);
+        }, 150);
+      }
 
       // v3.0 记忆心面板：我眼里的默 / 画像 / 承诺 / 默札占位
       function renderHeartPanel(moData, profData, promData, mozhaCount) {
@@ -4202,10 +4227,10 @@
           : '';
         const fullCtx = m.context || ev;
         return `
-          <div class="feature-card" style="align-items:stretch;text-align:left;gap:8px;">
+          <div class="feature-card" data-mid="${m.id}" style="align-items:stretch;text-align:left;gap:8px;">
             ${when ? `<div style="font-size:12px;color:#8a5fb5;font-weight:600;">🕐 ${new Date(when).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span style="font-size:14px;font-weight:600;color:#333;">${escapeHtml2(aevumViewText(m.title || '（无标题）'))}</span>
+              ${m.title ? `<span style="font-size:14px;font-weight:600;color:#333;">${escapeHtml2(aevumViewText(m.title))}</span>` : ''}
               ${m.occurrence > 1 ? `<span title="这件事反复出现过" style="font-size:11px;padding:2px 8px;border-radius:10px;background:#fdf3e7;color:#c0846b;">x${m.occurrence}</span>` : ''}
               <span style="font-size:12px;color:#8a83a8;">${AEVUM_OWNER_LABELS[m.owner] || m.owner}</span>
               <span style="font-size:11px;padding:2px 8px;border-radius:10px;background:${statusBg};color:${statusColor};">${AEVUM_STATUS_LABELS[m.status] || m.status}</span>
@@ -4531,15 +4556,18 @@
           box.style.cssText = 'background:var(--card);border-radius:16px;padding:16px;width:min(92vw,540px);max-height:82vh;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;';
           box.innerHTML = `
             <div style="font-size:15px;font-weight:600;color:var(--dark);">📜 「${escapeHtml2(aevumViewText(book.label || '（无标签）'))}」的故事变化</div>
-            <div style="font-size:12px;color:var(--muted);">当前版本（最新）：</div>
-            <div style="font-size:13px;color:var(--dark);background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:8px;line-height:1.6;">${escapeHtml2(aevumViewText(book.summary || ''))}</div>
-            ${versions.length ? `<div style="font-size:12px;color:var(--muted);margin-top:6px;">历史版本（${versions.length}）：</div>` : ''}
-            <div style="overflow-y:auto;display:flex;flex-direction:column;gap:8px;">
+            <div style="font-size:12px;color:var(--muted);">已更新 <b style="color:#e1789a;">${versions.length}</b> 次 · 当前版本（最新）：</div>
+            <div style="font-size:13px;color:var(--dark);background:#FAF6EF;border:1px solid var(--blue);border-radius:10px;padding:8px;line-height:1.6;">${escapeHtml2(aevumViewText(book.summary || ''))}</div>
+            <div style="overflow-y:auto;display:flex;flex-direction:column;gap:10px;">
               ${versions.map(v => `
-                <div style="font-size:12px;color:#9A928A;background:#FAF6EF;border:1px solid var(--line);border-radius:10px;padding:8px;line-height:1.6;">
-                  <div style="color:var(--muted);margin-bottom:2px;">v${v.version_no} · ${new Date(v.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${v.relation_type === 'superseded-contradict' ? ' · 发生过矛盾更新' : ''}</div>
-                  ${escapeHtml2(aevumViewText(v.summary || ''))}
-                </div>`).join('') || ''}
+                <div style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px;">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span style="font-size:11px;padding:2px 8px;border-radius:8px;background:${v.relation_type === 'superseded-contradict' ? '#fdf3e7' : '#eef1f5'};color:${v.relation_type === 'superseded-contradict' ? '#c0846b' : '#8a97a5'};">v${v.version_no}</span>
+                    <span style="font-size:12px;color:var(--muted);">${new Date(v.created_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    ${v.relation_type === 'superseded-contradict' ? '<span style="font-size:11px;color:#c0846b;">发生过矛盾更新</span>' : v.relation_type === 'superseded' ? '<span style="font-size:11px;color:#8a97a5;">旧版存档</span>' : ''}
+                  </div>
+                  <div style="font-size:12px;color:#666;line-height:1.6;border-top:1px dashed var(--line);padding-top:6px;">${escapeHtml2(aevumViewText(v.summary || ''))}</div>
+                </div>`).join('') || '<div style="font-size:12px;color:var(--muted);">还没有历史版本</div>'}
             </div>
             <button onclick="this.closest('div[style*=\\"position:fixed\\"]').remove()" style="padding:9px;border:none;border-radius:12px;background:#eee;color:#555;font-size:13px;cursor:pointer;">关闭</button>`;
           overlay.appendChild(box);

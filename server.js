@@ -6850,10 +6850,11 @@ app.post('/api/aevum/books/regenerate', async (req, res) => {
 
 app.get('/api/aevum/books', async (req, res) => {
   try {
-    const [booksRes, itemsRes, seaRes] = await Promise.all([
+    const [booksRes, itemsRes, seaRes, verRes] = await Promise.all([
       supabase.from('aevum_books').select('*').order('updated_at', { ascending: false }),
       supabase.from('aevum_book_items').select('book_id, memory_id'),
-      supabase.from('aevum_memories').select('id, title, event_time').eq('area', 'sea').order('event_time', { ascending: false }).limit(200)
+      supabase.from('aevum_memories').select('id, title, content, event_time').eq('area', 'sea').order('event_time', { ascending: false }).limit(200),
+      supabase.from('aevum_book_versions').select('book_id')
     ]);
     const counts = {};
     const usedIds = new Set();
@@ -6861,6 +6862,9 @@ app.get('/api/aevum/books', async (req, res) => {
       counts[r.book_id] = (counts[r.book_id] || 0) + 1;
       usedIds.add(r.memory_id);
     }
+    // 更新次数 = 该书的版本历史条数（每次生长确认生成一个新版本）
+    const verCount = {};
+    for (const r of (verRes.data || [])) verCount[r.book_id] = (verCount[r.book_id] || 0) + 1;
     // 未串联事件单元（未入任何书）：供前端可视化"哪些还没串成故事"
     const unlinkedAll = (seaRes.data || []).filter(u => !usedIds.has(u.id));
     const unlinked = {
@@ -6868,11 +6872,12 @@ app.get('/api/aevum/books', async (req, res) => {
       samples: unlinkedAll.slice(0, 10).map(u => ({
         id: u.id,
         title: String(u.title || '').slice(0, 30),
+        content: String(u.content || '').replace(/\s+/g, ' ').slice(0, 50),
         time: u.event_time || null
       }))
     };
     res.json({
-      books: (booksRes.data || []).map(b => ({ ...b, unit_count: counts[b.id] || 0 })),
+      books: (booksRes.data || []).map(b => ({ ...b, unit_count: counts[b.id] || 0, updated_count: verCount[b.id] || 0 })),
       last_book_update: lastBookUpdateAt,
       unlinked
     });
