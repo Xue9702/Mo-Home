@@ -4007,11 +4007,10 @@
                 ${updText ? `<span style="font-size:11px;color:#b0a6c4;">更新于 ${updText}</span>` : ''}
                 ${(b.updated_count || 0) > 0 ? `<span style="font-size:11px;color:#e1789a;font-weight:600;">更新 ${b.updated_count} 次</span>` : ''}
                 <span style="margin-left:auto;display:flex;gap:10px;">
-                  <span style="cursor:pointer;color:var(--blue-deep);font-size:12px;" onclick="aevumViewBookVersions(${b.id})">📜 看这个故事怎么变化的</span>
-                  <span style="cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumEditBook(${b.id}, this)">✎ 编辑</span>
+                  <span style="cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="event.stopPropagation();aevumEditBook(${b.id}, this)">✎ 编辑</span>
                 </span>
               </div>
-              <div style="font-size:13px;color:#555;line-height:1.7;">${escapeHtml2(aevumViewText(b.summary))}</div>
+              <div style="font-size:13px;color:#555;line-height:1.7;cursor:pointer;" title="${(b.updated_count || 0) > 0 ? '点此查看故事变化' : ''}" onclick="event.stopPropagation();aevumViewBookVersions(${b.id})">${escapeHtml2(aevumViewText(b.summary))}</div>
               <div id="aevumBookBody_${b.id}" style="display:none;"></div>
             </div>`;
         }).join('')
@@ -4550,6 +4549,7 @@
           const data = await res.json().catch(() => ({}));
           const book = data.book || {};
           const versions = data.versions || [];
+          if (!versions.length) return; // 没有更新过的记忆：点击无反应
           const overlay = document.createElement('div');
           overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center;';
           const box = document.createElement('div');

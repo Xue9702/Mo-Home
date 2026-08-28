@@ -6862,7 +6862,7 @@ app.get('/api/aevum/books', async (req, res) => {
       counts[r.book_id] = (counts[r.book_id] || 0) + 1;
       usedIds.add(r.memory_id);
     }
-    // 更新次数 = 该书的版本历史条数（每次生长确认生成一个新版本）
+    // 更新次数：books 表 updated_count 列（列未建时回退版本表统计）
     const verCount = {};
     for (const r of (verRes.data || [])) verCount[r.book_id] = (verCount[r.book_id] || 0) + 1;
     // 未串联事件单元（未入任何书）：供前端可视化"哪些还没串成故事"
@@ -6877,7 +6877,11 @@ app.get('/api/aevum/books', async (req, res) => {
       }))
     };
     res.json({
-      books: (booksRes.data || []).map(b => ({ ...b, unit_count: counts[b.id] || 0, updated_count: verCount[b.id] || 0 })),
+      books: (booksRes.data || []).map(b => ({
+        ...b,
+        unit_count: counts[b.id] || 0,
+        updated_count: b.updated_count != null ? (Number(b.updated_count) || 0) : (verCount[b.id] || 0)
+      })),
       last_book_update: lastBookUpdateAt,
       unlinked
     });
@@ -7032,6 +7036,9 @@ async function confirmBookCandidates(bookId) {
         relation_type: contradictPairs.length ? 'superseded-contradict' : 'superseded'
       });
       await supabase.from('aevum_books').update({ summary: newSummary, updated_at: new Date().toISOString() }).eq('id', bookId);
+      // 更新次数 +1（books 表自身计数，不依赖版本表；版本表继续写供追溯）
+      const { data: curBook } = await supabase.from('aevum_books').select('updated_count').eq('id', bookId).single();
+      await supabase.from('aevum_books').update({ updated_count: (Number(curBook?.updated_count) || 0) + 1 }).eq('id', bookId);
       summaryUpdated = true;
       lastBookUpdateAt = Date.now(); // 记忆书生长红点/弹窗
     }
