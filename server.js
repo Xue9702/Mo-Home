@@ -5656,7 +5656,7 @@ async function checkBookAssociation(memoryId, content) {
           }
         }
       } catch (e) { /* 单元对比失败不影响 */ }
-      if (bestSim >= 0.78) {
+      if (bestSim >= 0.70) {
         const { data: dup } = await supabase
           .from('aevum_book_candidates')
           .select('id')
