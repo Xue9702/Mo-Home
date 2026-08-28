@@ -3740,6 +3740,28 @@
       // 每 10 秒轮询一次游戏状态（本地直连，不耗 tokens；是否真的触发由 farmState.monitor 决定）
       setInterval(() => { farmPoll(); }, 10000);
 
+      // 记忆书更新提醒（弹窗 + 未读红点基于 localStorage 'aevumBookLastView'）
+      let bookToastTimer = null;
+      function showBookUpdateToast() {
+        if (document.getElementById('bookUpdateToast')) return;
+        const t = document.createElement('div');
+        t.id = 'bookUpdateToast';
+        t.style.cssText = 'position:fixed;top:70px;left:50%;transform:translateX(-50%);background:#fff;border:1px solid var(--blue);border-radius:14px;padding:10px 14px;font-size:13px;color:var(--dark);z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.15);display:flex;align-items:center;gap:10px;';
+        t.innerHTML = '📚 记忆书有新更新' +
+          '<button onclick="aevumGoBooks()" style="border:none;border-radius:8px;background:var(--blue);color:var(--cream);padding:5px 12px;font-size:12px;cursor:pointer;">去看看</button>' +
+          '<span onclick="this.parentNode.remove()" style="cursor:pointer;color:#aaa;font-size:14px;">✕</span>';
+        document.body.appendChild(t);
+        clearTimeout(bookToastTimer);
+        bookToastTimer = setTimeout(() => t.remove(), 8000);
+      }
+      function aevumGoBooks() {
+        localStorage.setItem('aevumBookLastView', String(Date.now()));
+        const to = document.getElementById('bookUpdateToast');
+        if (to) to.remove();
+        aevumSetView('book');
+      }
+      window.aevumGoBooks = aevumGoBooks;
+
       async function renderAevum() {
         const box = document.getElementById('aevumContent');
         if (!box) return;
@@ -3768,6 +3790,13 @@
           let list = (await listRes.json()).memories || [];
           const stats = await statsRes.json();
           const bookData = bookRes && bookRes.ok ? await bookRes.json() : { books: [] };
+          // 记忆书更新提醒：新更新（超过上次查看）→ 弹窗（每批更新只弹一次）
+          const lastBookView = Number(localStorage.getItem('aevumBookLastView') || 0);
+          const lastBookUpd = Number(bookData.last_book_update || 0);
+          if (lastBookUpd > lastBookView && lastBookUpd !== (window.__bookToastShownFor || 0)) {
+            window.__bookToastShownFor = lastBookUpd;
+            setTimeout(showBookUpdateToast, 600);
+          }
           const planData = planRes && planRes.ok ? await planRes.json() : { active: [], expired: [] };
           const todoData = todoRes && todoRes.ok ? await todoRes.json() : { items: [] };
           const candData = candRes && candRes.ok ? await candRes.json() : { groups: [] };
@@ -3961,11 +3990,17 @@
                 <button onclick="aevumConfirmCandidates(${g.book_id})" style="border:none;border-radius:12px;background:var(--blue);color:var(--cream);padding:7px 14px;font-size:12px;cursor:pointer;">生成故事</button>
               </div>`).join('')}
           </div>` : '';
-        const storiesHtml = books.length ? books.map(b => `
+        const storiesHtml = books.length ? books.map(b => {
+          const bUpd = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+          const isNew = bUpd > Number(localStorage.getItem('aevumBookLastView') || 0);
+          const updText = b.updated_at ? new Date(b.updated_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '';
+          return `
             <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                ${isNew ? '<span style="width:8px;height:8px;border-radius:50%;background:#e74c3c;flex-shrink:0;" title="有更新未读"></span>' : ''}
                 <span style="cursor:pointer;font-size:14px;font-weight:600;color:#333;" onclick="aevumToggleBook(${b.id})">${escapeHtml2(aevumViewText(b.label || '（无标签）'))}</span>
                 <span style="font-size:11px;color:#8a83a8;">${b.unit_count || 0} 个事件单元</span>
+                ${updText ? `<span style="font-size:11px;color:#b0a6c4;">更新于 ${updText}</span>` : ''}
                 <span style="margin-left:auto;display:flex;gap:10px;">
                   <span style="cursor:pointer;color:var(--blue-deep);font-size:12px;" onclick="aevumViewBookVersions(${b.id})">📜 看这个故事怎么变化的</span>
                   <span style="cursor:pointer;color:#888;font-size:12px;" data-label="${escapeHtml2(b.label || '')}" data-summary="${escapeHtml2(b.summary || '')}" onclick="aevumEditBook(${b.id}, this)">✎ 编辑</span>
@@ -3973,7 +4008,8 @@
               </div>
               <div style="font-size:13px;color:#555;line-height:1.7;">${escapeHtml2(aevumViewText(b.summary))}</div>
               <div id="aevumBookBody_${b.id}" style="display:none;"></div>
-            </div>`).join('')
+            </div>`;
+        }).join('')
             : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">记忆书还是空的，点「✨ 生成记忆书」把事件单元串成故事线吧~</div>';
         return `
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
