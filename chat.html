@@ -4012,6 +4012,9 @@
               </div>
               <div style="font-size:13px;color:#555;line-height:1.7;cursor:pointer;" title="${(b.updated_count || 0) > 0 ? '点此查看故事变化' : ''}" onclick="event.stopPropagation();aevumViewBookVersions(${b.id})">${escapeHtml2(aevumViewText(b.summary))}</div>
               <div id="aevumBookBody_${b.id}" style="display:none;"></div>
+              <div style="display:flex;justify-content:center;padding-top:4px;border-top:1px dashed var(--line);margin-top:4px;">
+                <span id="aevumBookToggle_${b.id}" data-count="${b.unit_count || 0}" style="cursor:pointer;color:var(--blue-deep);font-size:12px;user-select:none;" onclick="aevumToggleBook(${b.id})">▾ 展开事件单元（${b.unit_count || 0}）</span>
+              </div>
             </div>`;
         }).join('')
             : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">记忆书还是空的，点「✨ 生成记忆书」把事件单元串成故事线吧~</div>';
@@ -4437,7 +4440,13 @@
       async function aevumToggleBook(id) {
         const body = document.getElementById('aevumBookBody_' + id);
         if (!body) return;
-        if (body.style.display !== 'none') { body.style.display = 'none'; return; }
+        const toggle = document.getElementById('aevumBookToggle_' + id);
+        const setBtn = (open) => { if (toggle) toggle.innerHTML = open ? '▴ 收起事件单元' : '▾ 展开事件单元（' + (body.dataset.count || '') + '）'; };
+        if (body.style.display !== 'none') {
+          body.style.display = 'none';
+          setBtn(false);
+          return;
+        }
         if (!aevumState.topicCache['b' + id]) {
           body.innerHTML = '<div style="font-size:12px;color:#b0a6c4;">加载中…</div>';
           try {
@@ -4460,6 +4469,7 @@
               </div>`).join('')
           : '<div style="font-size:12px;color:#b0a6c4;">这段故事还没有事件单元</div>';
         body.style.display = 'block';
+        setBtn(true);
       }
       window.aevumToggleBook = aevumToggleBook;
 
