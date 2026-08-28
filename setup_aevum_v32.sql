@@ -7,10 +7,19 @@
 
 ALTER TABLE public.aevum_books ADD COLUMN IF NOT EXISTS updated_count integer DEFAULT 0;
 
--- 存量初始化：updated_at 明显晚于 created_at 的书视为至少更新过 1 次（无法追溯真实次数）
+-- 存量初始化 A：updated_at 明显晚于 created_at 的书视为至少更新过 1 次（无法追溯真实次数）
 UPDATE public.aevum_books
 SET updated_count = 1
 WHERE updated_count = 0
   AND updated_at > created_at + interval '1 minute';
 
--- 说明：今后每次续写成功 updated_count +1，版本表继续记录（供"故事怎么变化"追溯）
+-- 存量初始化 B：有过 confirmed 候选历史（点过"生成故事"确认续写）的书也视为至少更新过 1 次
+-- （早期续写可能成功追加了事件但未更新 summary/版本，这里一并标记）
+UPDATE public.aevum_books
+SET updated_count = GREATEST(updated_count, 1)
+WHERE EXISTS (
+  SELECT 1 FROM public.aevum_book_candidates c
+  WHERE c.book_id = public.aevum_books.id AND c.status = 'confirmed'
+);
+
+-- 说明：今后每次续写成功 updated_count +1，版本表继续记录（供"故事变化"追溯）

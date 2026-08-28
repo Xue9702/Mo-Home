@@ -6961,11 +6961,14 @@ async function appendBookSummary(label, currentSummary, newUnits) {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: '现有 summary：\n' + String(currentSummary || '') + '\n\n新增事件：\n' + lines }], reasoning_effort: 'low', max_tokens: 800, temperature: 0.4, stream: false })
+      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: '现有 summary：\n' + String(currentSummary || '') + '\n\n新增事件：\n' + lines }], reasoning_effort: 'low', max_tokens: 3000, temperature: 0.4, stream: false })
     });
-    if (!resp.ok) return '';
+    if (!resp.ok) {
+      console.error('记忆书追加失败:', resp.status, (await resp.text().catch(() => '')).slice(0, 200));
+      return '';
+    }
     const data = await resp.json();
-    return String(data.choices?.[0]?.message?.content || '').trim().slice(0, 500);
+    return String(data.choices?.[0]?.message?.content || '').trim().slice(0, 2500);
   } catch (e) {
     console.error('记忆书追加失败:', e.message);
     return '';
@@ -7071,7 +7074,7 @@ app.post('/api/aevum/books/:id/confirm-candidates', async (req, res) => {
 app.get('/api/aevum/books/:id/versions', async (req, res) => {
   const bookId = parseInt(req.params.id, 10);
   try {
-    const { data: book } = await supabase.from('aevum_books').select('id, label, summary, updated_at').eq('id', bookId).single();
+    const { data: book } = await supabase.from('aevum_books').select('id, label, summary, updated_at, updated_count').eq('id', bookId).single();
     const { data: versions } = await supabase.from('aevum_book_versions').select('*').eq('book_id', bookId).order('version_no', { ascending: false });
     res.json({ book: book || null, versions: versions || [] });
   } catch (e) {

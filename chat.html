@@ -4549,14 +4549,15 @@
           const data = await res.json().catch(() => ({}));
           const book = data.book || {};
           const versions = data.versions || [];
-          if (!versions.length) return; // 没有更新过的记忆：点击无反应
+          const updCount = Number(book.updated_count) || 0;
+          if (updCount === 0) return; // 没更新过的记忆：点击无反应
           const overlay = document.createElement('div');
           overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center;';
           const box = document.createElement('div');
           box.style.cssText = 'background:var(--card);border-radius:16px;padding:16px;width:min(92vw,540px);max-height:82vh;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;';
           box.innerHTML = `
             <div style="font-size:15px;font-weight:600;color:var(--dark);">📜 「${escapeHtml2(aevumViewText(book.label || '（无标签）'))}」的故事变化</div>
-            <div style="font-size:12px;color:var(--muted);">已更新 <b style="color:#e1789a;">${versions.length}</b> 次 · 当前版本（最新）：</div>
+            <div style="font-size:12px;color:var(--muted);">已更新 <b style="color:#e1789a;">${updCount}</b> 次 · 当前版本（最新）：</div>
             <div style="font-size:13px;color:var(--dark);background:#FAF6EF;border:1px solid var(--blue);border-radius:10px;padding:8px;line-height:1.6;">${escapeHtml2(aevumViewText(book.summary || ''))}</div>
             <div style="overflow-y:auto;display:flex;flex-direction:column;gap:10px;">
               ${versions.map(v => `
@@ -4567,7 +4568,7 @@
                     ${v.relation_type === 'superseded-contradict' ? '<span style="font-size:11px;color:#c0846b;">发生过矛盾更新</span>' : v.relation_type === 'superseded' ? '<span style="font-size:11px;color:#8a97a5;">旧版存档</span>' : ''}
                   </div>
                   <div style="font-size:12px;color:#666;line-height:1.6;border-top:1px dashed var(--line);padding-top:6px;">${escapeHtml2(aevumViewText(v.summary || ''))}</div>
-                </div>`).join('') || '<div style="font-size:12px;color:var(--muted);">还没有历史版本</div>'}
+                </div>`).join('') || '<div style="font-size:12px;color:var(--muted);line-height:1.7;">早期更新时未保留历史版本（当时是直接续写/覆写），只能看到当前的故事内容。之后的每次更新都会自动存档历史版本。</div>'}
             </div>
             <button onclick="this.closest('div[style*=\\"position:fixed\\"]').remove()" style="padding:9px;border:none;border-radius:12px;background:#eee;color:#555;font-size:13px;cursor:pointer;">关闭</button>`;
           overlay.appendChild(box);
