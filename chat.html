@@ -6134,11 +6134,13 @@
           ${section('① 时间戳', data.time)}
           ${section('② 人设', data.persona)}
           ${section('③ 天气', data.weatherContext)}
-          ${section('④ 注入的记忆（记忆海/记忆书/记忆心/计划）', data.memoryContext)}
-          ${section('⑤ 动态', data.momentsContext)}
-          ${section('⑥ 聊天记录（按字数上限约5000字）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
-          ${section('⑦ 工具指令（搜索/动态/默札/玩具）· 放最后', data.toolsText)}
-          ${section('⑧ 组装后的完整系统提示（供参考）', data.systemPrompt)}`;
+          ${section('④ 心情状态（情绪系统注入）', data.moodContext)}
+          ${section('⑤ 依恋状态（想念系统注入）', data.longingContext)}
+          ${section('⑥ 注入的记忆（记忆海/记忆书/记忆心/计划）', data.memoryContext)}
+          ${section('⑦ 动态', data.momentsContext)}
+          ${section('⑧ 聊天记录（按字数上限约5000字）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
+          ${section('⑨ 工具指令（搜索/动态/默札/玩具）· 放最后', data.toolsText)}
+          ${section('⑩ 组装后的完整系统提示（供参考）', data.systemPrompt)}`;
         box.classList.add('feature-modal');
         overlay.appendChild(box);
         overlay.addEventListener('click', e => { if (e.target === overlay) closeCtxPreview(); });

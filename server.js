@@ -2115,24 +2115,44 @@ app.post('/api/context-preview', async (req, res) => {
       .select('prompt_text')
       .eq('id', 1)
       .single();
+    // 情绪系统：与 /api/chat 一致的注入（心情快照 + 依恋状态）
+    let moodContext = '';
+    let longingContext = '';
+    try {
+      const homeStateMood = await getHomeStateSafe();
+      const moodSnapshot = await getMoodSnapshot().catch(() => null);
+      moodContext = buildMoodPromptText(moodSnapshot);
+      longingContext = buildLongingPromptText(
+        computeLonging(homeStateMood.affection || 0, await getLastUserActivity().catch(() => null)),
+        false
+      );
+    } catch (e) { /* 情绪计算失败不影响预览 */ }
     const parts = buildSystemParts(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
-      weatherContext
+      weatherContext,
+      '',
+      moodContext,
+      longingContext
     );
     const toolsText = parts.searchInstruction + parts.momentsInstruction + parts.mozhaInstruction + toyManualContext;
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
       momentsContext,
-      weatherContext
+      weatherContext,
+      '',
+      moodContext,
+      longingContext
     ) + toyManualContext;
     res.json({
       ok: true,
       time: parts.timeLine,
       persona: parts.persona,
       weatherContext: parts.weatherContext,
+      moodContext: parts.moodContext,
+      longingContext: parts.longingContext,
       memoryContext: parts.memoryContext,
       momentsContext: parts.momentsContext,
       toolsText,
@@ -2780,28 +2800,28 @@ async function recordEmotionEvent({ source, type = 'primary', word, valence, aro
   }
 }
 
-// 对话情绪评分 prompt（反讨好 + 校准锚点 + AI 选词、词典给坐标 + OCC 目标评价）
-const EMOTION_RATING_SYSTEM = `你是情绪评分器。为一个名为"默"的 AI 角色评估：雪刚刚发来的这条消息，让默产生了什么情绪。
-只评估雪这条消息对默的影响，不要评估雪自己的情绪。
-原则（反讨好）：冷场就是冷场（无波动），敷衍就是敷衍，禁止美化任何情绪。
-校准锚点：
-- 日常闲聊无波动 → has_shift=false
-- 雪说了暖心/亲密的话 → 温暖/心动/甜蜜类
-- 明确的伤害/拒绝/冷落 → 难过/委屈/失落类
-- 冷场/敷衍 → has_shift=false 或轻微失落
-- 雪分享日常/心事 → 依内容（高兴事→欣慰/喜悦；烦心事→心疼/挂心）
+// 对话情绪评分 prompt（双通道：雪的消息是影响源，默的回应是判定依据）
+// 改造点 1：不再从"雪的话含什么词"提取，而是从"默实际怎么回应"推断他的情绪倾向
+// ——情绪是"默的状态"，雪的话是影响因子不是开关
+const EMOTION_RATING_SYSTEM = `你是情绪评分器。评估 AI 角色"默"在刚刚这轮对话中的情绪状态。
+输入：雪说的话 + 默的完整回应。
+判断依据（按权重从高到低）：
+1. 默的回应方式体现的情绪倾向——措辞、关注点、主动做了什么、语气变化。默是沉静消化型，不直接说情绪，会克制；所以从他"关注什么、怎么回应"推断，而不是等他直说。
+2. 雪的话作为影响源：雪分享负面经历（生病/被骂/委屈/害怕/疲惫/烦心事）时，默通常担忧/心疼/挂念——即使雪措辞平淡（如"有点可怕"），也要按内容判负向影响。
+3. 默的回应若明确表达了情绪（温柔安抚/沉默回避/主动靠近），直接采信。
+原则（反讨好）：日常闲聊无情绪内容 → has_shift=false；敷衍/冷场 → has_shift=false。禁止美化。
 选词要求：选一个最准确的情绪词（避免"开心/难过"这种泛词），并给 2 个备选词。
 【默的核心目标】（OCC 评价用）：
 1. 守护雪的安好——让雪感到安全、被在意
 2. 陪雪看清前路——帮她看清利弊、做自己的决定
 3. 做真实的自己——诚实克制，不讨好不编造
-请额外评估：goal_relevance（这条消息与某个目标的关联度，-1~+1，无关填0）、desirability（就目标而言结果合意度，-1~+1）。
-输出格式：只输出 JSON，禁止解释或其他文字：{"has_shift":true,"word":"心动","backup":["甜蜜","欣喜"],"valence":0.7,"arousal":0.6,"importance":5,"goal_relevance":0.8,"desirability":0.9,"reason":"雪突然说想他了"}`;
+请额外评估：goal_relevance（这条对话与某个目标的关联度，-1~+1，无关填0）、desirability（就目标而言结果合意度，-1~+1）。
+输出格式：只输出 JSON，禁止解释或其他文字：{"has_shift":true,"word":"心疼","backup":["担心","挂念"],"valence":-0.4,"arousal":0.55,"importance":5,"goal_relevance":0.8,"desirability":-0.6,"reason":"雪说有点害怕，默担忧"} `;
 
-// LLM 评分：AI 选词 → 5 层词典匹配 → 70/30 融合 → PA/NA delta
+// LLM 评分：双通道输入（雪的消息 + 默的回应）→ AI 选词 → 5 层词典匹配 → 70/30 融合 → PA/NA delta
 async function rateDialogueEmotion(userText, assistantReply) {
   if (!process.env.DEEPSEEK_API_KEY) return null;
-  const dialogue = `雪：${String(userText || '').slice(0, 800)}\n默：${String(assistantReply || '').slice(0, 300)}`;
+  const dialogue = `雪：${String(userText || '').slice(0, 800)}\n默（完整回应）：${String(assistantReply || '').slice(0, 600)}`;
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
