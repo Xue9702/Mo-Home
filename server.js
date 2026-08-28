@@ -2552,12 +2552,12 @@ async function getHomeStateSafe() {
   }
 }
 
-// ================== 记忆书自动化（每 20 分钟） ==================
+// ================== 记忆书自动化（每 5 分钟） ==================
 // 1) 事件单元攒够（未入书 ≥10）→ 自动串联生成记忆书（24h 防抖）
-// 2) 候选堆积 → 自动确认记忆书生长（每书 1h 防抖）
+// 2) 候选堆积 → 自动确认记忆书生长（每书 1h 防抖，失败不防抖可重试）
 let lastAutoClusterAt = 0;
 const autoConfirmedAt = new Map();
-setInterval(async () => {
+const runBookAutomation = async () => {
   try {
     const now = Date.now();
     // 1) 自动串联
@@ -2568,7 +2568,7 @@ setInterval(async () => {
         .from('aevum_memories')
         .select('id')
         .eq('area', 'sea')
-        .limit(120);
+        .limit(200);
       const fresh = (seaUnits || []).filter(u => !used.has(u.id)).length;
       if (fresh >= 10) {
         lastAutoClusterAt = now;
@@ -2583,15 +2583,21 @@ setInterval(async () => {
     for (const [bookId, list] of Object.entries(pendingByBook)) {
       if (!list.length) continue;
       if (now - (autoConfirmedAt.get(bookId) || 0) < 3600000) continue;
-      autoConfirmedAt.set(bookId, now);
       const r = await confirmBookCandidates(Number(bookId)).catch(e => null);
-      if (r && r.error) console.log('🤖 自动确认 book', bookId, '跳过:', r.error);
-      else console.log('🤖 自动确认记忆书 book', bookId, ':', r ? `+${r.added} 新增` : '失败');
+      if (r && r.error) {
+        console.log('🤖 自动确认 book', bookId, '跳过（失败可重试）:', r.error);
+      } else {
+        autoConfirmedAt.set(bookId, now); // 只在成功时防抖
+        console.log('🤖 自动确认记忆书 book', bookId, ':', r ? `+${r.added} 新增` : '失败');
+      }
     }
   } catch (e) {
     console.error('记忆书自动化失败:', e.message);
   }
-}, 20 * 60 * 1000);
+};
+// 部署后 30 秒先跑一次（消化堆积的候选），之后每 5 分钟
+setTimeout(() => { runBookAutomation().catch(() => {}); }, 30000);
+setInterval(() => { runBookAutomation().catch(() => {}); }, 5 * 60 * 1000);
 
 // ================== 情绪系统 v1 ==================
 // 模型：PA/NA 双轴（PANAS）→ 情绪事件流 → 幂律衰减+onset → ALMA 软门限
@@ -6654,20 +6660,21 @@ async function buildBookClusters() {
         .select('id, title, content, event_time, tags')
         .eq('area', 'sea')
         .order('event_time', { ascending: false })
-        .limit(80);
-      units = (data || []).filter(u => !used.has(u.id)).slice(0, 50);
+        .limit(200);
+      units = (data || []).filter(u => !used.has(u.id)).slice(0, 120);
     } catch (e) {
       return { books: [], created: 0, message: '记忆书整理失败：请确认已执行 setup_aevum_v30.sql' };
     }
     if (units.length < 2) {
       return { books: [], created: 0, message: units.length === 0 ? '记忆海还没有可整理的事件单元，先聊聊天攒一些~' : `目前只有 ${units.length} 个可整理的事件单元，至少需要 2 个才能串成故事线，再多聊聊天试试~` };
     }
-    let budget = 16000;
+    let budget = 40000;
     const lines = [];
     for (const u of units) {
       if (budget <= 0) break;
       const when = u.event_time ? String(u.event_time).slice(0, 16).replace('T', ' ') : '';
-      const line = `${u.id}. [${when}] ${String(u.title || '').slice(0, 40)}：${String(u.content || '').replace(/\s+/g, ' ').slice(0, 160)}${u.tags && u.tags.length ? '（' + u.tags.slice(0, 4).join('、') + '）' : ''}`;
+      // 内容尽量给全（上限 500 字/条），让 AI 有足够信息判断话题
+      const line = `${u.id}. [${when}] ${String(u.title || '').slice(0, 40)}：${String(u.content || '').replace(/\s+/g, ' ').slice(0, 500)}${u.tags && u.tags.length ? '（' + u.tags.slice(0, 4).join('、') + '）' : ''}`;
       if (line.length > budget) break;
       budget -= line.length;
       lines.push(line);
@@ -6843,18 +6850,34 @@ app.post('/api/aevum/books/regenerate', async (req, res) => {
 
 app.get('/api/aevum/books', async (req, res) => {
   try {
-    const [booksRes, itemsRes] = await Promise.all([
+    const [booksRes, itemsRes, seaRes] = await Promise.all([
       supabase.from('aevum_books').select('*').order('updated_at', { ascending: false }),
-      supabase.from('aevum_book_items').select('book_id, memory_id')
+      supabase.from('aevum_book_items').select('book_id, memory_id'),
+      supabase.from('aevum_memories').select('id, title, event_time').eq('area', 'sea').order('event_time', { ascending: false }).limit(200)
     ]);
     const counts = {};
-    for (const r of (itemsRes.data || [])) counts[r.book_id] = (counts[r.book_id] || 0) + 1;
+    const usedIds = new Set();
+    for (const r of (itemsRes.data || [])) {
+      counts[r.book_id] = (counts[r.book_id] || 0) + 1;
+      usedIds.add(r.memory_id);
+    }
+    // 未串联事件单元（未入任何书）：供前端可视化"哪些还没串成故事"
+    const unlinkedAll = (seaRes.data || []).filter(u => !usedIds.has(u.id));
+    const unlinked = {
+      count: unlinkedAll.length,
+      samples: unlinkedAll.slice(0, 10).map(u => ({
+        id: u.id,
+        title: String(u.title || '').slice(0, 30),
+        time: u.event_time || null
+      }))
+    };
     res.json({
       books: (booksRes.data || []).map(b => ({ ...b, unit_count: counts[b.id] || 0 })),
-      last_book_update: lastBookUpdateAt
+      last_book_update: lastBookUpdateAt,
+      unlinked
     });
   } catch (e) {
-    res.json({ books: [] });
+    res.json({ books: [], unlinked: { count: 0, samples: [] } });
   }
 });
 

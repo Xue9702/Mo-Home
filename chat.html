@@ -3993,7 +3993,7 @@
         const storiesHtml = books.length ? books.map(b => {
           const bUpd = b.updated_at ? new Date(b.updated_at).getTime() : 0;
           const isNew = bUpd > Number(localStorage.getItem('aevumBookLastView') || 0);
-          const updText = b.updated_at ? new Date(b.updated_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '';
+          const updText = b.updated_at ? new Date(b.updated_at).toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' }) : '';
           return `
             <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -4011,6 +4011,24 @@
             </div>`;
         }).join('')
             : '<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">记忆书还是空的，点「✨ 生成记忆书」把事件单元串成故事线吧~</div>';
+        const unlinkedData = bookData.unlinked || { count: 0, samples: [] };
+        const unlinkedCard = unlinkedData.count > 0 ? `
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;border:1px dashed var(--line);">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:var(--dark);">📄 未串联事件单元（${unlinkedData.count}）</span>
+              <span style="font-size:11px;color:var(--muted);">这些事件还没被串进任何故事</span>
+              <span style="margin-left:auto;cursor:pointer;color:var(--blue-deep);font-size:12px;" onclick="aevumToggleUnlinked(this)">展开/收起 ▾</span>
+            </div>
+            <div class="unlinked-list" style="display:none;flex-direction:column;gap:4px;">
+              ${unlinkedData.samples.map(u => `
+                <div style="font-size:12px;color:#666;padding:3px 0;border-bottom:1px solid #f6f2f8;">
+                  <span>${escapeHtml2(aevumViewText(u.title || '（无标题）'))}</span>
+                  ${u.time ? `<span style="color:#b0a6c4;"> · ${new Date(u.time).toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' })}</span>` : ''}
+                  <span style="cursor:pointer;color:var(--blue-deep);margin-left:8px;" onclick="aevumJumpToSea()">去记忆海看 →</span>
+                </div>`).join('')}
+              ${unlinkedData.count > 10 ? `<div style="font-size:11px;color:var(--muted);">…还有 ${unlinkedData.count - 10} 个</div>` : ''}
+            </div>
+          </div>` : '';
         return `
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -4023,11 +4041,21 @@
             </div>
             <div style="font-size:11px;color:#b0a6c4;">点故事线看它包含的事件单元；点事件可看原文。</div>
           </div>
+          ${unlinkedCard}
           ${candBanner}
           ${plansCard}
           ${todoCard}
           ${storiesHtml}`;
       }
+
+      function aevumToggleUnlinked(el) {
+        const card = el.closest('.feature-card');
+        const list = card ? card.querySelector('.unlinked-list') : null;
+        if (list) list.style.display = list.style.display === 'flex' ? 'none' : 'flex';
+      }
+      window.aevumToggleUnlinked = aevumToggleUnlinked;
+      function aevumJumpToSea() { aevumSetView('sea'); }
+      window.aevumJumpToSea = aevumJumpToSea;
 
       // v3.0 记忆心面板：我眼里的默 / 画像 / 承诺 / 默札占位
       function renderHeartPanel(moData, profData, promData, mozhaCount) {
