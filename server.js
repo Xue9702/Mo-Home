@@ -5628,11 +5628,13 @@ async function getUnitEmbedding(unit) {
   return emb || null;
 }
 
-// 新单元与已有记忆书（摘要 + 已有事件单元）相似度 ≥0.70 → 写入待确认候选（不直接落地）
+// 新单元与已有记忆书（摘要 + 已有事件单元）相似度 ≥0.78 → 写入待确认候选（不直接落地）
+// 0.78 较原 0.70 更严格：减少大量弱相关候选（它们确认时多半被 SKIP，书实际没生长）
 async function checkBookAssociation(memoryId, content) {
   try {
     const emb = await getEmbedding(String(content || '').slice(0, 500));
     if (!emb) return;
+    const norm80 = String(content || '').replace(/\s+/g, '').slice(0, 80);
     const { data: books } = await supabase.from('aevum_books').select('id, label, summary');
     if (!books || !books.length) return;
     for (const b of books) {
@@ -5646,12 +5648,15 @@ async function checkBookAssociation(memoryId, content) {
         if (ids.length) {
           const { data: units } = await supabase.from('aevum_memories').select('id, content').in('id', ids);
           for (const u of (units || [])) {
+            const uNorm = String(u.content || '').replace(/\s+/g, '').slice(0, 80);
+            // 与书内已有单元内容完全一致（去重合并过的重复事件）→ 不是新内容，不写候选
+            if (uNorm && norm80 && uNorm === norm80) return;
             const uEmb = await getUnitEmbedding(u);
             if (uEmb) bestSim = Math.max(bestSim, cosineSim(emb, uEmb));
           }
         }
       } catch (e) { /* 单元对比失败不影响 */ }
-      if (bestSim >= 0.70) {
+      if (bestSim >= 0.78) {
         const { data: dup } = await supabase
           .from('aevum_book_candidates')
           .select('id')
@@ -6988,7 +6993,7 @@ async function confirmBookCandidates(bookId) {
   const oldIds = (items || []).map(r => r.memory_id).filter(id => !candIds.includes(id));
   const { data: oldMems } = oldIds.length ? await supabase.from('aevum_memories').select('id, title, content, event_time').in('id', oldIds) : { data: [] };
   const unitLine = m => `[${m.event_time ? String(m.event_time).slice(0, 10) : '未知'}] ${String(m.title || '').slice(0, 20)}：${String(m.content || '').replace(/\s+/g, ' ').slice(0, 100)}`;
-  const system = '你是 Aevum Memory 的记忆书生长判断器。判断每个候选事件单元与记忆书「' + book.label + '」的关系，三选一：CONTINUE=旧故事的后续发展不矛盾，加入书里；CONTRADICT=推翻了旧摘要里的事实，加入书里并标记矛盾；SKIP=纯重复或关系不大，跳过。只输出 JSON 数组，格式：[{"memory_id":1,"action":"CONTINUE","contradicts_id":null}]；contradicts_id 仅 CONTRADICT 时填被推翻的旧单元 id，无则 null。';
+  const system = '你是 Aevum Memory 的记忆书生长判断器。候选单元是系统按相似度自动关联进记忆书「' + book.label + '」的新事件，默认应判定为 CONTINUE（加入书里并续写故事）。只有以下情况才 SKIP：单元与书内已有内容完全重复、或明显无关。CONTRADICT 只在单元推翻了旧摘要里的事实时才使用（加入书里并标记矛盾）。只输出 JSON 数组，格式：[{"memory_id":1,"action":"CONTINUE","contradicts_id":null}]；contradicts_id 仅 CONTRADICT 时填被推翻的旧单元 id，无则 null。';
   const user = '当前摘要：' + book.summary + '\n\n书中已有单元：\n' + ((oldMems || []).map(unitLine).join('\n') || '（无）') + '\n\n候选单元：\n' + ((candMems || []).map(unitLine).join('\n'));
   const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
