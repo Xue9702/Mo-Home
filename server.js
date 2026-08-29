@@ -2209,6 +2209,12 @@ app.post('/api/context-preview', async (req, res) => {
       longingContext
     );
     const toolsText = parts.searchInstruction + parts.momentsInstruction + parts.mozhaInstruction + toyManualContext;
+    // 射精值系统：状态注入（与主对话一致）
+    let arousalStatus = '';
+    try {
+      const aState = await getArousalState();
+      arousalStatus = statusLine(aState, Date.now());
+    } catch (e) { /* 状态注入失败不影响预览 */ }
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
@@ -2217,7 +2223,9 @@ app.post('/api/context-preview', async (req, res) => {
       '',
       moodContext,
       longingContext
-    ) + toyManualContext;
+    );
+    if (arousalStatus) systemPrompt += `\n\n【身体状态】\n${arousalStatus}\n（这是身体状态，让它影响节奏和动作；不要复述数字、不要把状态报告给雪）`;
+    systemPrompt += toyManualContext;
     res.json({
       ok: true,
       time: parts.timeLine,
@@ -2225,6 +2233,7 @@ app.post('/api/context-preview', async (req, res) => {
       weatherContext: parts.weatherContext,
       moodContext: parts.moodContext,
       longingContext: parts.longingContext,
+      arousalStatus,
       memoryContext: parts.memoryContext,
       momentsContext: parts.momentsContext,
       toolsText,
