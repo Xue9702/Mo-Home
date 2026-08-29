@@ -5663,7 +5663,7 @@
         }
       }
 
-      function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false, imageData = null, fileName = null) {
+      function addMessage(role, content, thinking = null, timestamp = null, msgId = null, showRefresh = false, imageData = null, fileName = null, noAutoScroll = false) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message ' + role;
 
@@ -5716,7 +5716,7 @@
         }
 
         messageList.appendChild(msgDiv);
-        messageList.scrollTop = messageList.scrollHeight;
+        if (!noAutoScroll) messageList.scrollTop = messageList.scrollHeight;
       }
 
       function addVersionNavigator(groupId, currentVersion, totalVersions, targetMsgElement = null) {
@@ -6062,12 +6062,14 @@
               return;
             }
             const role = msg.role === 'user' ? 'user' : 'assistant';
-            addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
+            addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null, true);
             messageList.insertBefore(messageList.lastElementChild, anchor);
           });
           historyOldestId = Math.min(historyOldestId, ...msgs.map(m => m.id));
           historyHasMore = !!data.hasMore;
-          messageList.scrollTop += messageList.scrollHeight - beforeHeight; // 保持视口位置，不跳回底部
+          // 保持视口位置：新内容从顶部插入，把 scrollTop 加上增量，防止视口被顶动/跳回底部
+          const heightGrown = messageList.scrollHeight - beforeHeight;
+          if (heightGrown > 0) messageList.scrollTop = Math.min(messageList.scrollTop + heightGrown, messageList.scrollHeight);
           showPullToast('✅ 已加载更早记录');
         } catch (e) { console.error('加载更早历史失败:', e); }
         finally { historyLoadingMore = false; }
