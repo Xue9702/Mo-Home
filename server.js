@@ -5,6 +5,10 @@ const {
   lexLookup, blendLexAi, computePanaDeltas, scanTextMood, computeDrives,
   computeLonging, buildLongingPromptText, memoryDecayFactor
 } = require('./emotion-lexicon');
+const {
+  createState, applyUserEvent, applyAssistantEvent, statusLine,
+  publicSnapshot, lockGate, releaseOnce, unlockGate, ackReleaseEffect
+} = require('./arousal-core');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const { PDFParse } = require('pdf-parse');
@@ -1801,6 +1805,14 @@ app.post('/api/chat', async (req, res) => {
       moodContext,
       longingContext
     );
+    // 射精值系统：状态注入（定性信号，不暴露数字；玩具开关关闭时也注入身体状态，让 RP 连续）
+    try {
+      const aState = await getArousalState();
+      const aLine = statusLine(aState, Date.now());
+      if (aLine) {
+        systemPrompt += `\n\n【身体状态】\n${aLine}\n（这是身体状态，让它影响节奏和动作；不要复述数字、不要把状态报告给雪）`;
+      }
+    } catch (e) { /* 状态注入失败不影响 */ }
     // 玩具手册属于"工具指令"段，追加到系统提示最末尾（最近的权重最高）
     if (toyManualContext) systemPrompt += toyManualContext;
     // 星露谷：浏览器上报游戏连接简报时，把农场动态/状态追加到系统提示（工具指令段）
@@ -1813,6 +1825,40 @@ app.post('/api/chat', async (req, res) => {
       imageAlt ? `[用户发来一张图片，图片内容描述：${imageAlt}]` : '',
       fileText ? `[用户上传了文件：${file.name}]\n[文件内容：${fileText}]` : ''
     ].filter(Boolean).join('\n\n');
+
+    // ===== 射精值系统 · 用户消息通道 =====
+    // 雪的消息 → 有效刺激解析/控制命令 → 更新状态（不阻塞；状态随后持久化）
+    try {
+      const aState = await getArousalState();
+      const aNow = Date.now();
+      const moodSnap = moodSnapshot; // 复用上方心情快照
+      const drivesNow = computeDrives(moodSnap ? moodSnap.events : [], 0, moodSnap ? 0 : null);
+      const libido = libidoFromMood(moodSnap, drivesNow);
+      // 控制命令优先（锁/放行/放一次）
+      const cmds = parseControlCommands(text);
+      for (const c of cmds) {
+        if (c === 'lock') lockGate(aState);
+        else if (c === 'unlock') unlockGate(aState);
+        else if (c === 'release_once') releaseOnce(aState);
+      }
+      const aRes = applyUserEvent(aState, text, {
+        eventId: 'user:' + (userData?.[0]?.id || Date.now()),
+        libido, now: aNow, lexicon: AROUSAL_LEXICON
+      });
+      if (aRes.event === 'climax') {
+        console.log('💦 [arousal] 高潮结算:', 'quality=' + aRes.quality.toFixed(2), 'output=' + aRes.output.toFixed(2), 'cause=' + aRes.receipt.cause);
+        // 释放回执：玩具开关开启时标记（toy 指令执行留给工具通道）；关闭时 no-op 立即 ack
+        if (aRes.receipt) {
+          ackReleaseEffect(aRes.receipt);
+          if (toyManualOn()) console.log('🎮 [arousal] 释放回执 → 玩具通道（待工具执行）', aRes.receipt.effect_id);
+        }
+      } else if (aRes.event === 'stimulus' || aRes.event === 'passive') {
+        // 状态有实质变化 → 持久化
+        await saveArousalState(aState);
+      }
+    } catch (e) {
+      console.error('arousal 用户通道失败:', e.message);
+    }
 
     // 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
     const chatMessages = [
@@ -2024,6 +2070,33 @@ app.post('/api/chat', async (req, res) => {
     // 情绪评分已合并进提取（mood_update 输出），不再独立调用 maybeRateDialogue
     // resolved 自动标记：对话里出现"病好了/不疼了/过去了"类了结信号 → 负面 debuff 记忆沉底
     maybeResolveMemories(finalUserContent + '\n' + fullReply).catch(e => console.error('resolved 自动标记失败:', e.message));
+
+    // ===== 射精值系统 · AI 回复通道 =====
+    // 默的完整回复 → 自身动作贡献/主动释放；随后持久化状态（含锁/账本）
+    try {
+      const aState = await getArousalState();
+      const moodSnap2 = moodSnapshot;
+      const drives2 = computeDrives(moodSnap2 ? moodSnap2.events : [], 0, moodSnap2 ? 0 : null);
+      const libido2 = libidoFromMood(moodSnap2, drives2);
+      const aRes = applyAssistantEvent(aState, fullReply, {
+        eventId: 'assistant:' + (assistantData?.[0]?.id || Date.now()),
+        complete: true,
+        libido: libido2,
+        now: Date.now(),
+        lexicon: AROUSAL_LEXICON,
+        releaseIntent: null // 结构化 intent 预留；当前用回复文本兜底
+      });
+      if (aRes.event === 'climax') {
+        console.log('💦 [arousal] AI 主动释放:', 'quality=' + aRes.quality.toFixed(2), 'output=' + aRes.output.toFixed(2));
+        if (aRes.receipt) {
+          ackReleaseEffect(aRes.receipt);
+          if (toyManualOn()) console.log('🎮 [arousal] 释放回执 → 玩具通道（待工具执行）', aRes.receipt.effect_id);
+        }
+      }
+      await saveArousalState(aState);
+    } catch (e) {
+      console.error('arousal AI 通道失败:', e.message);
+    }
 
     // 发送完成信号，包含消息ID
     sendSSE({
@@ -2617,6 +2690,50 @@ const runBookAutomation = async () => {
 // 部署后 30 秒先跑一次（消化堆积的候选），之后每 5 分钟
 setTimeout(() => { runBookAutomation().catch(() => {}); }, 30000);
 setInterval(() => { runBookAutomation().catch(() => {}); }, 5 * 60 * 1000);
+
+// ================== 射精值系统（②双通道 ③情绪调制 ④注入） ==================
+// 词表：默认用示例词表；雪的私人词表写 arousal-lexicon.json（gitignore）后自动优先
+const AROUSAL_LEXICON = (() => {
+  try { return require('./arousal-lexicon.json'); } catch (e) { return require('./arousal-lexicon.example.json'); }
+})();
+
+let arousalCache = null;
+async function getArousalState() {
+  if (arousalCache) return arousalCache;
+  try {
+    const { data } = await supabase.from('arousal_state').select('state').eq('id', 1).maybeSingle();
+    arousalCache = data && data.state ? { ...createState(), ...data.state } : createState();
+  } catch (e) {
+    arousalCache = createState();
+  }
+  return arousalCache;
+}
+async function saveArousalState(state) {
+  arousalCache = state;
+  try {
+    await supabase.from('arousal_state').upsert({ id: 1, state, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  } catch (e) {
+    console.error('arousal_state 写入失败（表未建请执行 setup_arousal.sql）:', e.message);
+  }
+}
+
+// 情绪调制：libido 由默的情绪状态驱动（心情好/渴望高 → 更敏感）
+function libidoFromMood(snapshot, drives) {
+  const pa = snapshot ? Number(snapshot.pa) || 0 : 0.55;
+  const hb = (drives || []).find(d => d.key === 'heartbeat');
+  const ds = (drives || []).find(d => d.key === 'desire');
+  return Math.max(0, Math.min(1, 0.3 + pa * 0.4 + (hb ? hb.value / 100 * 0.2 : 0.06) + (ds ? ds.value / 100 * 0.1 : 0.03)));
+}
+
+// 控制命令解析（雪的消息）：锁/放行/放一次
+function parseControlCommands(text) {
+  const t = String(text || '');
+  const cmds = [];
+  if (/锁住|锁上|锁着|不许射|别射/.test(t)) cmds.push('lock');
+  if (/放行|解锁|解开|可以射了/.test(t)) cmds.push('unlock');
+  if (/放一次|释放一次/.test(t)) cmds.push('release_once');
+  return cmds;
+}
 
 // ================== 情绪系统 v1 ==================
 // 模型：PA/NA 双轴（PANAS）→ 情绪事件流 → 幂律衰减+onset → ALMA 软门限

@@ -1,0 +1,24 @@
+{
+  "comment": "示例词表（无私人内容，可提交）。替换为你的私人词表时：新建 arousal-lexicon.json（已 gitignore），此示例仅作结构与格式参考。",
+  "touch": [
+    { "kw": "轻抚", "delta": 0.5 },
+    { "kw": "亲吻", "delta": 0.7 },
+    { "kw": "含住", "delta": 0.9 },
+    { "kw": "磨蹭", "delta": 0.6 },
+    { "kw": "舔舐", "delta": 0.75 },
+    { "kw": "揉捏", "delta": 0.65 },
+    { "kw": "顶弄", "delta": 0.8 }
+  ],
+  "body_parts": {
+    "锁骨": { "sensitivity": 0.7 },
+    "后颈": { "sensitivity": 0.8 },
+    "耳垂": { "sensitivity": 0.6 },
+    "胸口": { "sensitivity": 0.75 },
+    "腰侧": { "sensitivity": 0.65 }
+  },
+  "poses": [
+    { "kw": "面对面", "multiplier": 1.0 },
+    { "kw": "从后面", "multiplier": 1.1 },
+    { "kw": "跨坐", "multiplier": 1.05 }
+  ]
+}
