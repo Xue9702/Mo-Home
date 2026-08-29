@@ -7,10 +7,15 @@ const LEX = {
     { kw: '轻抚', delta: 0.5 },
     { kw: '亲吻', delta: 0.7 },
     { kw: '含住', delta: 0.9 },
-    { kw: '磨蹭', delta: 0.6 }
+    { kw: '磨蹭', delta: 0.6 },
+    { kw: '吸吮', delta: 0.95 },
+    { kw: '坐下', delta: 0.55 },
+    { kw: '对准', delta: 0.5 }
   ],
-  body_parts: { '锁骨': { sensitivity: 0.7 }, '后颈': { sensitivity: 0.8 } },
-  poses: [{ kw: '从后面', multiplier: 1.1 }]
+  body_parts: { '锁骨': { sensitivity: 0.7 }, '后颈': { sensitivity: 0.8 }, '双腿间': { sensitivity: 0.9 }, '入口': { sensitivity: 0.75 } },
+  poses: [{ kw: '从后面', multiplier: 1.1 }],
+  moans: [{ kw: '嗯', delta: 0.2 }, { kw: '啊', delta: 0.2 }, { kw: '呻吟', delta: 0.25 }],
+  desires: [{ kw: '好想要', delta: 0.35 }]
 };
 
 let passed = 0, failed = 0;
@@ -161,6 +166,41 @@ t('statusLine 定性不暴露数字', () => {
   s.value = 0.5;
   const line = A.statusLine(s, 0);
   assert(line.includes('充能') && !/\d/.test(line), '应定性描述无数字：' + line);
+});
+
+// 13. 次强动作 ×30% 加成（不同动作词）
+t('次强动作加成', () => {
+  const r1 = A.parseStimulus('我轻抚你的锁骨', LEX);
+  const r2 = A.parseStimulus('我轻抚并吸吮你的锁骨', LEX);
+  assert(r1.valid && r2.valid, JSON.stringify(r1) + ' / ' + JSON.stringify(r2));
+  assert(r2.stim > r1.stim, '叠加次强应更高：' + r2.stim + ' > ' + r1.stim);
+  assert.strictEqual(r2.action, '吸吮', '最强应为吸吮');
+  assert.strictEqual(r2.second, '轻抚', '次强应为轻抚');
+});
+
+// 14. 同一动作重复不叠加
+t('同一动作重复不叠加', () => {
+  const r1 = A.parseStimulus('吸吮吸吮吸吮吸吮', LEX);
+  assert(Math.abs(r1.stim - 0.95) < 1e-9, '重复吸吮应等于单次 0.95，实际 ' + r1.stim);
+});
+
+// 15. 隐晦部位别名命中
+t('隐晦部位命中', () => {
+  const r = A.parseStimulus('我轻轻磨蹭着你双腿间', LEX);
+  assert(r.valid && r.part === '双腿间', '双腿间应命中：' + JSON.stringify(r));
+});
+
+// 16. 叫声/欲望 → 弱刺激
+t('叫声弱刺激', () => {
+  const r = A.parseStimulus('嗯…啊…好想要', LEX);
+  assert(r.valid && r.weak && r.stim > 0, '叫声应产生弱刺激：' + JSON.stringify(r));
+});
+
+// 17. 雪的主动动作命中
+t('主动动作命中', () => {
+  const r = A.parseStimulus('我用手扶着他，对准入口，轻轻坐下', LEX);
+  assert(r.valid, '坐下/对准应命中：' + JSON.stringify(r));
+  assert(r.part === '入口', '入口别名应命中：' + JSON.stringify(r));
 });
 
 console.log('\n=== 结果: ' + passed + ' 通过 / ' + failed + ' 失败 ===');

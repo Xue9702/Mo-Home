@@ -94,14 +94,24 @@ function parseStimulus(text, lexicon) {
   if (recallIdx !== -1) return { valid: false, reason: 'recall' };
   if (!lexicon) return { valid: false, reason: 'no_lexicon' };
 
-  // 动作（取最强一个；同消息重复动作不乘多）
-  let bestAction = null;
-  for (const a of (lexicon.touch || [])) {
-    if (t.includes(a.kw)) {
-      if (!bestAction || a.delta > bestAction.delta) bestAction = a;
+  // 动作：最强 + 次强 ×30%（不同动作词才加成；同一动作重复不叠加）
+  const actions = (lexicon.touch || [])
+    .filter(a => t.includes(a.kw))
+    .sort((x, y) => y.delta - x.delta);
+  if (!actions.length) {
+    // 无动作词：叫声/欲望表达 → 弱维持刺激（后半段"只剩叫声"也有有效刺激）
+    const weak = [
+      ...(lexicon.moans || []).filter(m => t.includes(m.kw)).map(m => m.delta),
+      ...(lexicon.desires || []).filter(d => t.includes(d.kw)).map(d => d.delta)
+    ];
+    if (weak.length) {
+      return { valid: true, stim: Math.max(...weak), weak: true, reason: 'moan_desire' };
     }
+    return { valid: false, reason: 'no_action' };
   }
-  if (!bestAction) return { valid: false, reason: 'no_action' };
+  const best = actions[0];
+  const second = actions.find(a => a.kw !== best.kw) || null;
+  let actionStim = best.delta + (second ? second.delta * 0.3 : 0);
 
   // 部位（敏感度，取命中里最高的）
   let bestPart = null;
@@ -115,8 +125,8 @@ function parseStimulus(text, lexicon) {
   for (const pose of (lexicon.poses || [])) {
     if (t.includes(pose.kw)) poseMult = Math.max(poseMult, pose.multiplier);
   }
-  const stim = bestAction.delta * (bestPart ? bestPart.sensitivity : 1.0) * poseMult;
-  return { valid: true, stim, action: bestAction.kw, part: bestPart ? bestPart.part : null, poseMult };
+  const stim = actionStim * (bestPart ? bestPart.sensitivity : 1.0) * poseMult;
+  return { valid: true, stim, action: best.kw, second: second ? second.kw : null, part: bestPart ? bestPart.part : null, poseMult, weak: false };
 }
 
 // ---------- 用户消息入口 ----------

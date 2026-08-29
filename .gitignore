@@ -1,3 +1,4 @@
 node_modules/
 .env
 docs/.pdf-vision-pages/
+arousal-lexicon.json
