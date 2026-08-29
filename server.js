@@ -5673,17 +5673,14 @@ async function getUnitEmbedding(unit) {
   return emb || null;
 }
 
-// 记忆书候选关联队列：新事件不实时全量对比，攒够 10 个或 30 分钟统一跑一次
+// 记忆书候选关联队列：新事件不实时全量对比，攒够 10 个统一跑一次
 // （每批事件只有新单元本身 1 次 embedding，书摘要/单元向量都走缓存/查库，零重复消耗）
+// 说明：只有攒够 10 个才触发；事件稀少时候选会延迟产生（符合"积累到值再处理"的理念）
 const bookAssocQueue = [];
 const BOOK_ASSOC_FLUSH = 10;
-let bookAssocTimer = null;
 function queueBookAssociation(memoryId, content) {
   bookAssocQueue.push({ memoryId, content });
   if (bookAssocQueue.length >= BOOK_ASSOC_FLUSH) flushBookAssocQueue();
-  else if (!bookAssocTimer) {
-    bookAssocTimer = setTimeout(() => { bookAssocTimer = null; flushBookAssocQueue(); }, 30 * 60 * 1000);
-  }
 }
 async function flushBookAssocQueue() {
   const batch = bookAssocQueue.splice(0, bookAssocQueue.length);
