@@ -2665,8 +2665,9 @@ async function getMoodSnapshot() {
     const a = clampArousal(ev.arousal);
     const strength = Math.abs(v) * (0.3 + 0.7 * a);
     const signed = v >= 0 ? strength : -strength;
-    const eff = almaFilter(signed, traits.threshold, traits.peak);
-    if (eff > 0) pa += eff * w; else na += -eff * w;
+    // ALMA 已移到"浮现层"（pickMoodWord 的强度阈值负责防稀释）：
+    // 累积层不过滤，微弱情绪也真实累积（PA/NA 持续更新，解决"累积不起来"）
+    if (signed > 0) pa += signed * w; else na += -signed * w;
     // OCC 目标评价：加性调节（保守 max ±0.1，防 LLM 评分离谱时炸系统）
     const gr = Number(ev.goal_relevance);
     const ds = Number(ev.desirability);
@@ -2909,6 +2910,48 @@ async function maybeResolveMemories(text) {
     console.error('resolved 自动标记失败:', e.message);
   }
 }
+
+// ================== secondary 批处理（教程阶段 4） ==================
+// has_shift=false 的日常对话攒起来，30 分钟统一评分（type=secondary，τ=4h 慢衰减）
+// 补上"微小情绪累积"通道：大波动即时评分（primary）+ 日常小波动批处理（secondary）
+const secondaryQueue = [];
+const SECONDARY_MAX = 50;
+function queueSecondary(texts) {
+  let user = '', reply = '';
+  for (const t of (texts || [])) {
+    if (t.role === 'user') user = String(t.content || '');
+    else reply = String(t.content || '');
+  }
+  if (!user.trim() && !reply.trim()) return;
+  secondaryQueue.push({ user: user.slice(0, 800), reply: reply.slice(0, 300), at: Date.now() });
+  if (secondaryQueue.length > SECONDARY_MAX) secondaryQueue.shift();
+}
+async function flushSecondary() {
+  const batch = secondaryQueue.splice(0, secondaryQueue.length);
+  if (!batch.length) return;
+  console.log('🕐 情绪 secondary 批处理:', batch.length, '条');
+  for (const item of batch) {
+    try {
+      const rated = await rateDialogueEmotion(item.user, item.reply);
+      if (!rated) continue;
+      await recordEmotionEvent({
+        source: 'dialogue',
+        type: 'secondary',
+        word: rated.word,
+        valence: rated.v,
+        arousal: rated.a,
+        importance: rated.importance,
+        goalRelevance: rated.goalRelevance,
+        desirability: rated.desirability,
+        reason: '（secondary 批处理）' + (rated.reason || ''),
+        matchSource: rated.matchSource
+      });
+      console.log(`🕐 secondary 评分: ${rated.word} (V=${rated.v.toFixed(2)} A=${rated.a.toFixed(2)})`);
+    } catch (e) { console.error('secondary 评分失败:', e.message); }
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
+setInterval(() => { flushSecondary().catch(() => {}); }, 30 * 60 * 1000);
 
 // 对话后入口：情绪触发（本地词典命中 或 消息有实质内容 → LLM 评分判定 has_shift）
 // 触发条件：
@@ -5571,26 +5614,31 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
       }
     }
     // 情绪评分合并进提取（改造1）：mood_update → 词典锚定校准 → 写情绪事件
-    if (parsed && parsed.mood_update && typeof parsed.mood_update === 'object' && parsed.mood_update.has_shift !== false) {
-      const mu = parsed.mood_update;
-      try {
-        const lex = lexLookup(mu.word, mu.backup, mu.valence, mu.arousal);
-        const blend = blendLexAi(lex, mu.valence, mu.arousal);
-        await recordEmotionEvent({
-          source: 'dialogue',
-          type: 'primary',
-          word: lex.word,
-          valence: blend.v,
-          arousal: blend.a,
-          importance: Math.max(1, Math.min(10, parseInt(mu.importance, 10) || 3)),
-          goalRelevance: (mu.goal_relevance !== undefined && mu.goal_relevance !== null) ? Number(mu.goal_relevance) : null,
-          desirability: (mu.desirability !== undefined && mu.desirability !== null) ? Number(mu.desirability) : null,
-          reason: String(mu.reason || '').slice(0, 200),
-          matchSource: lex.source
-        });
-        console.log(`❤️ [合并评分] ${lex.word} (V=${blend.v.toFixed(2)} A=${blend.a.toFixed(2)}) src=${lex.source}`);
-      } catch (e) {
-        console.error('合并情绪评分写入失败:', e.message);
+    if (parsed && parsed.mood_update && typeof parsed.mood_update === 'object') {
+      if (parsed.mood_update.has_shift !== false) {
+        const mu = parsed.mood_update;
+        try {
+          const lex = lexLookup(mu.word, mu.backup, mu.valence, mu.arousal);
+          const blend = blendLexAi(lex, mu.valence, mu.arousal);
+          await recordEmotionEvent({
+            source: 'dialogue',
+            type: 'primary',
+            word: lex.word,
+            valence: blend.v,
+            arousal: blend.a,
+            importance: Math.max(1, Math.min(10, parseInt(mu.importance, 10) || 3)),
+            goalRelevance: (mu.goal_relevance !== undefined && mu.goal_relevance !== null) ? Number(mu.goal_relevance) : null,
+            desirability: (mu.desirability !== undefined && mu.desirability !== null) ? Number(mu.desirability) : null,
+            reason: String(mu.reason || '').slice(0, 200),
+            matchSource: lex.source
+          });
+          console.log(`❤️ [合并评分] ${lex.word} (V=${blend.v.toFixed(2)} A=${blend.a.toFixed(2)}) src=${lex.source}`);
+        } catch (e) {
+          console.error('合并情绪评分写入失败:', e.message);
+        }
+      } else {
+        // has_shift=false（日常对话无大波动）→ 入 secondary 队列，30 分钟后批处理补评
+        queueSecondary(texts);
       }
     }
     // 语义事件边界：AI 判断话题已告一段落 → 关闭当前事件块
