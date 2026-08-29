@@ -13,8 +13,8 @@ if (fs.existsSync(envFile)) {
     if (m && !m[1].startsWith('#') && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
   }
 }
-const KEY = process.env.DEEPSEEK_API_KEY;
-if (!KEY) { console.error('缺少 DEEPSEEK_API_KEY'); process.exit(1); }
+const KEY = process.env.DASHSCOPE_API_KEY;
+if (!KEY) { console.error('缺少 DASHSCOPE_API_KEY'); process.exit(1); }
 
 const SRC = 'E:/Mo-Home/NRC-VAD-Lexicon-v2.1/Unigrams/unigrams-NRC-VAD-Lexicon-v2.1.txt';
 const OUT = 'E:/Mo-Home/emotion-lexicon-nrc.json';
@@ -22,13 +22,12 @@ const BATCH = 300;
 
 async function translateBatch(words) {
   const system = '你是词典翻译器。把英文单词逐一翻译为简体中文，按"该词最常见/最自然的情绪语境义"翻译（多义词取最常用义，如 blue 翻译为"忧郁"而非"蓝色"）。只输出 JSON 对象：{"english_word":"中文翻译"}；若某词没有合适的中文翻译（专有名词/无意义词），对应值输出 null。不要解释。';
-  const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+  const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${KEY}` },
     body: JSON.stringify({
-      model: 'deepseek-v4-flash',
+      model: process.env.TRANSLATE_MODEL || 'qwen-turbo',
       messages: [{ role: 'system', content: system }, { role: 'user', content: words.join('\n') }],
-      reasoning_effort: 'none',
       max_tokens: 4000,
       temperature: 0.2,
       stream: false
