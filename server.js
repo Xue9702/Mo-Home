@@ -5488,7 +5488,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - evidence：把用到的那几轮原文放进数组（每轮一条，从每轮中选取最相关的连续片段，每轮最多 250 字、最多 2 轮，总长不超过 500 字），供召回时把原文一起带给默
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
+- state_updates：这段对话是否更新了"雪当前拥有/状态"的关键事实（买了/换了/有了/搬到/改成/新增了什么设备厨具食材等）？有则输出数组，如 [{"key":"厨具","value":"Bruno 电饭煲（微压普通）"}]；无则 []。只记录当前状态的**最新事实**，用于覆盖旧值
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"state_updates":[{"key":"厨具","value":"..."}],"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -5551,6 +5552,23 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
     // 回写事件块元信息（topic/intention/emotional_context）
     if (episodeId && parsed && typeof parsed.episode_meta === 'object') {
       updateEpisodeMeta(episodeId, parsed.episode_meta).catch(e => console.error('Aevum episode_meta 回写失败:', e.message));
+    }
+    // 状态层：识别到的"雪当前拥有/状态"更新 → 写入 xue_state（固定注入，不靠召回）
+    if (parsed && Array.isArray(parsed.state_updates)) {
+      for (const su of parsed.state_updates) {
+        const k = String(su?.key || '').trim().slice(0, 30);
+        const v = String(su?.value || '').trim().slice(0, 200);
+        if (!k || !v) continue;
+        try {
+          await supabase.from('xue_state').upsert(
+            { key: k, value: v, updated_at: new Date().toISOString() },
+            { onConflict: 'key' }
+          );
+          console.log('🏷️ 生活状态更新:', k, '=', v);
+        } catch (e) {
+          console.error('xue_state 写入失败（表未建请执行 setup_xue_state.sql）:', e.message);
+        }
+      }
     }
     // 语义事件边界：AI 判断话题已告一段落 → 关闭当前事件块
     if (episodeId && parsed && parsed.event_complete === true) {
@@ -6364,6 +6382,18 @@ async function getLatestWakeContext() {
   }
 }
 
+// 状态层：雪当前拥有/状态（厨具/设备/食材等），固定注入（不靠召回）
+async function getXueStateContext() {
+  try {
+    const { data } = await supabase.from('xue_state').select('key, value').order('updated_at', { ascending: false });
+    if (!data || !data.length) return '';
+    const lines = data.map(s => `- ${s.key}：${String(s.value || '').slice(0, 120)}`).join('\n');
+    return `\n\n【雪的生活状态】（当前拥有/状态，最新为准）\n${lines}`;
+  } catch (e) {
+    return '';
+  }
+}
+
 async function buildMemoryContext(userText, opts = {}) {
   let ctx = '';
   const latestWake = await getLatestWakeContext();
@@ -6380,6 +6410,8 @@ async function buildMemoryContext(userText, opts = {}) {
   if (plans) ctx += plans;
   const todos = await getTodosContext();
   if (todos) ctx += todos;
+  const xueState = await getXueStateContext();
+  if (xueState) ctx += xueState;
   // 方案 2：记忆自检（默当"记忆测试员"）——让默知道自己不知道，缺记忆时自然确认，不假装记得
   ctx += `\n\n【记忆自检】
 接收雪的输入后，先在内部判断：要给出准确、体贴、有依据的回复，我需要哪些背景信息？（她的日程安排、我们之前的约定、相关事件经过、她提过的偏好等）
@@ -6728,6 +6760,56 @@ app.get('/api/aevum/mozha/count', async (req, res) => {
     res.json({ count: count || 0 });
   } catch (e) {
     res.json({ count: 0 });
+  }
+});
+
+// 默札列表（供 Mo-home 页面展示默札内容）
+app.get('/api/aevum/mozha', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('aevum_mozha')
+      .select('id, content, wake_number, created_at')
+      .order('created_at', { ascending: false })
+      .limit(30);
+    res.json({ entries: data || [] });
+  } catch (e) {
+    res.json({ entries: [] });
+  }
+});
+
+// ================== 雪的生活状态层 API ==================
+app.get('/api/xue-state', async (req, res) => {
+  try {
+    const { data } = await supabase.from('xue_state').select('*').order('updated_at', { ascending: false });
+    res.json({ items: data || [] });
+  } catch (e) {
+    res.json({ items: [] });
+  }
+});
+
+// 手动新增/更新状态（key 冲突则覆盖）
+app.post('/api/xue-state', async (req, res) => {
+  const { key, value } = req.body || {};
+  const k = String(key || '').trim().slice(0, 30);
+  const v = String(value || '').trim().slice(0, 200);
+  if (!k || !v) return res.status(400).json({ error: 'key 和 value 不能为空' });
+  try {
+    await supabase.from('xue_state').upsert(
+      { key: k, value: v, updated_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/xue-state/:id', async (req, res) => {
+  try {
+    await supabase.from('xue_state').delete().eq('id', parseInt(req.params.id, 10));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

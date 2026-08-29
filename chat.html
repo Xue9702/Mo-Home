@@ -2281,16 +2281,18 @@
         if (!box) return;
         box.innerHTML = '<div class="weather-loading">加载中…</div>';
         try {
-          const [stateRes, actionsRes, diaryRes, panelRes] = await Promise.all([
+          const [stateRes, actionsRes, diaryRes, panelRes, mozhaRes] = await Promise.all([
             fetch('/api/home-state'),
             fetch('/api/actions'),
             fetch('/api/diary?author=mo&limit=20'),
-            fetch('/api/emotion/panel').catch(() => null)
+            fetch('/api/emotion/panel').catch(() => null),
+            fetch('/api/aevum/mozha').catch(() => null)
           ]);
           const state = await stateRes.json();
           const actions = (await actionsRes.json()).entries || [];
           const moDiary = (await diaryRes.json()).entries || [];
           const panel = panelRes ? await panelRes.json() : { events: [], traits: null, lexicon: [], series: [] };
+          const mozhaList = (mozhaRes && mozhaRes.ok) ? ((await mozhaRes.json()).entries || []) : [];
 
           const moodBar = (v) => `
             <div style="height:8px;border-radius:4px;background:#E7DFD2;overflow:hidden;margin-top:6px;">
@@ -2425,7 +2427,19 @@
                 <span class="t-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg></span>
                 <span class="t-label">行动日志</span>
               </div>
-            </div>`;
+            </div>
+            ${mozhaList.length ? `
+            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="font-size:15px;font-weight:600;color:var(--dark);">📓 默札</span>
+                <span style="font-size:11px;color:var(--muted);">默的私人小本，只记心不记事件（${mozhaList.length} 篇）</span>
+              </div>
+              ${mozhaList.slice(0, 5).map(z => `
+                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
+                  <div style="font-size:11px;color:var(--muted);">${new Date(z.created_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                  <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(aevumViewText(z.content))}</div>
+                </div>`).join('')}
+            </div>` : ''}`;
           // 情绪曲线 + 词典 datalist（主视图才有这些元素）
           if (!moHomeDetail) {
             drawMoChart(panel.series || []);
@@ -3775,7 +3789,7 @@
           if (aevumState.filters.owner) params.set('owner', aevumState.filters.owner);
           if (aevumState.filters.domain) params.set('domain', aevumState.filters.domain);
           if (aevumState.filters.q) params.set('q', aevumState.filters.q);
-          const [listRes, statsRes, bookRes, planRes, todoRes, candRes, profRes, moRes, promRes, mozhaRes] = await Promise.all([
+          const [listRes, statsRes, bookRes, planRes, todoRes, candRes, profRes, moRes, promRes, mozhaRes, stateRes] = await Promise.all([
             fetch('/api/aevum?' + params.toString()),
             fetch('/api/aevum/stats'),
             fetch('/api/aevum/books').catch(() => null),
@@ -3785,7 +3799,8 @@
             fetch('/api/aevum/profile').catch(() => null),
             fetch('/api/aevum/mo-view').catch(() => null),
             fetch('/api/aevum/promises').catch(() => null),
-            fetch('/api/aevum/mozha/count').catch(() => null)
+            fetch('/api/aevum/mozha/count').catch(() => null),
+            fetch('/api/xue-state').catch(() => null)
           ]);
           let list = (await listRes.json()).memories || [];
           const stats = await statsRes.json();
@@ -3797,6 +3812,7 @@
           const moData = moRes && moRes.ok ? await moRes.json() : { content: '', updated_at: null };
           const promData = promRes && promRes.ok ? await promRes.json() : { active: [], archived: [] };
           const mozhaCount = mozhaRes && mozhaRes.ok ? ((await mozhaRes.json()).count || 0) : 0;
+          const stateData = stateRes && stateRes.ok ? await stateRes.json() : { items: [] };
 
           const filterSel = (id, options, value, placeholder) => `
             <select id="${id}" onchange="aevumFilter()" style="flex:1;min-width:0;border:1px solid rgba(255,255,255,0.9);border-radius:10px;padding:6px 8px;font-size:13px;background:rgba(255,255,255,0.7);color:#444;outline:none;">
@@ -3860,7 +3876,7 @@
               </div>` : ''}
             </div>
             ${aevumState.view === 'book' ? renderBookPanel(bookData, planData, todoData, candData) : ''}
-            ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, promData, mozhaCount) : ''}
+            ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, stateData) : ''}
             ${inSea && (aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
             ${inSea ? `<div style="display:flex;flex-direction:column;gap:10px;">
               ${list.length ? renderSeaGrouped(list)
@@ -3927,45 +3943,10 @@
       // v3.0 记忆书面板：故事线 + 计划
       function renderBookPanel(bookData, planData, todoData, candData) {
         const books = bookData.books || [];
-        const plans = planData.active || [];
-        const expired = planData.expired || [];
         const candGroups = (candData && candData.groups) || [];
         const todos = (todoData && todoData.items) || [];
         const todosPending = todos.filter(t => t.status === 'pending');
         const todosDone = todos.filter(t => t.status === 'done');
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const todayEnd = new Date(today.getTime() + 86400000);
-        const plansCard = `
-          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
-            <div style="font-size:14px;font-weight:600;color:#333;">计划</div>
-            <div style="font-size:12px;color:#8a83a8;">写下一件要在有效期内做的事，默会记得提醒你。</div>
-            <textarea id="planInput" placeholder="例如：周五之前陪我去挑新画架…" style="width:100%;min-height:60px;border:1px solid #eee;border-radius:12px;padding:8px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;"></textarea>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <input id="planExpires" type="datetime-local" title="留空 = 长期计划" style="flex:1;min-width:150px;border:1px solid #eee;border-radius:10px;padding:6px;font-size:13px;outline:none;">
-              <button onclick="aevumAddPlan()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;">📌 记下计划</button>
-            </div>
-            <div style="font-size:14px;font-weight:600;color:#333;margin-top:6px;">进行中的计划（${plans.length}）</div>
-            ${plans.length ? plans.map(p => {
-              let dueText = '长期计划';
-              if (p.expires_at) {
-                const t = new Date(p.expires_at).getTime();
-                dueText = t >= today.getTime() && t < todayEnd.getTime()
-                  ? '今天到期 ⏰'
-                  : '还有 ' + promiseRemainDays(p.expires_at) + ' 天（' + new Date(p.expires_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '）';
-              }
-              return `
-                <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f6f2f8;">
-                  <span style="font-size:18px;">📌</span>
-                  <div style="flex:1;font-size:13px;color:#444;line-height:1.5;">
-                    <div>${escapeHtml2(p.content)}</div>
-                    <div style="font-size:11px;color:#b0a6c4;margin-top:2px;">${dueText}</div>
-                  </div>
-                  <span style="cursor:pointer;color:#e74c3c;font-size:13px;flex-shrink:0;" onclick="aevumDeletePlan(${p.id})">移除</span>
-                </div>`;
-            }).join('')
-            : '<div style="font-size:13px;color:#b0a6c4;padding:6px 0;">还没有计划，写一件想做的事吧~</div>'}
-            ${expired.length ? `<div style="font-size:12px;color:#b0a6c4;margin-top:4px;">已到期 ${expired.length} 条（不再提醒，可在下轮清掉）</div>` : ''}
-          </div>`;
         const todoCard = `
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="font-size:14px;font-weight:600;color:#333;">待办清单</div>
@@ -4049,7 +4030,6 @@
           </div>
           ${unlinkedCard}
           ${candBanner}
-          ${plansCard}
           ${todoCard}
           ${storiesHtml}`;
       }
@@ -4084,34 +4064,85 @@
         }, 150);
       }
 
-      // v3.0 记忆心面板：我眼里的默 / 画像 / 承诺 / 默札占位
-      function renderHeartPanel(moData, profData, promData, mozhaCount) {
+      // v3.0 记忆心面板：我眼里的默 / 画像 / 雪的生活状态
+      function renderHeartPanel(moData, profData, stateData) {
         const mo = String(moData.content || '');
         const moEditing = aevumState.moEditing;
+        const stateItems = (stateData && stateData.items) || [];
         return `
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:14px;font-weight:600;color:#333;">我眼里的默</span>
-              <span style="font-size:11px;color:#8a83a8;">默对自己的长期认知，每次聊天和唤醒都会固定看到</span>
+              <span style="font-size:11px;color:#8a83a8;">默对自己的长期认知，每次聊天和唤醒都会固定看到（手动维护）</span>
               <span style="margin-left:auto;display:flex;gap:8px;">
                 ${moEditing
                   ? `<button onclick="aevumMoSave()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">保存</button>
                      <button onclick="aevumMoCancelEdit()" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#888;padding:8px 14px;font-size:13px;cursor:pointer;">取消</button>`
-                  : `<button onclick="aevumMoGenerate()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;">✨ AI 生成</button>
-                     ${mo ? `<button onclick="aevumMoEdit()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 编辑</button>` : ''}`}
+                  : (mo ? `<button onclick="aevumMoEdit()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 编辑</button>` : `<button onclick="aevumMoEdit()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 填写</button>`)}
               </span>
             </div>
             ${moEditing
               ? `<textarea id="aevumMoContent" style="width:100%;min-height:120px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">${escapeHtml2(mo)}</textarea>`
-        : (mo ? `<div style="font-size:13px;color:#555;line-height:1.8;white-space:pre-wrap;">${escapeHtml2(aevumViewText(mo))}</div>` : '<div style="font-size:13px;color:#b0a6c4;">还没有内容，点「✨ AI 生成」根据默的行为记录归纳~</div>')}
+        : (mo ? `<div style="font-size:13px;color:#555;line-height:1.8;white-space:pre-wrap;">${escapeHtml2(aevumViewText(mo))}</div>` : '<div style="font-size:13px;color:#b0a6c4;">还没有内容，点「✎ 填写」写下默的自我认知~</div>')}
             ${moData.updated_at ? `<div style="font-size:11px;color:#b0a6c4;">上次更新：${new Date(moData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
           </div>
           ${renderProfilePanel(profData, [])}
-          ${renderPromisePanel(promData)}
-          <div class="feature-card" style="align-items:center;gap:6px;">
-            <div style="font-size:13px;color:#8a83a8;">📓 默札 · ${mozhaCount} 篇（仅默可见，他不主动翻开时谁也看不到）</div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">雪的生活状态</span>
+              <span style="font-size:11px;color:#8a83a8;">厨具/设备/食材等当前拥有的事实，对话中识别自动更新 + 可手动维护，每轮固定注入给默</span>
+              <span style="margin-left:auto;"><button onclick="aevumAddState()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">＋ 添加</button></span>
+            </div>
+            ${stateItems.length ? stateItems.map(s => `
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f6f2f8;">
+                <span style="font-size:12px;color:#8a83a8;flex-shrink:0;min-width:56px;">${escapeHtml2(s.key)}</span>
+                <span style="flex:1;font-size:13px;color:#444;">${escapeHtml2(s.value)}</span>
+                <span style="cursor:pointer;color:#e74c3c;font-size:12px;flex-shrink:0;" onclick="aevumDelState(${s.id})">删除</span>
+              </div>`).join('')
+            : '<div style="font-size:12px;color:#b0a6c4;">还没有记录。和默说"我买了 X"时会被自动记下；也可以点「＋ 添加」手动维护。</div>'}
           </div>`;
       }
+
+      function aevumAddState() {
+        const overlay = document.createElement('div');
+        overlay.id = 'stateOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;';
+        overlay.innerHTML = `
+          <div style="width:min(90vw,420px);background:#fff;border-radius:16px;padding:18px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;">
+            <div style="font-size:15px;font-weight:600;color:#333;">添加生活状态</div>
+            <input id="stateKeyInput" placeholder="类别（如：厨具 / 设备 / 食材 / 住处）" style="border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;outline:none;">
+            <textarea id="stateValInput" placeholder="内容（如：Bruno 电饭煲（微压普通）、空气炸锅）" style="width:100%;min-height:60px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;resize:vertical;"></textarea>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button onclick="document.getElementById('stateOverlay').remove()" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#666;padding:8px 16px;font-size:13px;cursor:pointer;">取消</button>
+              <button onclick="aevumSaveState()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;">保存</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+      }
+      window.aevumAddState = aevumAddState;
+
+      async function aevumSaveState() {
+        const key = document.getElementById('stateKeyInput').value.trim();
+        const value = document.getElementById('stateValInput').value.trim();
+        if (!key || !value) { alert('类别和内容都要填'); return; }
+        const r = await fetch('/api/xue-state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, value })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) { alert('保存失败：' + (d.error || '请确认已执行 setup_xue_state.sql')); return; }
+        const ov = document.getElementById('stateOverlay'); if (ov) ov.remove();
+        renderAevum();
+      }
+      window.aevumSaveState = aevumSaveState;
+
+      async function aevumDelState(id) {
+        if (!confirm('删除这条状态？')) return;
+        await fetch('/api/xue-state/' + id, { method: 'DELETE' });
+        renderAevum();
+      }
+      window.aevumDelState = aevumDelState;
 
       function renderTopicPanel(topicData) {
         const topics = topicData.topics || [];
@@ -4164,12 +4195,11 @@
                 ${editing
                   ? `<button onclick="aevumSaveProfile()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">保存</button>
                      <button onclick="aevumCancelProfileEdit()" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#888;padding:8px 14px;font-size:13px;cursor:pointer;">取消</button>`
-                  : `<button data-genprofile onclick="aevumGenerateProfile()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:8px 14px;font-size:13px;cursor:pointer;">✨ AI 生成</button>
-                     ${hasContent ? `<button onclick="aevumEditProfile()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 编辑</button>` : ''}`}
+                  : (hasContent ? `<button onclick="aevumEditProfile()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 编辑</button>` : `<button onclick="aevumEditProfile()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ 填写</button>`)}
               </span>
             </div>
             <div style="font-size:11px;color:#b0a6c4;">按维度记录"我了解的雪"，默每次聊天和唤醒都会看到；AI 检测不到的维度可留空或手动补充。</div>
-            ${hasContent || editing ? dimRows : '<div style="font-size:13px;color:#b0a6c4;">还没有画像，点「✨ AI 生成」让默根据活跃记忆归纳~</div>'}
+            ${hasContent || editing ? dimRows : '<div style="font-size:13px;color:#b0a6c4;">还没有画像，点「✎ 填写」手动补充~</div>'}
             ${profData.updated_at ? `<div style="font-size:11px;color:#b0a6c4;">上次更新：${new Date(profData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
           </div>`;
       }
