@@ -5606,8 +5606,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
       }
       if (insData?.[0]?.id) {
         ensureAevumEmbedding(insData[0].id, content).catch(e => console.error('Aevum embedding 失败:', e.message));
-        // 关联阈值：与已有记忆书摘要 ≥0.70 → 生成待确认候选（异步，不阻塞）
-        checkBookAssociation(insData[0].id, content).catch(e => console.error('记忆书关联检查失败:', e.message));
+        // 记忆书候选关联：入队攒批，攒够 10 个或 30 分钟统一跑一次（不实时逐事件全量对比）
+        queueBookAssociation(insData[0].id, content);
         // 任务状态：如果是"完成事件"，尝试回写源头承诺（双向挂链）
         checkPromiseFulfillment(insData[0].id, content, eventTime, taskStatus).catch(e => console.error('承诺回写检查失败:', e.message));
       }
@@ -5673,8 +5673,29 @@ async function getUnitEmbedding(unit) {
   return emb || null;
 }
 
-// 新单元与已有记忆书（摘要 + 已有事件单元）相似度 ≥0.78 → 写入待确认候选（不直接落地）
-// 0.78 较原 0.70 更严格：减少大量弱相关候选（它们确认时多半被 SKIP，书实际没生长）
+// 记忆书候选关联队列：新事件不实时全量对比，攒够 10 个或 30 分钟统一跑一次
+// （每批事件只有新单元本身 1 次 embedding，书摘要/单元向量都走缓存/查库，零重复消耗）
+const bookAssocQueue = [];
+const BOOK_ASSOC_FLUSH = 10;
+let bookAssocTimer = null;
+function queueBookAssociation(memoryId, content) {
+  bookAssocQueue.push({ memoryId, content });
+  if (bookAssocQueue.length >= BOOK_ASSOC_FLUSH) flushBookAssocQueue();
+  else if (!bookAssocTimer) {
+    bookAssocTimer = setTimeout(() => { bookAssocTimer = null; flushBookAssocQueue(); }, 30 * 60 * 1000);
+  }
+}
+async function flushBookAssocQueue() {
+  const batch = bookAssocQueue.splice(0, bookAssocQueue.length);
+  if (!batch.length) return;
+  console.log('📌 批量记忆书关联检查:', batch.length, '个新事件');
+  for (const item of batch) {
+    try { await checkBookAssociation(item.memoryId, item.content); }
+    catch (e) { console.error('记忆书关联检查失败:', e.message); }
+  }
+}
+
+// 新单元与已有记忆书（摘要 + 已有事件单元）相似度 ≥0.70 → 写入待确认候选（不直接落地）
 async function checkBookAssociation(memoryId, content) {
   try {
     const emb = await getEmbedding(String(content || '').slice(0, 500));
