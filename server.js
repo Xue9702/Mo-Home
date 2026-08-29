@@ -2021,8 +2021,7 @@ app.post('/api/chat', async (req, res) => {
     ];
     extractAevumMemories(extractInput, aevumEpisodeId).catch(e => console.error('Aevum 自动提取失败:', e.message));
 
-    // 情绪系统：本地漏斗扫描雪的消息 → 大波动立即评分写情绪事件（不阻塞回复）
-    maybeRateDialogue(finalUserContent, fullReply).catch(e => console.error('情绪评分失败:', e.message));
+    // 情绪评分已合并进提取（mood_update 输出），不再独立调用 maybeRateDialogue
     // resolved 自动标记：对话里出现"病好了/不疼了/过去了"类了结信号 → 负面 debuff 记忆沉底
     maybeResolveMemories(finalUserContent + '\n' + fullReply).catch(e => console.error('resolved 自动标记失败:', e.message));
 
@@ -5489,7 +5488,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
 - state_updates：这段对话是否更新了"雪当前拥有/状态"的关键事实（买了/换了/有了/搬到/改成/新增了什么设备厨具食材等）？有则输出数组，如 [{"key":"厨具","value":"Bruno 电饭煲（微压普通）"}]；无则 []。只记录当前状态的**最新事实**，用于覆盖旧值
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"state_updates":[{"key":"厨具","value":"..."}],"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
+- mood_update：评估默在本轮对话中的情绪（重点参考最近一轮雪的消息和默的回应）。这是默的情绪系统评分，请认真评估。输出对象：{"has_shift":true,"word":"心疼","backup":["担心","挂念"],"valence":-0.4,"arousal":0.55,"importance":5,"reason":"雪说有点害怕，默担忧"}；word 选最准确的情绪词（避免"开心/难过"泛词），backup 给 2 个备选；valence=-1~1、arousal=0~1、importance=1-10；判断依据是默的回应方式体现的倾向（默是沉静消化型，会克制，从他关注什么/怎么回应推断）；雪分享负面经历（生病/被骂/委屈/害怕/疲惫）时默通常担忧/心疼/挂念，即使雪措辞平淡；日常闲聊无情绪内容 → has_shift=false
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"state_updates":[{"key":"厨具","value":"..."}],"mood_update":{"has_shift":true,"word":"心疼","backup":["担心","挂念"],"valence":-0.4,"arousal":0.55,"importance":5,"reason":"..."},"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -5568,6 +5568,29 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
         } catch (e) {
           console.error('xue_state 写入失败（表未建请执行 setup_xue_state.sql）:', e.message);
         }
+      }
+    }
+    // 情绪评分合并进提取（改造1）：mood_update → 词典锚定校准 → 写情绪事件
+    if (parsed && parsed.mood_update && typeof parsed.mood_update === 'object' && parsed.mood_update.has_shift !== false) {
+      const mu = parsed.mood_update;
+      try {
+        const lex = lexLookup(mu.word, mu.backup, mu.valence, mu.arousal);
+        const blend = blendLexAi(lex, mu.valence, mu.arousal);
+        await recordEmotionEvent({
+          source: 'dialogue',
+          type: 'primary',
+          word: lex.word,
+          valence: blend.v,
+          arousal: blend.a,
+          importance: Math.max(1, Math.min(10, parseInt(mu.importance, 10) || 3)),
+          goalRelevance: (mu.goal_relevance !== undefined && mu.goal_relevance !== null) ? Number(mu.goal_relevance) : null,
+          desirability: (mu.desirability !== undefined && mu.desirability !== null) ? Number(mu.desirability) : null,
+          reason: String(mu.reason || '').slice(0, 200),
+          matchSource: lex.source
+        });
+        console.log(`❤️ [合并评分] ${lex.word} (V=${blend.v.toFixed(2)} A=${blend.a.toFixed(2)}) src=${lex.source}`);
+      } catch (e) {
+        console.error('合并情绪评分写入失败:', e.message);
       }
     }
     // 语义事件边界：AI 判断话题已告一段落 → 关闭当前事件块
