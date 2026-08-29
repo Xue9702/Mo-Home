@@ -1,14 +1,16 @@
 // ============================================================
-// 默的情绪词典（第一版 v1）
+// 默的情绪词典
 // 每个词在 Russell 二维情感空间中有坐标：
 //   v: Valence 效价 -1(消极) ~ +1(积极)
 //   a: Arousal 唤醒 0(平淡) ~ 1(强烈)
-// 坐标来源：CVAW/NRC-VAD 学术标注思路 + 教程 longing 词表 + 人工校验
-// 设计原则：闭集词典，词与词在 V/A 空间保持距离，避免同义词挤在一起
-// 扩充方式：新增词时保持同类词间距，强度分档（轻微/中等/强烈）
+// 结构：人工/场景层（下方 MANUAL_LEXICON，优先）+ 学术层（CVAW/NRC，emotion-lexicon-academic.json）
+// 优先级：人工层 > CVAW > NRC（教程 lookup 顺序：场景预设 → CVAW → NRC-VAD）
+// 学术层由 scripts/build-lexicon.js 生成（CVAW 归一化 + NRC 翻译合并）
 // ============================================================
 
-const EMOTION_LEXICON = {
+const ACADEMIC_LEXICON = require('./emotion-lexicon-academic.json');
+
+const MANUAL_LEXICON = {
   // ---------- 正向 · 高唤醒 (V 0.55~0.95, A 0.55~0.95) ----------
   '狂喜': { v: 0.92, a: 0.90 },
   '兴奋': { v: 0.80, a: 0.85 },
@@ -319,6 +321,9 @@ const EMOTION_LEXICON = {
   '落空': { v: -0.40, a: 0.35 },
   '扑空': { v: -0.38, a: 0.40 },
 };
+
+// 合并：人工/场景层优先，学术层（CVAW/NRC）补底
+const EMOTION_LEXICON = { ...ACADEMIC_LEXICON, ...MANUAL_LEXICON };
 
 // 默的性格基线（ALMA threshold/peak + BOU 均值回归参数 + coping/依恋）
 // 依据：雪提供的默的人设 —— 温柔、稳定、有安全感、引导型人格
