@@ -2209,11 +2209,13 @@ app.post('/api/context-preview', async (req, res) => {
       longingContext
     );
     const toolsText = parts.searchInstruction + parts.momentsInstruction + parts.mozhaInstruction + toyManualContext;
-    // 射精值系统：状态注入（与主对话一致）
+    // 射精值系统：状态注入（与主对话一致）；预览额外返回完整快照（调试用，不注入）
     let arousalStatus = '';
+    let arousalSnapshot = null;
     try {
       const aState = await getArousalState();
       arousalStatus = statusLine(aState, Date.now());
+      arousalSnapshot = publicSnapshot(aState, Date.now());
     } catch (e) { /* 状态注入失败不影响预览 */ }
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
@@ -2234,6 +2236,7 @@ app.post('/api/context-preview', async (req, res) => {
       moodContext: parts.moodContext,
       longingContext: parts.longingContext,
       arousalStatus,
+      arousalSnapshot,
       memoryContext: parts.memoryContext,
       momentsContext: parts.momentsContext,
       toolsText,
