@@ -22,20 +22,30 @@ function normalizeCvawArousal(value) {
   const lexicon = {};
   let cvawCount = 0, nrcCount = 0, dropped = 0;
 
-  // 1) CVAW（中文词，优先）
-  const cvawText = fs.readFileSync('E:/Mo-Home/ChineseEmoBank/CVAW_SD/CVAW_all_SD.csv', 'utf8');
-  const cvawLines = cvawText.split(/\r?\n/).filter(Boolean);
-  for (let i = 1; i < cvawLines.length; i++) {
-    const cols = cvawLines[i].split('\t');
-    if (cols.length < 4) continue;
-    const word = String(cols[1] || '').trim();
-    const v = normalizeCvaw(cols[2]);
-    const a = normalizeCvawArousal(cols[3]);
-    if (!word || v === null || a === null) { dropped++; continue; }
-    if (word.length > 6) { dropped++; continue; } // 太长的词组跳过（漏斗扫描意义低）
-    if (lexicon[word]) { dropped++; continue; }
-    lexicon[word] = { v: Number(v.toFixed(4)), a: Number(a.toFixed(4)) };
-    cvawCount++;
+  // 0) 若 academic.json 已存在（含 CVAW 繁简转换成果），先加载保留，不再从 CSV 覆盖
+  let base = {};
+  if (fs.existsSync(outPath)) {
+    try { base = JSON.parse(fs.readFileSync(outPath, 'utf8')); } catch (e) { base = {}; }
+  }
+  Object.assign(lexicon, base);
+  cvawCount = Object.keys(lexicon).length;
+
+  // 1) CVAW：仅当 academic.json 不存在或为空时从 CSV 生成（避免覆盖繁转简）
+  if (Object.keys(lexicon).length === 0) {
+    const cvawText = fs.readFileSync('E:/Mo-Home/ChineseEmoBank/CVAW_SD/CVAW_all_SD.csv', 'utf8');
+    const cvawLines = cvawText.split(/\r?\n/).filter(Boolean);
+    for (let i = 1; i < cvawLines.length; i++) {
+      const cols = cvawLines[i].split('\t');
+      if (cols.length < 4) continue;
+      const word = String(cols[1] || '').trim();
+      const v = normalizeCvaw(cols[2]);
+      const a = normalizeCvawArousal(cols[3]);
+      if (!word || v === null || a === null) { dropped++; continue; }
+      if (word.length > 6) { dropped++; continue; }
+      if (lexicon[word]) { dropped++; continue; }
+      lexicon[word] = { v: Number(v.toFixed(4)), a: Number(a.toFixed(4)) };
+      cvawCount++;
+    }
   }
 
   // 2) NRC 翻译结果（如已生成 emotion-lexicon-nrc.json）
@@ -47,12 +57,17 @@ function normalizeCvawArousal(value) {
       for (const [k, v] of Object.entries(nrc)) {
         if (!k.startsWith('__zh__')) continue;
         const zh = String(v || '').trim();
-        const coord = nrc[k.slice(5)];
+        const coord = nrc[k.slice(6)]; // '__zh__' 是 6 字符前缀
         if (!zh || !coord || lexicon[zh]) continue;
         lexicon[zh] = { v: coord.v, a: coord.a };
         nrcCount++;
       }
     } catch (e) { console.error('NRC 翻译结果解析失败:', e.message); }
+  }
+
+  // 过滤单字词（"好""累""的""锅"等漏斗噪音）
+  for (const w of Object.keys(lexicon)) {
+    if (String(w).length < 2) delete lexicon[w];
   }
 
   fs.writeFileSync(outPath, JSON.stringify(lexicon));
