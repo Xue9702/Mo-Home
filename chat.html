@@ -1271,7 +1271,6 @@
       <span id="headerIcon" style="display:flex;align-items:center;color:var(--dark);"></span>
       <div class="header-title" id="headerTitle">Mönix</div>
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
-        <button id="headerRefreshBtn" class="header-settings-btn" aria-label="刷新聊天记录" title="刷新聊天记录（后端连不上时用）"></button>
         <button id="headerContextBtn" class="header-settings-btn" aria-label="查看默的上下文" title="查看默每轮收到的上下文"></button>
         <button id="headerSettingsBtn" class="header-settings-btn" aria-label="设置" title="设置"></button>
       </div>
@@ -6032,7 +6031,17 @@
             }
           }
           messageList.scrollTop = messageList.scrollHeight;
-        } catch (err) { console.error('加载历史失败:', err); addMessage('assistant', '⚠️ 无法加载历史消息，请刷新页面重试。', null, formatTime()); }
+        } catch (err) {
+          console.error('加载历史失败:', err);
+          // 失败时给出"重试"入口（不退出软件也能刷新，直到后端连上）
+          if (!document.getElementById('historyLoadFail')) {
+            const failEl = document.createElement('div');
+            failEl.id = 'historyLoadFail';
+            failEl.style.cssText = 'text-align:center;padding:24px 16px;font-size:13px;color:#8a83a8;';
+            failEl.innerHTML = '⚠️ 无法加载历史消息<br><button onclick="retryLoadHistory()" style="margin-top:12px;padding:8px 22px;border:none;border-radius:16px;background:var(--blue);color:var(--cream);font-size:13px;cursor:pointer;">重试加载</button>';
+            messageList.appendChild(failEl);
+          }
+        }
       }
 
       // 上拉加载更早的历史（懒加载）
@@ -6058,15 +6067,61 @@
           });
           historyOldestId = Math.min(historyOldestId, ...msgs.map(m => m.id));
           historyHasMore = !!data.hasMore;
-          messageList.scrollTop += messageList.scrollHeight - beforeHeight;
+          messageList.scrollTop += messageList.scrollHeight - beforeHeight; // 保持视口位置，不跳回底部
+          showPullToast('✅ 已加载更早记录');
         } catch (e) { console.error('加载更早历史失败:', e); }
         finally { historyLoadingMore = false; }
       }
 
+      // ---------- 下拉加载更早历史（QQ 风格：页面整体下拉 + 提示，松手加载） ----------
+      // 替换原来的 scroll 自动触发（触顶无反馈）；加载后保持视口位置（loadMoreHistory 有补偿）
+      let pullMoreStartY = 0, pullMoreDist = 0, pullMoreActive = false;
+      function showPullMoreTip(text) {
+        let tip = document.getElementById('pullMoreTip');
+        if (!tip) {
+          tip = document.createElement('div');
+          tip.id = 'pullMoreTip';
+          tip.style.cssText = 'position:sticky;top:-8px;text-align:center;font-size:12px;color:#b0a6c4;padding:6px 0;pointer-events:none;z-index:5;';
+          messageList.insertBefore(tip, messageList.firstChild);
+        }
+        tip.textContent = text;
+      }
+      function resetPullMore() {
+        pullMoreDist = 0;
+        if (messageList) {
+          messageList.style.transition = 'transform .25s ease';
+          messageList.style.transform = '';
+          setTimeout(() => { if (messageList) messageList.style.transition = ''; }, 300);
+        }
+        const tip = document.getElementById('pullMoreTip');
+        if (tip) tip.remove();
+      }
       if (messageList) {
-        messageList.addEventListener('scroll', () => {
-          if (messageList.scrollTop < 60 && !historyLoadingMore && historyHasMore && historyOldestId) loadMoreHistory();
-        });
+        messageList.addEventListener('touchstart', (e) => {
+          if (messageList.scrollTop <= 0 && historyHasMore && historyOldestId && !historyLoadingMore) {
+            pullMoreStartY = e.touches[0].clientY;
+            pullMoreActive = true;
+          }
+        }, { passive: true });
+        messageList.addEventListener('touchmove', (e) => {
+          if (!pullMoreActive) return;
+          const dy = e.touches[0].clientY - pullMoreStartY;
+          if (dy <= 0) { messageList.style.transform = ''; pullMoreDist = 0; return; }
+          pullMoreDist = Math.min(80, dy * 0.35);
+          messageList.style.transition = 'none';
+          messageList.style.transform = 'translateY(' + pullMoreDist + 'px)';
+          showPullMoreTip(pullMoreDist >= 55 ? '松开加载更早' : '下拉加载更早');
+        }, { passive: true });
+        messageList.addEventListener('touchend', () => {
+          if (!pullMoreActive) return;
+          pullMoreActive = false;
+          const shouldLoad = pullMoreDist >= 55;
+          resetPullMore();
+          if (shouldLoad) {
+            showPullToast('⏳ 加载更早记录…');
+            loadMoreHistory();
+          }
+        }, { passive: true });
       }
 
       // ---------- 刷新聊天记录（顶部刷新按钮；连接异常时用） ----------
@@ -6171,13 +6226,14 @@
         }
       }
 
-      // ---------- 刷新：改为显式按钮（避免与"向上滚动加载更多"的手势冲突） ----------
-      // 下拉手势不再触发刷新；刷新只在连接异常/需要时点按钮
-      const headerRefreshBtn = document.getElementById('headerRefreshBtn');
-      if (headerRefreshBtn) {
-        headerRefreshBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
-        headerRefreshBtn.addEventListener('click', refreshChat);
+      // ---------- 刷新：只在消息加载失败时出现"重试"入口（不再放常驻按钮） ----------
+      async function retryLoadHistory() {
+        const failEl = document.getElementById('historyLoadFail');
+        if (failEl) failEl.remove();
+        await loadHistory();
+        showPullToast('🔄 已刷新');
       }
+      window.retryLoadHistory = retryLoadHistory;
 
       // ---------- 长按气泡：复制 / 编辑 菜单 ----------
       let bubblePressTimer = null, bubblePressEl = null, bubblePressX = 0, bubblePressY = 0;
