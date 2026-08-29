@@ -2429,16 +2429,12 @@
               </div>
             </div>
             ${mozhaList.length ? `
-            <div class="feature-card" style="align-items:flex-start;text-align:left;">
+            <div class="feature-card" style="align-items:flex-start;text-align:left;margin-top:16px;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span style="font-size:15px;font-weight:600;color:var(--dark);">📓 默札</span>
-                <span style="font-size:11px;color:var(--muted);">默的私人小本，只记心不记事件（${mozhaList.length} 篇）</span>
+                <span style="font-size:11px;color:var(--muted);">默的私人小本，只记心不记事件 · ${mozhaList.length} 篇（只有默能翻开）</span>
               </div>
-              ${mozhaList.slice(0, 5).map(z => `
-                <div style="font-size:13px;color:var(--dark);opacity:.85;padding:6px 0;border-bottom:1px solid var(--line);">
-                  <div style="font-size:11px;color:var(--muted);">${new Date(z.created_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                  <div style="margin-top:2px;white-space:pre-wrap;">${escapeHtml2(aevumViewText(z.content))}</div>
-                </div>`).join('')}
+              <div style="font-size:12px;color:var(--muted);margin-top:4px;">写着他想留住的话，那是属于他一个人的角落。</div>
             </div>` : ''}`;
           // 情绪曲线 + 词典 datalist（主视图才有这些元素）
           if (!moHomeDetail) {
