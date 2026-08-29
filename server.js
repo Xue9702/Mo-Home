@@ -5238,7 +5238,10 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
       if (!merged.has(String(row.id))) merged.set(String(row.id), { ...row, _sim: 0 });
     }
     let items = [...merged.values()];
-    if (!items || !items.length) return '';
+    if (!items || !items.length) {
+      console.warn('📭 召回 0 条：初始双通道无匹配 | query=', q.slice(0, 30), '| 有向量=', !!embedding, '| 关键词=', JSON.stringify(keywords));
+      return '';
+    }
     // 重新生成场景：排除与旧版回复重合的记忆（摘要和原文都查，避免旧版的话藏在原文里被召回）
     if (excludeNorm) {
       const anchors = textAnchors(excludeNorm);
@@ -5261,10 +5264,16 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
         });
       });
     }
-    if (!items.length) return '';
+    if (!items.length) {
+      console.warn('📭 召回 0 条：排除/历史去重后为空（历史覆盖率过高或召回候选本就少）| query=', q.slice(0, 30), '| 历史长度=', historyNorm.length);
+      return '';
+    }
     // 任务状态过滤：已完成/已取消的承诺不参与常规召回（除非主动翻查）
     items = items.filter(m => !(m.task_status === 'done' || m.task_status === 'cancelled'));
-    if (!items.length) return '';
+    if (!items.length) {
+      console.warn('📭 召回 0 条：任务状态过滤后为空 | query=', q.slice(0, 30));
+      return '';
+    }
     // v3.1 混合打分：0.5×相似度 + 0.25×(重要度/10) + 0.15×情绪强度 + 0.15×记忆衰减 + 频率小权重
     // 记忆衰减（decay）替代原 0.1×时间衰减：decay 是时间+使用+情绪+resolved 的超集
     const nowMs = Date.now();
