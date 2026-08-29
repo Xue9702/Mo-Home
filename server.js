@@ -5109,7 +5109,8 @@ const AEVUM_TYPE_CN = {
   user_tendency: '用户倾向', personality: '人格', self_model: '核心'
 };
 
-// 阿里百炼向量（text-embedding-v4，1024 维）；失败返回 null
+// 阿里百炼向量（text-embedding-v3，1024 维；失败返回 null）
+// v4 免费额度已耗尽，改用 v3（独立免费额度）。改模型后需全量重算已有向量（见 scripts/reindex-embeddings.js）
 async function getEmbedding(text) {
   const key = process.env.DASHSCOPE_API_KEY;
   if (!key) return null;
@@ -5121,7 +5122,7 @@ async function getEmbedding(text) {
         'Authorization': `Bearer ${key}`
       },
       body: JSON.stringify({
-        model: process.env.AEVUM_EMBED_MODEL || 'text-embedding-v4',
+        model: process.env.AEVUM_EMBED_MODEL || 'text-embedding-v3',
         input: String(text || '').slice(0, 1000),
         dimensions: 1024,
         encoding_format: 'float'
@@ -5630,21 +5631,45 @@ function cosineSim(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-let bookEmbedCache = new Map();
+// ================== Embedding 缓存优化（v3：查库优先，大幅降 API 消耗） ==================
+// 问题：checkBookAssociation 每次新事件对比所有书 × 每书 20 单元，getUnitEmbedding 每次现算
+//       → 单事件最多 700+ 次 embedding API 调用（text-embedding-v4 额度被打穿）
+// 修复：① 单元向量优先查库（提取时已存 aevum_memories.embedding）零 API
+//       ② 书摘要向量内存缓存（10 分钟 TTL）
+let bookEmbedCache = new Map(); // id -> { emb, at }
 async function getBookEmbedding(book) {
   const cached = bookEmbedCache.get(book.id);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.at < 600000) return cached.emb;
   const emb = await getEmbedding(String(book.summary || book.label || '').slice(0, 500));
-  if (emb) bookEmbedCache.set(book.id, emb);
+  if (emb) bookEmbedCache.set(book.id, { emb, at: Date.now() });
   return emb || null;
 }
 
-let unitEmbedCache = new Map();
+let unitEmbedCache = new Map(); // id -> embedding
 async function getUnitEmbedding(unit) {
   const cached = unitEmbedCache.get(unit.id);
   if (cached) return cached;
+  // ① 优先用传入的库字段（checkBookAssociation 已 select embedding）
+  if (unit.embedding && Array.isArray(unit.embedding) && unit.embedding.length) {
+    unitEmbedCache.set(unit.id, unit.embedding);
+    return unit.embedding;
+  }
+  // ② 查库（提取时 ensureAevumEmbedding 已写入）——零 API
+  if (unit.id) {
+    try {
+      const { data } = await supabase.from('aevum_memories').select('embedding').eq('id', unit.id).single();
+      if (data && Array.isArray(data.embedding) && data.embedding.length) {
+        unitEmbedCache.set(unit.id, data.embedding);
+        return data.embedding;
+      }
+    } catch (e) { /* 查库失败再算 */ }
+  }
+  // ③ 兜底：调 API + 写回库
   const emb = await getEmbedding(String(unit.content || '').slice(0, 500));
-  if (emb) unitEmbedCache.set(unit.id, emb);
+  if (emb) {
+    unitEmbedCache.set(unit.id, emb);
+    ensureAevumEmbedding(unit.id, unit.content).catch(() => {});
+  }
   return emb || null;
 }
 
@@ -5666,12 +5691,12 @@ async function checkBookAssociation(memoryId, content) {
         const { data: itemRows } = await supabase.from('aevum_book_items').select('memory_id').eq('book_id', b.id);
         const ids = (itemRows || []).map(r => r.memory_id).slice(0, 20);
         if (ids.length) {
-          const { data: units } = await supabase.from('aevum_memories').select('id, content').in('id', ids);
+          const { data: units } = await supabase.from('aevum_memories').select('id, content, embedding').in('id', ids);
           for (const u of (units || [])) {
             const uNorm = String(u.content || '').replace(/\s+/g, '').slice(0, 80);
             // 与书内已有单元内容完全一致（去重合并过的重复事件）→ 不是新内容，不写候选
             if (uNorm && norm80 && uNorm === norm80) return;
-            const uEmb = await getUnitEmbedding(u);
+            const uEmb = await getUnitEmbedding(u); // 库向量优先，零 API
             if (uEmb) bestSim = Math.max(bestSim, cosineSim(emb, uEmb));
           }
         }
