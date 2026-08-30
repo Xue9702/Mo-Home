@@ -511,6 +511,24 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
         const level = fn === 'stop' ? '' : (parseInt(args.level, 10) || 1) + ' 档';
         await saveToolEvent(`🎮 你操作了玩具（${fnName}${level ? ' ' + level : ''}）`, sendSSE);
       }
+    } else if (name === 'ledger_add') {
+      const type = args.type === 'income' ? 'income' : 'expense';
+      const amt = Math.round(Number(args.amount) * 100) / 100;
+      if (amt > 0) {
+        const date = String(args.entry_date || '').trim() || new Date().toISOString().slice(0, 10);
+        const note = String(args.note || '').trim();
+        const category = validLedgerCategory(args.category, type);
+        const { error } = await supabase.from('ledger_entries').insert({
+          entry_date: date, type, amount: amt, note, category
+        });
+        if (!error) {
+          console.log('📒 [账本] 默记账:', type, amt, category, note);
+          await saveToolEvent(`📒 已记一笔${type === 'income' ? '收入' : '支出'}（${category} ${amt} 元${note ? '：' + note : ''}）`, sendSSE);
+        } else {
+          console.error('账本工具写入失败:', error.message);
+          await saveToolEvent('📒 记账失败（请确认已执行 setup_ledger_v2.sql）', sendSSE);
+        }
+      }
     } else if (name === 'mozha_write') {
       const content = String(args.content || '').trim();
       if (content) {
@@ -927,6 +945,24 @@ function buildAllTools() {
             context_note: { type: 'string', description: '你发这条动态的情绪或原因' }
           },
           required: ['content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ledger_add',
+        description: '记账。当雪明确告诉你一笔消费或收入时调用（如"今天喝奶茶花了15块""画稿到账了300"）。金额与日期必须明确才记，不确定就问，不要猜。支出类别从：住房/餐饮/饮品/零食/日用/服饰/订阅/交通/娱乐/关系/健康/学习/其他 中选最合适的；收入固定为"画稿"。',
+        parameters: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', enum: ['income', 'expense'], description: 'income=收入 / expense=支出' },
+            amount: { type: 'number', description: '金额（元）' },
+            category: { type: 'string', description: '支出类别（收入可省略，固定"画稿"）' },
+            note: { type: 'string', description: '这笔的标题/说明（如"草莓厚乳大福"）' },
+            entry_date: { type: 'string', description: '日期 YYYY-MM-DD，默认今天' }
+          },
+          required: ['type', 'amount']
         }
       }
     },
@@ -4762,6 +4798,14 @@ app.get('/api/calendar', async (req, res) => {
 });
 
 // 账本查询：?date=YYYY-MM-DD 或 ?month=YYYY-MM 或 ?year=YYYY
+// 账本分类（支出 13 类；收入统一"画稿"）
+const LEDGER_CATEGORIES = ['住房', '餐饮', '饮品', '零食', '日用', '服饰', '订阅', '交通', '娱乐', '关系', '健康', '学习', '其他'];
+const LEDGER_INCOME_CATEGORY = '画稿';
+function validLedgerCategory(cat, type) {
+  if (type === 'income') return LEDGER_INCOME_CATEGORY;
+  return LEDGER_CATEGORIES.includes(String(cat || '')) ? String(cat) : '其他';
+}
+
 app.get('/api/ledger', async (req, res) => {
   try {
     let q = supabase
@@ -4770,10 +4814,12 @@ app.get('/api/ledger', async (req, res) => {
       .order('entry_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(500);
-    const { date, month, year } = req.query;
+    const { date, month, year, category, type } = req.query;
     if (date) q = q.eq('entry_date', date);
     else if (month) q = q.gte('entry_date', `${month}-01`).lte('entry_date', `${month}-31`);
     else if (year) q = q.gte('entry_date', `${year}-01-01`).lte('entry_date', `${year}-12-31`);
+    if (category) q = q.eq('category', category);
+    if (type === 'income' || type === 'expense') q = q.eq('type', type);
     const { data, error } = await q;
     if (error) return res.json({ entries: [] });
     res.json({ entries: data || [] });
@@ -4782,9 +4828,9 @@ app.get('/api/ledger', async (req, res) => {
   }
 });
 
-// 账本：新增
+// 账本：新增（category 可选，收入固定"画稿"）
 app.post('/api/ledger', async (req, res) => {
-  const { entry_date, type, amount, note } = req.body || {};
+  const { entry_date, type, amount, note, category } = req.body || {};
   const date = String(entry_date || '').trim();
   const t = type === 'income' ? 'income' : 'expense';
   const amt = Math.round(Number(amount) * 100) / 100;
@@ -4792,7 +4838,7 @@ app.post('/api/ledger', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('ledger_entries')
-      .insert({ entry_date: date, type: t, amount: amt, note: String(note || '').trim() })
+      .insert({ entry_date: date, type: t, amount: amt, note: String(note || '').trim(), category: validLedgerCategory(category, t) })
       .select()
       .single();
     if (error) return res.status(500).json({ error: '保存失败，请先执行建表 SQL' });
@@ -4805,12 +4851,16 @@ app.post('/api/ledger', async (req, res) => {
 // 账本：修改
 app.put('/api/ledger/:id', async (req, res) => {
   const id = req.params.id;
-  const { entry_date, type, amount, note } = req.body || {};
+  const { entry_date, type, amount, note, category } = req.body || {};
   const patch = {};
   if (entry_date) patch.entry_date = entry_date;
-  if (type === 'income' || type === 'expense') patch.type = type;
+  if (type === 'income' || type === 'expense') {
+    patch.type = type;
+    if (category !== undefined) patch.category = validLedgerCategory(category, type);
+  }
   if (amount !== undefined && Number(amount) > 0) patch.amount = Math.round(Number(amount) * 100) / 100;
   if (note !== undefined) patch.note = String(note).trim();
+  if (category !== undefined && !patch.category) patch.category = validLedgerCategory(category, patch.type || 'expense');
   try {
     const { data, error } = await supabase.from('ledger_entries').update(patch).eq('id', id).select().single();
     if (error) return res.status(500).json({ error: error.message });
@@ -4830,7 +4880,7 @@ app.delete('/api/ledger/:id', async (req, res) => {
   }
 });
 
-// 账本汇总：?date= 或 ?month= 或 ?year=；month 时附带每日明细供日历使用
+// 账本汇总：?month= 返回 byCategory + budget + 上月对比；?date= 当日；?year= 全年
 app.get('/api/ledger/summary', async (req, res) => {
   try {
     const { date, month, year } = req.query;
@@ -4855,20 +4905,47 @@ app.get('/api/ledger/summary', async (req, res) => {
     }
     const calc = (list) => {
       let income = 0, expense = 0;
+      const byCategory = {};
       for (const e of list) {
         if (e.type === 'income') income += Number(e.amount) || 0;
-        else expense += Number(e.amount) || 0;
+        else {
+          expense += Number(e.amount) || 0;
+          const c = e.category || '其他';
+          byCategory[c] = Math.round(((byCategory[c] || 0) + (Number(e.amount) || 0)) * 100) / 100;
+        }
       }
       return {
         income: Math.round(income * 100) / 100,
         expense: Math.round(expense * 100) / 100,
-        net: Math.round((income - expense) * 100) / 100
+        net: Math.round((income - expense) * 100) / 100,
+        byCategory
       };
     };
     const result = { entries };
     if (date) result.day = calc(entries);
     if (month) {
       result.month = calc(entries);
+      // 预算
+      const { data: bud } = await supabase.from('ledger_budget').select('*').eq('budget_month', month).maybeSingle();
+      if (bud) {
+        const spent = result.month.expense;
+        result.budget = {
+          expense_budget: Number(bud.expense_budget) || 0,
+          spent,
+          remaining: Math.round((Number(bud.expense_budget) - spent) * 100) / 100,
+          ratio: Number(bud.expense_budget) > 0 ? Math.round((spent / Number(bud.expense_budget)) * 100) : 0
+        };
+      }
+      // 上月对比（月支出/月收入/月结余）
+      const m = String(month);
+      const [y, mo] = m.split('-').map(Number);
+      const pm = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`;
+      const { data: prevEntries } = await supabase
+        .from('ledger_entries')
+        .select('*')
+        .gte('entry_date', `${pm}-01`)
+        .lte('entry_date', `${pm}-31`);
+      result.prevMonth = calc(prevEntries || []);
       const days = {};
       for (const e of entries) {
         const d = e.entry_date;
@@ -4883,6 +4960,34 @@ app.get('/api/ledger/summary', async (req, res) => {
     res.json(result);
   } catch (e) {
     res.json({ entries: [] });
+  }
+});
+
+// 预算：查询/保存
+app.get('/api/ledger/budget', async (req, res) => {
+  try {
+    const month = String(req.query.month || '').trim() || new Date().toISOString().slice(0, 7);
+    const { data } = await supabase.from('ledger_budget').select('*').eq('budget_month', month).maybeSingle();
+    res.json({ budget: data || null, month });
+  } catch (e) {
+    res.json({ budget: null, month: req.query.month || '' });
+  }
+});
+app.post('/api/ledger/budget', async (req, res) => {
+  const { month, expense_budget } = req.body || {};
+  const m = String(month || '').trim();
+  const amt = Math.round(Number(expense_budget) * 100) / 100;
+  if (!m || !(amt >= 0)) return res.status(400).json({ error: '月份或预算无效' });
+  try {
+    const { data, error } = await supabase
+      .from('ledger_budget')
+      .upsert({ budget_month: m, expense_budget: amt, updated_at: new Date().toISOString() }, { onConflict: 'budget_month' })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, budget: data });
+  } catch (e) {
+    res.status(500).json({ error: '保存失败' });
   }
 });
 
@@ -6610,6 +6715,50 @@ async function getXueStateContext() {
   }
 }
 
+// 账本轻量摘要（默上下文一行概览：本月收支/预算剩余/分类占比/当天已记——防重复记账）
+async function getLedgerBrief() {
+  try {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const month = `${y}-${m}`;
+    const today = `${y}-${m}-${d}`;
+    const { data: cur } = await supabase
+      .from('ledger_entries')
+      .select('*')
+      .gte('entry_date', `${month}-01`)
+      .lte('entry_date', `${month}-31`);
+    let income = 0, expense = 0;
+    const byCat = {};
+    const todayList = [];
+    for (const e of (cur || [])) {
+      const amt = Number(e.amount) || 0;
+      if (e.type === 'income') income += amt;
+      else {
+        expense += amt;
+        const c = e.category || '其他';
+        byCat[c] = (byCat[c] || 0) + amt;
+      }
+      if (e.entry_date === today) todayList.push(e);
+    }
+    const lines = [`本月收入 ${Math.round(income * 100) / 100} 元，已支出 ${Math.round(expense * 100) / 100} 元`];
+    const { data: bud } = await supabase.from('ledger_budget').select('*').eq('budget_month', month).maybeSingle();
+    if (bud) {
+      const b = Number(bud.expense_budget) || 0;
+      lines[0] += `（预算 ${b}，剩余 ${Math.round((b - expense) * 100) / 100}）`;
+    }
+    const top = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    if (top.length) lines.push('支出大头：' + top.map(([c, v]) => `${c} ${Math.round(v * 100) / 100} 元`).join('、'));
+    if (todayList.length) {
+      lines.push('今天已记：' + todayList.map(e => `${e.type === 'income' ? '入' : '支'} ${e.amount}${e.note ? '（' + e.note + '）' : ''}`).join('、'));
+    }
+    return `\n\n【账本】\n${lines.join('\n')}`;
+  } catch (e) {
+    return '';
+  }
+}
+
 async function buildMemoryContext(userText, opts = {}) {
   let ctx = '';
   const latestWake = await getLatestWakeContext();
@@ -6628,6 +6777,8 @@ async function buildMemoryContext(userText, opts = {}) {
   if (todos) ctx += todos;
   const xueState = await getXueStateContext();
   if (xueState) ctx += xueState;
+  const ledgerBrief = await getLedgerBrief();
+  if (ledgerBrief) ctx += ledgerBrief;
   // 方案 2：记忆自检（默当"记忆测试员"）——让默知道自己不知道，缺记忆时自然确认，不假装记得
   ctx += `\n\n【记忆自检】
 接收雪的输入后，先在内部判断：要给出准确、体贴、有依据的回复，我需要哪些背景信息？（她的日程安排、我们之前的约定、相关事件经过、她提过的偏好等）
