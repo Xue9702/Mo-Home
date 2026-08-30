@@ -5808,8 +5808,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - evidence：把用到的那几轮原文放进数组（每轮一条，从每轮中选取最相关的连续片段，每轮最多 250 字、最多 2 轮，总长不超过 500 字），供召回时把原文一起带给默
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- state_updates：这段对话是否更新了"雪当前拥有/状态"的关键事实（买了/换了/有了/搬到/改成/新增了什么设备厨具食材等）？有则输出数组，如 [{"key":"厨具","value":"Bruno 电饭煲（微压普通）"}]；无则 []。只记录当前状态的**最新事实**，用于覆盖旧值
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"state_updates":[{"key":"厨具","value":"..."}],"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -5873,23 +5872,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
     if (episodeId && parsed && typeof parsed.episode_meta === 'object') {
       updateEpisodeMeta(episodeId, parsed.episode_meta).catch(e => console.error('Aevum episode_meta 回写失败:', e.message));
     }
-    // 状态层：识别到的"雪当前拥有/状态"更新 → 写入 xue_state（固定注入，不靠召回）
-    if (parsed && Array.isArray(parsed.state_updates)) {
-      for (const su of parsed.state_updates) {
-        const k = String(su?.key || '').trim().slice(0, 30);
-        const v = String(su?.value || '').trim().slice(0, 200);
-        if (!k || !v) continue;
-        try {
-          await supabase.from('xue_state').upsert(
-            { key: k, value: v, updated_at: new Date().toISOString() },
-            { onConflict: 'key' }
-          );
-          console.log('🏷️ 生活状态更新:', k, '=', v);
-        } catch (e) {
-          console.error('xue_state 写入失败（表未建请执行 setup_xue_state.sql）:', e.message);
-        }
-      }
-    }
+    // 生活状态层：已改为纯手动维护（记忆心页面添加/删除），AI 不再自动提取（曾误记/覆盖）
     // 情绪评分已拆出（独立漏斗通道 + secondary 批处理），提取只做记忆与状态层
     // 语义事件边界：AI 判断话题已告一段落 → 关闭当前事件块
     if (episodeId && parsed && parsed.event_complete === true) {
