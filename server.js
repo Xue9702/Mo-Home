@@ -1843,7 +1843,7 @@ app.post('/api/chat', async (req, res) => {
       }
       const aRes = applyUserEvent(aState, text, {
         eventId: 'user:' + (userData?.[0]?.id || Date.now()),
-        libido, now: aNow, lexicon: AROUSAL_LEXICON
+        libido, now: aNow, lexicon: await getArousalLexicon()
       });
       if (aRes.event === 'climax') {
         console.log('💦 [arousal] 高潮结算:', 'quality=' + aRes.quality.toFixed(2), 'output=' + aRes.output.toFixed(2), 'cause=' + aRes.receipt.cause);
@@ -2083,7 +2083,7 @@ app.post('/api/chat', async (req, res) => {
         complete: true,
         libido: libido2,
         now: Date.now(),
-        lexicon: AROUSAL_LEXICON,
+        lexicon: await getArousalLexicon(),
         releaseIntent: null // 结构化 intent 预留；当前用回复文本兜底
       });
       if (aRes.event === 'climax') {
@@ -2704,10 +2704,25 @@ setTimeout(() => { runBookAutomation().catch(() => {}); }, 30000);
 setInterval(() => { runBookAutomation().catch(() => {}); }, 5 * 60 * 1000);
 
 // ================== 射精值系统（②双通道 ③情绪调制 ④注入） ==================
-// 词表：默认用示例词表；雪的私人词表写 arousal-lexicon.json（gitignore）后自动优先
-const AROUSAL_LEXICON = (() => {
+// 词表来源：Supabase arousal_lexicon（可在线更新，私人词表不进 git）→ 5 分钟缓存 → fallback 本地文件
+const AROUSAL_LEXICON_FALLBACK = (() => {
   try { return require('./arousal-lexicon.json'); } catch (e) { return require('./arousal-lexicon.example.json'); }
 })();
+let arousalLexiconCache = null;
+let arousalLexiconAt = 0;
+async function getArousalLexicon() {
+  const now = Date.now();
+  if (arousalLexiconCache && now - arousalLexiconAt < 300000) return arousalLexiconCache;
+  try {
+    const { data } = await supabase.from('arousal_lexicon').select('data').eq('id', 1).maybeSingle();
+    if (data && data.data && typeof data.data === 'object' && Object.keys(data.data).length > 1) {
+      arousalLexiconCache = data.data;
+      arousalLexiconAt = now;
+      return arousalLexiconCache;
+    }
+  } catch (e) { /* 表未建或读取失败用本地 */ }
+  return AROUSAL_LEXICON_FALLBACK;
+}
 
 let arousalCache = null;
 async function getArousalState() {

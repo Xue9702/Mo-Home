@@ -7493,9 +7493,50 @@
       }
 
       // 气泡内容：先转义再渲染 **粗体**（默偶尔用星号强调标题）
+      const COPY_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+      function renderCodeBlock(block) {
+        const langLabel = block.lang ? block.lang : 'code';
+        return '<div style="margin:8px 0;border:1px solid #e5e0d8;border-radius:10px;overflow:hidden;background:#faf8f4;">'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:#f2eee7;font-size:11px;color:#8a83a8;">'
+          + '<span>' + escapeHtml2(langLabel) + '</span>'
+          + '<span onclick="copyCodeBlock(this)" data-code="' + encodeURIComponent(block.code) + '" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:#8a83a8;" title="复制代码">' + COPY_ICON_SVG + '<span>复制</span></span>'
+          + '</div>'
+          + '<pre style="margin:0;padding:10px 12px;overflow-x:auto;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.6;color:#3e3e3e;white-space:pre-wrap;word-break:break-all;">' + escapeHtml2(block.code) + '</pre>'
+          + '</div>';
+      }
+      function copyCodeBlock(el) {
+        const code = decodeURIComponent(el.dataset.code || '');
+        const done = () => {
+          const label = el.querySelector('span');
+          if (label) { label.textContent = '已复制'; setTimeout(() => { label.textContent = '复制'; }, 1500); }
+        };
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(code).then(done).catch(() => { fallbackCopy(code); done(); });
+        } else { fallbackCopy(code); done(); }
+      }
+      function fallbackCopy(text) {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        ta.remove();
+      }
+      window.copyCodeBlock = copyCodeBlock;
+
       function bubbleHtml(text) {
-        let s = escapeHtml2(String(text || ''));
+        const blocks = [];
+        let s = String(text || '');
+        // 先提取代码块为占位符（避免后续转义破坏结构）
+        s = s.replace(/```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+          blocks.push({ lang: lang || '', code: code.replace(/\n$/, '') });
+          return '\u0000BLOCK' + (blocks.length - 1) + '\u0000';
+        });
+        s = escapeHtml2(s);
         s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // 行内代码（反引号）
+        s = s.replace(/`([^`\n]+)`/g, '<code style="background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-size:.9em;font-family:Consolas,monospace;">$1</code>');
+        // 恢复代码块渲染
+        s = s.replace(/\u0000BLOCK(\d+)\u0000/g, (m, i) => renderCodeBlock(blocks[Number(i)]));
         return s;
       }
 
