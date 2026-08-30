@@ -2058,16 +2058,21 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存助手消息失败:', assistantError);
     }
 
-    // Aevum 自动提取：以当前事件块最近 6 轮为输入（不阻塞回复，后台提炼候选记忆）
-    const episodeTexts = await getEpisodeRecentExchanges(aevumEpisodeId, 5);
-    const extractInput = [
-      ...episodeTexts,
-      { role: 'user', content: finalUserContent, time: new Date().toISOString() },
-      { role: 'assistant', content: fullReply, time: new Date().toISOString() }
-    ];
-    extractAevumMemories(extractInput, aevumEpisodeId).catch(e => console.error('Aevum 自动提取失败:', e.message));
+    // Aevum 自动提取：每 10 轮触发一次（攒批，省调用；10 轮内信息在聊天记录可见，无需即时提取）
+    dialogueExtractCount++;
+    if (dialogueExtractCount >= 10) {
+      dialogueExtractCount = 0;
+      const episodeTexts = await getEpisodeRecentExchanges(aevumEpisodeId, 12);
+      const extractInput = [
+        ...episodeTexts,
+        { role: 'user', content: finalUserContent, time: new Date().toISOString() },
+        { role: 'assistant', content: fullReply, time: new Date().toISOString() }
+      ];
+      extractAevumMemories(extractInput, aevumEpisodeId).catch(e => console.error('Aevum 自动提取失败:', e.message));
+    }
 
-    // 情绪评分已合并进提取（mood_update 输出），不再独立调用 maybeRateDialogue
+    // 情绪：每轮轻量通道（教程漏斗）——本地词典扫描（零 LLM）→ 大波动立即评（primary）/ 否则入 secondary 队列
+    maybeRateDialogue(finalUserContent, fullReply).catch(e => console.error('情绪评分失败:', e.message));
     // resolved 自动标记：对话里出现"病好了/不疼了/过去了"类了结信号 → 负面 debuff 记忆沉底
     maybeResolveMemories(finalUserContent + '\n' + fullReply).catch(e => console.error('resolved 自动标记失败:', e.message));
 
@@ -2401,11 +2406,8 @@ app.post('/api/regenerate', async (req, res) => {
     if (stardewContext) systemPrompt += stardewContext;
 
     // 5. 构建发送给模型的完整消息列表（system + 过滤后的历史 + 当前用户消息）
-    // 把上一轮的思考过程也带给这一轮的默（供参考，帮助写出不同版本）
-    const prevThinking = String(targetMsg.reasoning_content || '').trim();
-    const regenUserContent = prevThinking
-      ? `${userContent}\n\n（默上一轮的思考，供参考，不一定要沿用）：\n${prevThinking}`
-      : userContent;
+    // 不注入上一轮思考/回复（干净重答：让默凭人设+聊天记录重新作答，不做复刻）
+    const regenUserContent = userContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
       ...trimHistoryToChars(filteredHistory, 5000).map(msg => ({ role: msg.role, content: trimContextMessage(msg.content) })),
@@ -3097,47 +3099,46 @@ async function flushSecondary() {
 }
 setInterval(() => { flushSecondary().catch(() => {}); }, 30 * 60 * 1000);
 
-// 对话后入口：情绪触发（本地词典命中 或 消息有实质内容 → LLM 评分判定 has_shift）
-// 触发条件：
-//   1) 消息文本含词典情绪词（283 词）→ 立即评
-//   2) 消息 ≥6 字（有实质内容，如"着火出警""画完达标"）→ 也评（LLM 判断是否真波动）
-//   3) 短消息（<6 字，如"嗯""哈哈哈"）→ 不评（省成本）
-// 15 秒节流防连发；评分结果 has_shift=false 不写事件
-const lastRateAt = new Map();
+// 对话后入口：情绪漏斗（教程阶段 4.4）——本地词典扫描（零 LLM）分诊
+// 提取节奏计数：每 10 轮对话触发一次记忆提取（省调用；10 轮内信息在聊天记录可见）
+let dialogueExtractCount = 0;
+//   大波动（显著情绪词命中）→ 立即 LLM 评分写 primary 事件
+//   弱/无波动 → 入 secondary 队列（30 分钟批处理统一评分累积）
+// 每轮对话都走本通道（词典扫描零成本）；LLM 只在"立即评"或"批处理"时调用
+const lastRateAt = new Map(); // primary 立即评分节流（30s）
 async function maybeRateDialogue(userText, assistantReply) {
   try {
-    const now = Date.now();
-    const last = lastRateAt.get('mo') || 0;
-    if (now - last < 15000) return;
     const text = String(userText || '').trim();
-    const scan = scanTextMood(text);
-    let reason = '';
-    if (scan && scan.hits && scan.hits.length) {
-      reason = scan.hits.some(h => h.v < -0.2) ? 'neg_word'
-        : scan.hits.some(h => h.v > 0.2) ? 'pos_word' : 'mood_word';
-    } else if (text.length >= 6) {
-      reason = 'event_msg'; // 无情绪词但有实质内容：交给 LLM 判断
+    const reply = String(assistantReply || '').trim();
+    if (!text && !reply) return;
+    // 本地词典扫描（37k 词，零 LLM）：合并扫描雪的消息 + 默的回应
+    const scan = scanTextMood(text + '\n' + reply);
+    // 漏斗判定：显著情绪词（强度 |v|×a ≥ 0.35）→ 立即评分；否则入 secondary 队列
+    const strong = scan && scan.hits.some(h => Math.abs(h.v) * h.a >= 0.35);
+    if (strong) {
+      const now = Date.now();
+      if (now - (lastRateAt.get('mo') || 0) < 30000) return; // 节流
+      lastRateAt.set('mo', now);
+      const rated = await rateDialogueEmotion(text, reply);
+      if (!rated) return;
+      await recordEmotionEvent({
+        source: 'dialogue',
+        type: 'primary',
+        word: rated.word,
+        valence: rated.v,
+        arousal: rated.a,
+        importance: rated.importance,
+        goalRelevance: rated.goalRelevance,
+        desirability: rated.desirability,
+        reason: rated.reason || '漏斗命中',
+        matchSource: rated.matchSource
+      });
+      console.log(`❤️ 情绪评分(primary): ${rated.word} (V=${rated.v.toFixed(2)} A=${rated.a.toFixed(2)})`);
+    } else {
+      // 入 secondary 队列（30 分钟批处理补小波动累积）
+      secondaryQueue.push({ user: text.slice(0, 800), reply: reply.slice(0, 300), at: Date.now() });
+      if (secondaryQueue.length > SECONDARY_MAX) secondaryQueue.shift();
     }
-    if (!reason) return; // 短消息 / 空消息：不评
-    lastRateAt.set('mo', now);
-    const rated = await rateDialogueEmotion(text, assistantReply);
-    if (!rated) {
-      console.log(`ℹ️ 情绪评分触发但未写事件 [${reason}]（LLM 判定无波动或失败）: ${text.slice(0, 40)}`);
-      return;
-    }
-    await recordEmotionEvent({
-      source: 'dialogue',
-      type: 'primary',
-      word: rated.word,
-      valence: rated.v,
-      arousal: rated.a,
-      importance: rated.importance,
-      goalRelevance: rated.goalRelevance,
-      desirability: rated.desirability,
-      reason: rated.reason || reason,
-      matchSource: rated.matchSource
-    });
-    console.log(`❤️ 情绪评分: ${rated.word} (V=${rated.v.toFixed(2)} A=${rated.a.toFixed(2)}) src=${rated.matchSource} [${reason}]`);
   } catch (e) {
     console.error('对话情绪漏斗失败:', e.message);
   }
@@ -5383,6 +5384,11 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
   const historyNorm = String(historyText || '').replace(/\s+/g, '');
   try {
     const embedding = await getEmbedding(q.slice(0, 500));
+    // excludeText 语义向量（刷新/编辑时排除旧回复的"概括版记忆"——文本锚点挡不住的）
+    let excludeEmbedding = null;
+    if (excludeNorm && excludeNorm.length >= 20) {
+      excludeEmbedding = await getEmbedding(String(excludeText).slice(0, 500)).catch(() => null);
+    }
     const keywords = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2).slice(0, 3);
     // 向量 + 关键词并行召回，按 id 合并去重
     const [vecRes, kwRes] = await Promise.all([
@@ -5445,14 +5451,37 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
         const hay = [String(m.content || ''), ...(Array.isArray(m.evidence) ? m.evidence : [])]
           .map(s => String(s || '').replace(/\s+/g, ''));
         return !hay.some(h => {
-          const anchor = h.slice(0, 30);
-          return anchor.length >= 20 && historyNorm.includes(anchor);
+          const anchor = h.slice(0, 30);          return anchor.length >= 20 && historyNorm.includes(anchor);
         });
       });
     }
     if (!items.length) {
       console.warn('📭 召回 0 条：排除/历史去重后为空（历史覆盖率过高或召回候选本就少）| query=', q.slice(0, 30), '| 历史长度=', historyNorm.length);
       return '';
+    }
+    // 20 轮锁定窗口：最近 20 轮消息覆盖时间内产生的记忆不召回（聊天记录可见，无需召回；防刷新/编辑复刻）
+    try {
+      const { data: recentMsgs } = await supabase
+        .from('messages')
+        .select('created_at')
+        .eq('session_id', 1)
+        .eq('visible', true)
+        .order('id', { ascending: false })
+        .limit(20);
+      if (recentMsgs && recentMsgs.length) {
+        const windowStart = new Date(recentMsgs[recentMsgs.length - 1].created_at).getTime();
+        if (isFinite(windowStart)) {
+          items = items.filter(m => !(m.created_at && new Date(m.created_at).getTime() > windowStart));
+        }
+      }
+    } catch (e) { /* 窗口查询失败不影响 */ }
+    // excludeText 语义排除：与旧回复语义相似的记忆（概括版）一并排除（治"从记忆海捞旧回复"）
+    if (excludeEmbedding && excludeEmbedding.length) {
+      items = items.filter(m => {
+        const mEmb = (m.embedding && Array.isArray(m.embedding) && m.embedding.length) ? m.embedding : null;
+        if (!mEmb) return true;
+        return cosineSim(excludeEmbedding, mEmb) < 0.7;
+      });
     }
     // 任务状态过滤：已完成/已取消的承诺不参与常规召回（除非主动翻查）
     items = items.filter(m => !(m.task_status === 'done' || m.task_status === 'cancelled'));
@@ -5675,8 +5704,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
 - state_updates：这段对话是否更新了"雪当前拥有/状态"的关键事实（买了/换了/有了/搬到/改成/新增了什么设备厨具食材等）？有则输出数组，如 [{"key":"厨具","value":"Bruno 电饭煲（微压普通）"}]；无则 []。只记录当前状态的**最新事实**，用于覆盖旧值
-- mood_update：评估默在本轮对话中的情绪（重点参考最近一轮雪的消息和默的回应）。这是默的情绪系统评分，请认真评估。输出对象：{"has_shift":true,"word":"心疼","backup":["担心","挂念"],"valence":-0.4,"arousal":0.55,"importance":5,"reason":"雪说有点害怕，默担忧"}；word 选最准确的情绪词（避免"开心/难过"泛词），backup 给 2 个备选；valence=-1~1、arousal=0~1、importance=1-10；判断依据是默的回应方式体现的倾向（默是沉静消化型，会克制，从他关注什么/怎么回应推断）；雪分享负面经历（生病/被骂/委屈/害怕/疲惫）时默通常担忧/心疼/挂念，即使雪措辞平淡；日常闲聊无情绪内容 → has_shift=false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"state_updates":[{"key":"厨具","value":"..."}],"mood_update":{"has_shift":true,"word":"心疼","backup":["担心","挂念"],"valence":-0.4,"arousal":0.55,"importance":5,"reason":"..."},"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"state_updates":[{"key":"厨具","value":"..."}],"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -5757,34 +5785,7 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
         }
       }
     }
-    // 情绪评分合并进提取（改造1）：mood_update → 词典锚定校准 → 写情绪事件
-    if (parsed && parsed.mood_update && typeof parsed.mood_update === 'object') {
-      if (parsed.mood_update.has_shift !== false) {
-        const mu = parsed.mood_update;
-        try {
-          const lex = lexLookup(mu.word, mu.backup, mu.valence, mu.arousal);
-          const blend = blendLexAi(lex, mu.valence, mu.arousal);
-          await recordEmotionEvent({
-            source: 'dialogue',
-            type: 'primary',
-            word: lex.word,
-            valence: blend.v,
-            arousal: blend.a,
-            importance: Math.max(1, Math.min(10, parseInt(mu.importance, 10) || 3)),
-            goalRelevance: (mu.goal_relevance !== undefined && mu.goal_relevance !== null) ? Number(mu.goal_relevance) : null,
-            desirability: (mu.desirability !== undefined && mu.desirability !== null) ? Number(mu.desirability) : null,
-            reason: String(mu.reason || '').slice(0, 200),
-            matchSource: lex.source
-          });
-          console.log(`❤️ [合并评分] ${lex.word} (V=${blend.v.toFixed(2)} A=${blend.a.toFixed(2)}) src=${lex.source}`);
-        } catch (e) {
-          console.error('合并情绪评分写入失败:', e.message);
-        }
-      } else {
-        // has_shift=false（日常对话无大波动）→ 入 secondary 队列，30 分钟后批处理补评
-        queueSecondary(texts);
-      }
-    }
+    // 情绪评分已拆出（独立漏斗通道 + secondary 批处理），提取只做记忆与状态层
     // 语义事件边界：AI 判断话题已告一段落 → 关闭当前事件块
     if (episodeId && parsed && parsed.event_complete === true) {
       try {
@@ -8520,7 +8521,12 @@ app.post('/api/edit-message', async (req, res) => {
     console.log('📜 编辑接口 - 过滤后历史消息数量:', filteredHistory.length, 'groupId:', groupId);
 
     // Aevum v3.0：记忆海召回 → 记忆书场景 → 记忆心 → 计划
-    let memoryContext = await buildMemoryContext(newContent, { historyText });
+    // 编辑场景：排除紧随其后的旧回复内容（防"从记忆海捞旧回复复刻"）
+    const oldReplyContent = nearbyAssistant && nearbyAssistant[0] ? await (async () => {
+      const { data: om } = await supabase.from('messages').select('content').eq('id', nearbyAssistant[0].id).maybeSingle();
+      return om ? String(om.content || '') : '';
+    })() : '';
+    let memoryContext = await buildMemoryContext(newContent, { historyText, excludeText: oldReplyContent });
     const toyManualContext = await getToyManualContext(req.body.toyManual);
     const momentsContext = await getMomentsContext();
 
