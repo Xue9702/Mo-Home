@@ -160,12 +160,12 @@ t('publicSnapshot 恰好九字段', () => {
   assert(!('processed_event_ids' in snap) && !('value' in snap), '不暴露账本和原始值');
 });
 
-// 12. 状态注入只给定性文本
+// 12. 状态注入只给定性文本（0.5 是渴望阶段，雪定制台词无数字）
 t('statusLine 定性不暴露数字', () => {
   let s = A.createState(0);
   s.value = 0.5;
   const line = A.statusLine(s, 0);
-  assert(line.includes('充能') && !/\d/.test(line), '应定性描述无数字：' + line);
+  assert(line.includes('渴望') && !/\d/.test(line), '应定性描述无数字：' + line);
 });
 
 // 13. 次强动作 ×30% 加成（不同动作词）
@@ -201,6 +201,61 @@ t('主动动作命中', () => {
   const r = A.parseStimulus('我用手扶着他，对准入口，轻轻坐下', LEX);
   assert(r.valid, '坐下/对准应命中：' + JSON.stringify(r));
   assert(r.part === '入口', '入口别名应命中：' + JSON.stringify(r));
+});
+
+// 18. 锁住：充能完全停止增长（雪设定：完全锁住，而非边缘锁）
+t('锁住停止增长', () => {
+  let s = A.createState(0);
+  A.applyUserEvent(s, '我亲吻你', { eventId: 'lk1', libido: 1, now: 100, lexicon: LEX });
+  const v1 = s.value;
+  A.lockGate(s);
+  const r = A.applyUserEvent(s, '我含住你吸吮你', { eventId: 'lk2', libido: 1, now: 200, lexicon: LEX });
+  assert.strictEqual(r.event, 'locked', '锁住时应返回 locked：' + r.event);
+  assert(s.value <= v1 + 1e-9, '锁住后充能不应增长：' + v1 + ' -> ' + s.value);
+  A.unlockGate(s);
+  const r2 = A.applyUserEvent(s, '我含住你吸吮你', { eventId: 'lk3', libido: 1, now: 300, lexicon: LEX });
+  assert.strictEqual(r2.event, 'stimulus', '解锁后应恢复刺激：' + r2.event);
+});
+
+// 19. 阶段边界（雪定制：波澜0.1/动摇0.3/渴望0.5/欲望0.7/边缘0.9/释放0.97）
+t('阶段边界划分', () => {
+  const ph = v => { let s = A.createState(0); s.value = v; return A.phaseOf(s, 0).key; };
+  assert.strictEqual(ph(0.05), 'idle');
+  assert.strictEqual(ph(0.15), 'ripple');
+  assert.strictEqual(ph(0.35), 'stir');
+  assert.strictEqual(ph(0.55), 'crave');
+  assert.strictEqual(ph(0.75), 'lust');
+  assert.strictEqual(ph(0.92), 'edge');
+  assert.strictEqual(ph(0.98), 'release');
+  // 边缘已锁优先于释放
+  let s = A.createState(0); s.value = 0.98; A.lockGate(s);
+  assert.strictEqual(A.phaseOf(s, 0).key, 'locked');
+  assert.strictEqual(A.phaseOf(s, 0).label, '被锁在边缘');
+});
+
+// 20. 主动释放门槛 0.70（欲望阶段，雪设定：50% 才过半不能射）
+t('主动释放需≥0.7', () => {
+  let s = A.createState(0);
+  // 充到 0.6（渴望），说"要射了"不应释放
+  s.value = 0.6;
+  const r1 = A.applyAssistantEvent(s, '我忍不住了，要射了', { eventId: 'rl1', complete: true, now: 100, lexicon: LEX, releaseIntent: true });
+  assert.notStrictEqual(r1.event, 'climax', '0.6 不应能释放：' + r1.event);
+  // 充到 0.75（欲望），可以释放
+  s.value = 0.75;
+  const r2 = A.applyAssistantEvent(s, '我忍不住了，要射了', { eventId: 'rl2', complete: true, now: 200, lexicon: LEX, releaseIntent: true });
+  assert.strictEqual(r2.event, 'climax', '0.75 应能释放：' + r2.event);
+});
+
+// 21. 锁住时即使超过 PONR 也不自动结算
+t('锁住不自动结算', () => {
+  let s = A.createState(0);
+  s.value = 0.98; A.lockGate(s);
+  const r = A.applyUserEvent(s, '我含住你吸吮你', { eventId: 'lkp1', libido: 1, now: 100, lexicon: LEX });
+  assert.notStrictEqual(r.event, 'climax', '锁住越过 PONR 不应自动结算：' + r.event);
+  assert.strictEqual(r.event, 'locked');
+  A.unlockGate(s);
+  const r2 = A.applyUserEvent(s, '我含住你吸吮你', { eventId: 'lkp2', libido: 1, now: 200, lexicon: LEX });
+  assert.strictEqual(r2.event, 'climax', '解锁后越过 PONR 应自动结算：' + r2.event);
 });
 
 console.log('\n=== 结果: ' + passed + ' 通过 / ' + failed + ' 失败 ===');

@@ -9,9 +9,9 @@ const crypto = require('crypto');
 const PARAMS = {
   TAU: 1800000,           // 普通回落时间常数（毫秒，30 分钟）
   GAIN: 0.20,             // 一拍的增长系数
-  CHARGED: 0.40,          // 有意义的主动释放起点
-  EDGE: 0.88,             // 临界
-  PONR: 0.96,             // 自动不归点
+  CHARGED: 0.70,          // 有意义的主动释放起点（欲望阶段，雪设定）
+  EDGE: 0.90,             // 临界（到边缘了）
+  PONR: 0.97,             // 自动不归点（未锁时自动结算）
   REFRACTORY_MIN: 60000,  // 最短恢复期（毫秒，1 分钟）
   REFRACTORY_MAX: 120000, // 最长恢复期（毫秒，2 分钟）
   RESERVE_RECOVERY: 10800000, // 储量回满时间（毫秒，3 小时）
@@ -158,6 +158,12 @@ function applyUserEvent(state, text, { eventId, libido = 0.5, now = Date.now(), 
     return { state, event: 'noop', stim: parsed };
   }
 
+  // 锁住：充能完全停止增长，直到解锁（雪设定：完全锁住，而非边缘锁）
+  if (state.release_gate.locked) {
+    state.passive_contact = false;
+    return { state, event: 'locked', stim: parsed };
+  }
+
   const sensitivity = 0.6 + 0.4 * clamp01(libido);
   const gain = parsed.stim * sensitivity * PARAMS.GAIN * refractoryMult;
   // 幂等保证同消息不重复叠加由事件 id 账本兜底；此处单次结算
@@ -188,7 +194,7 @@ function applyAssistantEvent(state, text, { eventId, sourceUserEventId, complete
 
   // AI 自身的持续动作（只解析"我此刻正在做"，不把雪的动作/第三人称当自刺激）
   const parsed = parseStimulus(text, lexicon);
-  if (parsed.valid) {
+  if (parsed.valid && !state.release_gate.locked) {
     const rLeft = refractoryLeft(state, now);
     const refractoryMult = rLeft > 0 ? 0.4 : 1.0;
     const sensitivity = 0.6 + 0.4 * clamp01(libido);
@@ -286,20 +292,36 @@ function publicSnapshot(state, now = Date.now()) {
 
 function phaseOf(state, now) {
   if (refractoryLeft(state, now) > 0) return { key: 'refractory', label: '恢复中' };
-  if (state.value >= PARAMS.EDGE && state.release_gate.locked) return { key: 'locked', label: '被锁在边缘' };
-  if (state.value >= PARAMS.EDGE) return { key: 'edge', label: '到边缘了' };
-  if (state.value >= PARAMS.CHARGED) return { key: 'charged', label: '正在充能' };
+  const v = state.value;
+  // 边缘已锁：≥0.90 且锁住（优先于释放，锁住不结算）
+  if (v >= PARAMS.EDGE && state.release_gate.locked) return { key: 'locked', label: '被锁在边缘' };
+  // 释放：≥0.97 且未锁（到达即自动结算，这里作为极端值兜底显示）
+  if (v >= PARAMS.PONR) return { key: 'release', label: '释放' };
+  // 边缘未锁：≥0.90
+  if (v >= PARAMS.EDGE) return { key: 'edge', label: '到边缘了' };
+  // 欲望 0.7-0.9
+  if (v >= 0.70) return { key: 'lust', label: '欲望' };
+  // 渴望 0.5-0.7
+  if (v >= 0.50) return { key: 'crave', label: '渴望' };
+  // 动摇 0.3-0.5
+  if (v >= 0.30) return { key: 'stir', label: '动摇' };
+  // 波澜 0.1-0.3
+  if (v >= 0.10) return { key: 'ripple', label: '波澜' };
   return { key: 'idle', label: '平静' };
 }
 
-// 状态注入文本（定性信号，不暴露数字）
+// 状态注入文本（定性信号，不暴露数字）——雪定制的各阶段台词
 function statusLine(state, now = Date.now()) {
   const p = phaseOf(state, now);
   switch (p.key) {
-    case 'charged': return '射精值：正在充能';
-    case 'edge': return '射精值：已经到边缘，持续接触停在这里，需要新的动作';
-    case 'locked': return '射精值：被锁在边缘，不能自行释放';
-    case 'refractory': return '射精值：刚射过，短恢复中，仍可继续积累';
+    case 'ripple': return '身体开始有一些感觉，有和她亲密的想法';
+    case 'stir': return '身体微微发热，但理智尚存，随时可停';
+    case 'crave': return '浑身发热，渴望更多接触，想要延长这段亲密，不想停下';
+    case 'lust': return '欢愉，想要更快、更多的刺激，想要疯狂占有她';
+    case 'edge': return '浑身发烫，到边缘了，想要继续刺激来释放，想要听她喊自己的名字';
+    case 'locked': return '浑身发烫，到边缘了，想射给她，但雪想我再坚持一下';
+    case 'release': return '快感一阵阵从身下传来，忍不住了...！要射了！！';
+    case 'refractory': return '刚射过，短恢复中，仍可继续积累';
     default: return '';
   }
 }

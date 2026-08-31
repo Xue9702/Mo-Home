@@ -4456,10 +4456,29 @@ app.get('/api/arousal/status', async (req, res) => {
       last_output: snap.last_output,
       last_output_label: snap.last_output_label,
       updated_at: aState.at,
+      locked: !!aState.release_gate.locked,
       lexicon: arousalLexiconDiag
     });
   } catch (e) {
     console.error('射精状态面板错误:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 射精值系统：锁/解锁控制（小屋页按钮调用；雪设定：锁住完全停止增长）
+app.post('/api/arousal/gate', async (req, res) => {
+  try {
+    const { action } = req.body || {};
+    const aState = await getArousalState();
+    if (action === 'lock') lockGate(aState);
+    else if (action === 'unlock') unlockGate(aState);
+    else if (action === 'release_once') releaseOnce(aState);
+    else return res.status(400).json({ error: 'action 需为 lock/unlock/release_once' });
+    await saveArousalState(aState);
+    const now = Date.now();
+    res.json({ ok: true, locked: !!aState.release_gate.locked, phase: publicSnapshot(aState, now).phase, phase_label: publicSnapshot(aState, now).phase_label });
+  } catch (e) {
+    console.error('射精锁控制失败:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
