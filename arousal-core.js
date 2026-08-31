@@ -7,14 +7,14 @@
 const crypto = require('crypto');
 
 const PARAMS = {
-  TAU: 1800,              // 普通回落时间常数（秒）
+  TAU: 1800000,           // 普通回落时间常数（毫秒，30 分钟）
   GAIN: 0.20,             // 一拍的增长系数
   CHARGED: 0.40,          // 有意义的主动释放起点
   EDGE: 0.88,             // 临界
   PONR: 0.96,             // 自动不归点
-  REFRACTORY_MIN: 60,     // 最短恢复期（秒）
-  REFRACTORY_MAX: 120,    // 最长恢复期（秒）
-  RESERVE_RECOVERY: 10800,// 储量回满时间（3 小时，秒）
+  REFRACTORY_MIN: 60000,  // 最短恢复期（毫秒，1 分钟）
+  REFRACTORY_MAX: 120000, // 最长恢复期（毫秒，2 分钟）
+  RESERVE_RECOVERY: 10800000, // 储量回满时间（毫秒，3 小时）
   PASSIVE_CONTACT_CAP: 0.72, // 持续接触被动上限
   LEDGER_MAX: 500,        // 事件账本上限（生产可换 SQLite 长账本）
 };
