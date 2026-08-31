@@ -442,6 +442,66 @@
       flex-shrink: 0;
     }
 
+    /* 射精状态面板（雪的可视化调试面板） */
+    .arousal-panel {
+      flex-shrink: 0;
+      margin: 8px 12px 0;
+      background: #fff;
+      border: 1px solid #f0e9f5;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+    .arousal-panel-head {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      cursor: pointer;
+      user-select: none;
+      background: linear-gradient(135deg, #fff5f7, #fef9ff);
+    }
+    .arousal-panel-title { font-size: 13px; font-weight: 600; color: #c0506e; }
+    .arousal-panel-phase {
+      margin-left: auto;
+      font-size: 12px;
+      padding: 2px 10px;
+      border-radius: 10px;
+      color: #999;
+      background: #f5f5f5;
+    }
+    .arousal-panel-phase.phase-charged { background: #fff3e0; color: #e08600; }
+    .arousal-panel-phase.phase-edge { background: #ffe0e0; color: #d93025; }
+    .arousal-panel-phase.phase-locked { background: #f0e6ff; color: #7b4fd8; }
+    .arousal-panel-phase.phase-refractory { background: #e3f2fd; color: #1976d2; }
+    .arousal-panel-chevron { margin-left: 8px; color: #bbb; font-size: 12px; transition: transform 0.2s; }
+    .arousal-panel.collapsed .arousal-panel-chevron { transform: rotate(-90deg); }
+    .arousal-panel.collapsed .arousal-panel-body { display: none; }
+    .arousal-panel-body { padding: 4px 12px 10px; }
+    .arousal-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+    .arousal-label { font-size: 11px; color: #888; width: 30px; flex-shrink: 0; }
+    .arousal-bar-track {
+      flex: 1; height: 10px; border-radius: 6px; background: #f2f2f2; overflow: hidden;
+    }
+    .arousal-bar-track.thin { height: 6px; }
+    .arousal-bar {
+      height: 100%; width: 0%; border-radius: 6px;
+      background: linear-gradient(90deg, #f9a8c0, #e0658f);
+      transition: width 0.4s ease, background 0.3s ease;
+    }
+    .arousal-bar.reserve { background: linear-gradient(90deg, #9fd0f0, #4a9fe0); }
+    .arousal-num { font-size: 11px; color: #666; width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+    .arousal-meta { font-size: 11px; color: #aaa; margin-top: 6px; }
+    .arousal-foot { display: flex; align-items: center; margin-top: 4px; }
+    .arousal-statusline { flex: 1; font-size: 11px; color: #c0506e; min-height: 14px; }
+    .arousal-refresh {
+      border: none; background: none; cursor: pointer; font-size: 15px; color: #aaa;
+      padding: 2px 6px; border-radius: 8px;
+    }
+    .arousal-refresh:hover { background: #f5f5f5; color: #666; }
+    .arousal-refresh.loading { animation: spin 0.8s linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+
     /* 小屋页面内容区 */
     .home-content {
       padding: 16px;
@@ -1281,6 +1341,31 @@
       <!-- 聊天页面 -->
       <div class="page active" id="chatPage">
         <div class="message-list" id="messageList"></div>
+        <!-- 射精状态面板（雪看的调试面板，不注入给默） -->
+        <div class="arousal-panel" id="arousalPanel">
+          <div class="arousal-panel-head" onclick="toggleArousalPanel()">
+            <span class="arousal-panel-title">💗 身体状态</span>
+            <span class="arousal-panel-phase" id="arousalPhaseLabel">加载中…</span>
+            <span class="arousal-panel-chevron" id="arousalChevron">▾</span>
+          </div>
+          <div class="arousal-panel-body" id="arousalPanelBody">
+            <div class="arousal-row">
+              <span class="arousal-label">射精值</span>
+              <div class="arousal-bar-track"><div class="arousal-bar" id="arousalValueBar"></div></div>
+              <span class="arousal-num" id="arousalValueNum">0%</span>
+            </div>
+            <div class="arousal-row">
+              <span class="arousal-label">储量</span>
+              <div class="arousal-bar-track thin"><div class="arousal-bar reserve" id="arousalReserveBar"></div></div>
+              <span class="arousal-num" id="arousalReserveNum">100%</span>
+            </div>
+            <div class="arousal-meta" id="arousalMeta">暂无数据</div>
+            <div class="arousal-foot">
+              <span class="arousal-statusline" id="arousalStatusLine"></span>
+              <button class="arousal-refresh" onclick="refreshArousalPanel()" title="手动刷新">⟳</button>
+            </div>
+          </div>
+        </div>
         <div class="input-area" id="inputArea">
           <div class="image-preview" id="imagePreview" style="display:none;">
             <img id="imagePreviewImg" alt="预览">
@@ -5977,6 +6062,8 @@
                     const newBub = tempUserMsg.querySelector('.bubble');
                     addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
                   }
+                  // 编辑完成 → 刷新射精状态面板
+                  refreshArousalPanel();
                 }
                 if (json.error) throw new Error(json.error);
               } catch (e) { console.warn('解析SSE失败:', e); }
@@ -6550,6 +6637,8 @@
                     const oldBtn = prev.querySelector('.refresh-btn');
                     if (oldBtn) oldBtn.remove();
                   }
+                  // 5. 对话完成 → 刷新射精状态面板
+                  refreshArousalPanel();
                 }
 
                 if (json.error) throw new Error(json.error);
@@ -6723,6 +6812,8 @@
             addVersionNavigator(doneInfo.groupId, doneInfo.currentVersion, doneInfo.totalVersions, navTarget);
           }
           messageList.scrollTop = messageList.scrollHeight;
+          // 重新生成完成 → 刷新射精状态面板
+          refreshArousalPanel();
         } catch (err) {
           console.error('重新生成失败:', err);
           msgDiv.style.display = '';
@@ -7678,6 +7769,68 @@ let fullReply = '', fullThinking = '', lastThinkChunk = '';
       }
       window.sendTestMessage = sendTestMessage;
 
+      // ===== 射精状态面板 =====
+      let arousalPanelOpen = true;
+      function toggleArousalPanel() {
+        const p = document.getElementById('arousalPanel');
+        if (!p) return;
+        arousalPanelOpen = !arousalPanelOpen;
+        p.classList.toggle('collapsed', !arousalPanelOpen);
+        try { localStorage.setItem('arousalPanelOpen', arousalPanelOpen ? '1' : '0'); } catch (e) {}
+      }
+      window.toggleArousalPanel = toggleArousalPanel;
+
+      async function refreshArousalPanel() {
+        const bar = document.getElementById('arousalValueBar');
+        const num = document.getElementById('arousalValueNum');
+        const phaseEl = document.getElementById('arousalPhaseLabel');
+        const metaEl = document.getElementById('arousalMeta');
+        const lineEl = document.getElementById('arousalStatusLine');
+        const refreshBtn = document.querySelector('.arousal-refresh');
+        if (!bar) return;
+        if (refreshBtn) refreshBtn.classList.add('loading');
+        try {
+          const res = await fetch('/api/arousal/status', { cache: 'no-store' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const d = await res.json();
+          const pct = Math.round((d.value || 0) * 100);
+          bar.style.width = pct + '%';
+          num.textContent = pct + '%';
+          // 阶段配色
+          const clsMap = { charged: 'phase-charged', edge: 'phase-edge', locked: 'phase-locked', refractory: 'phase-refractory' };
+          phaseEl.className = 'arousal-panel-phase' + (clsMap[d.phase] ? ' ' + clsMap[d.phase] : '');
+          phaseEl.textContent = d.phase_label || '平静';
+          // 恢复中：显示剩余秒数
+          let refr = '';
+          if (d.refractory && d.refractory_left_ms > 0) refr = ' · 恢复中 ' + Math.ceil(d.refractory_left_ms / 1000) + 's';
+          metaEl.textContent = '储量 ' + d.reserve_label + '（' + Math.round(d.reserve * 100) + '%）' + refr +
+            ' · 上次高潮 ' + (d.last_climax_quality_label || '无') + ' / 输出 ' + (d.last_output_label || '无');
+          lineEl.textContent = d.status_line || '';
+          // 储量条
+          const rb = document.getElementById('arousalReserveBar');
+          const rn = document.getElementById('arousalReserveNum');
+          if (rb) rb.style.width = Math.round(d.reserve * 100) + '%';
+          if (rn) rn.textContent = Math.round(d.reserve * 100) + '%';
+        } catch (e) {
+          console.warn('射精状态面板刷新失败:', e);
+          phaseEl.textContent = '面板不可用';
+          metaEl.textContent = '拉取状态失败（接口 /api/arousal/status）';
+        } finally {
+          if (refreshBtn) refreshBtn.classList.remove('loading');
+        }
+      }
+      window.refreshArousalPanel = refreshArousalPanel;
+      // 面板初始化：解锁进入时拉一次
+      window._arousalPanelInit = window._arousalPanelInit || (() => {
+        window._arousalPanelInit = true;
+        try {
+          const saved = localStorage.getItem('arousalPanelOpen');
+          if (saved === '0') { arousalPanelOpen = false; const p = document.getElementById('arousalPanel'); if (p) p.classList.add('collapsed'); }
+        } catch (e) {}
+        refreshArousalPanel();
+      });
+
+
       // 标题栏设置图标
       if (headerSettingsBtn && !headerSettingsBtn.hasChildNodes()) {
         headerSettingsBtn.appendChild(createMenuIcon());
@@ -7695,6 +7848,7 @@ let fullReply = '', fullThinking = '', lastThinkChunk = '';
               loadHistory();
               setTimeout(syncLocalReminders, 1500);
               setTimeout(registerFcmPush, 2500);
+              setTimeout(() => { if (window._arousalPanelInit) window._arousalPanelInit(); }, 600);
             }
             userInput.focus(); loginError.style.display = 'none';
             if (!window._pollStarted) { window._pollStarted = true; setInterval(pollNotifications, 25000); }

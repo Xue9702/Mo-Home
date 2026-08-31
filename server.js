@@ -6,7 +6,7 @@ const {
   computeLonging, buildLongingPromptText, memoryDecayFactor
 } = require('./emotion-lexicon');
 const {
-  createState, applyUserEvent, applyAssistantEvent, statusLine,
+  PARAMS, createState, applyUserEvent, applyAssistantEvent, statusLine,
   publicSnapshot, lockGate, releaseOnce, unlockGate, ackReleaseEffect
 } = require('./arousal-core');
 const { createClient } = require('@supabase/supabase-js');
@@ -4410,6 +4410,38 @@ app.get('/api/emotion/panel', async (req, res) => {
     });
   } catch (e) {
     console.error('情绪面板错误:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 射精值系统：状态面板接口（给雪的面板看，含原始数值，不注入给默）
+app.get('/api/arousal/status', async (req, res) => {
+  try {
+    const aState = await getArousalState();
+    const now = Date.now();
+    const snap = publicSnapshot(aState, now);
+    // 面板需要实时 value（含衰减后）——publicSnapshot 不暴露原始值，这里单独算
+    const dt = Math.max(0, now - aState.at);
+    const valueNow = aState.value * Math.exp(-dt / PARAMS.TAU);
+    const line = statusLine(aState, now);
+    const refLeft = Math.max(0, aState.refractory_until - now);
+    res.json({
+      value: Number(valueNow.toFixed(4)),
+      reserve: snap.reserve,
+      reserve_label: snap.reserve_label,
+      phase: snap.phase,
+      phase_label: snap.phase_label,
+      refractory: snap.refractory,
+      refractory_left_ms: refLeft,
+      status_line: line,
+      last_climax_quality: snap.last_climax_quality,
+      last_climax_quality_label: snap.last_climax_quality_label,
+      last_output: snap.last_output,
+      last_output_label: snap.last_output_label,
+      updated_at: aState.at
+    });
+  } catch (e) {
+    console.error('射精状态面板错误:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
