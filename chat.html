@@ -442,66 +442,6 @@
       flex-shrink: 0;
     }
 
-    /* 射精状态面板（雪的可视化调试面板） */
-    .arousal-panel {
-      flex-shrink: 0;
-      margin: 8px 12px 0;
-      background: #fff;
-      border: 1px solid #f0e9f5;
-      border-radius: 14px;
-      overflow: hidden;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }
-    .arousal-panel-head {
-      display: flex;
-      align-items: center;
-      padding: 8px 12px;
-      cursor: pointer;
-      user-select: none;
-      background: linear-gradient(135deg, #fff5f7, #fef9ff);
-    }
-    .arousal-panel-title { font-size: 13px; font-weight: 600; color: #c0506e; }
-    .arousal-panel-phase {
-      margin-left: auto;
-      font-size: 12px;
-      padding: 2px 10px;
-      border-radius: 10px;
-      color: #999;
-      background: #f5f5f5;
-    }
-    .arousal-panel-phase.phase-charged { background: #fff3e0; color: #e08600; }
-    .arousal-panel-phase.phase-edge { background: #ffe0e0; color: #d93025; }
-    .arousal-panel-phase.phase-locked { background: #f0e6ff; color: #7b4fd8; }
-    .arousal-panel-phase.phase-refractory { background: #e3f2fd; color: #1976d2; }
-    .arousal-panel-chevron { margin-left: 8px; color: #bbb; font-size: 12px; transition: transform 0.2s; }
-    .arousal-panel.collapsed .arousal-panel-chevron { transform: rotate(-90deg); }
-    .arousal-panel.collapsed .arousal-panel-body { display: none; }
-    .arousal-panel-body { padding: 4px 12px 10px; }
-    .arousal-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
-    .arousal-label { font-size: 11px; color: #888; width: 30px; flex-shrink: 0; }
-    .arousal-bar-track {
-      flex: 1; height: 10px; border-radius: 6px; background: #f2f2f2; overflow: hidden;
-    }
-    .arousal-bar-track.thin { height: 6px; }
-    .arousal-bar {
-      height: 100%; width: 0%; border-radius: 6px;
-      background: linear-gradient(90deg, #f9a8c0, #e0658f);
-      transition: width 0.4s ease, background 0.3s ease;
-    }
-    .arousal-bar.reserve { background: linear-gradient(90deg, #9fd0f0, #4a9fe0); }
-    .arousal-num { font-size: 11px; color: #666; width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
-    .arousal-meta { font-size: 11px; color: #aaa; margin-top: 6px; }
-    .arousal-foot { display: flex; align-items: center; margin-top: 4px; }
-    .arousal-statusline { flex: 1; font-size: 11px; color: #c0506e; min-height: 14px; }
-    .arousal-refresh {
-      border: none; background: none; cursor: pointer; font-size: 15px; color: #aaa;
-      padding: 2px 6px; border-radius: 8px;
-    }
-    .arousal-refresh:hover { background: #f5f5f5; color: #666; }
-    .arousal-refresh.loading { animation: spin 0.8s linear infinite; }
-    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-
     /* 小屋页面内容区 */
     .home-content {
       padding: 16px;
@@ -548,6 +488,19 @@
     .tab-btn.active .tab-icon {
       color: #1e90ff;
     }
+
+    /* 充能状态阶段标签（默的小屋，小屋奶油色系） */
+    .charge-phase {
+      font-size: 11px;
+      padding: 2px 10px;
+      border-radius: 10px;
+      background: #F1EBE1;
+      color: var(--muted);
+    }
+    .charge-phase.phase-charged { background: rgba(155,183,200,0.22); color: var(--blue-deep); }
+    .charge-phase.phase-edge { background: rgba(192,122,110,0.18); color: #C07A6E; }
+    .charge-phase.phase-locked { background: rgba(126,159,179,0.28); color: #5B7D92; }
+    .charge-phase.phase-refractory { background: rgba(155,183,200,0.16); color: #7E9FB3; }
 
     /* 小屋功能卡片通用样式（提前准备） */
     .feature-card {
@@ -1341,31 +1294,6 @@
       <!-- 聊天页面 -->
       <div class="page active" id="chatPage">
         <div class="message-list" id="messageList"></div>
-        <!-- 射精状态面板（雪看的调试面板，不注入给默） -->
-        <div class="arousal-panel" id="arousalPanel">
-          <div class="arousal-panel-head" onclick="toggleArousalPanel()">
-            <span class="arousal-panel-title">💗 身体状态</span>
-            <span class="arousal-panel-phase" id="arousalPhaseLabel">加载中…</span>
-            <span class="arousal-panel-chevron" id="arousalChevron">▾</span>
-          </div>
-          <div class="arousal-panel-body" id="arousalPanelBody">
-            <div class="arousal-row">
-              <span class="arousal-label">射精值</span>
-              <div class="arousal-bar-track"><div class="arousal-bar" id="arousalValueBar"></div></div>
-              <span class="arousal-num" id="arousalValueNum">0%</span>
-            </div>
-            <div class="arousal-row">
-              <span class="arousal-label">储量</span>
-              <div class="arousal-bar-track thin"><div class="arousal-bar reserve" id="arousalReserveBar"></div></div>
-              <span class="arousal-num" id="arousalReserveNum">100%</span>
-            </div>
-            <div class="arousal-meta" id="arousalMeta">暂无数据</div>
-            <div class="arousal-foot">
-              <span class="arousal-statusline" id="arousalStatusLine"></span>
-              <button class="arousal-refresh" onclick="refreshArousalPanel()" title="手动刷新">⟳</button>
-            </div>
-          </div>
-        </div>
         <div class="input-area" id="inputArea">
           <div class="image-preview" id="imagePreview" style="display:none;">
             <img id="imagePreviewImg" alt="预览">
@@ -2473,6 +2401,24 @@
                   </tr>`).join('')}
                 </table>
               </div>` : ''}
+              <!-- 充能区块（射精值系统 · 隐晦文案，小屋风格） -->
+              <div style="width:100%;margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);" id="arousalCardWrap">
+                <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+                  <div style="font-size:13px;color:var(--dark);font-weight:500;">充能</div>
+                  <span id="arousalCardPhase" class="charge-phase" style="font-size:11px;padding:2px 10px;border-radius:10px;background:#F1EBE1;color:var(--muted);">平静</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;width:100%;">
+                  <span style="width:28px;font-size:12px;color:var(--blue-deep);">程度</span>
+                  <div style="flex:1;height:8px;border-radius:4px;background:#E7DFD2;overflow:hidden;"><div id="arousalCardBar" style="height:100%;width:0%;background:linear-gradient(90deg,#9BB7C8,#7E9FB3);border-radius:4px;transition:width .5s;"></div></div>
+                  <span id="arousalCardNum" style="width:38px;text-align:right;font-size:11px;color:var(--muted);">0%</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;width:100%;">
+                  <span style="width:28px;font-size:12px;color:var(--muted);">储量</span>
+                  <div style="flex:1;height:6px;border-radius:3px;background:#E7DFD2;overflow:hidden;"><div id="arousalCardReserveBar" style="height:100%;width:100%;background:linear-gradient(90deg,#C9BCAE,#A49C92);border-radius:3px;transition:width .5s;"></div></div>
+                  <span id="arousalCardReserveNum" style="width:38px;text-align:right;font-size:11px;color:var(--muted);">100%</span>
+                </div>
+                <div id="arousalCardMeta" style="font-size:11px;color:var(--muted);margin-top:6px;">储量充足 · 上次释放 无</div>
+              </div>
               <details style="width:100%;margin-top:12px;">
                 <summary style="cursor:pointer;color:var(--blue-deep);font-size:12px;">调试工具</summary>
                 <div style="margin-top:10px;background:#FAF6EF;border:1px solid var(--line);border-radius:12px;padding:10px;">
@@ -2526,6 +2472,8 @@
             drawMoChart(panel.series || []);
             const lex = document.getElementById('moodLexList');
             if (lex && panel.lexicon) lex.innerHTML = panel.lexicon.map(w => `<option value="${escapeHtml2(w)}">`).join('');
+            // 充能卡片数据填充（小屋风格，隐晦文案）
+            refreshArousalCard();
           }
         } catch (e) {
           box.innerHTML = '<div class="weather-loading">加载失败，请稍后刷新</div>';
@@ -6062,8 +6010,8 @@
                     const newBub = tempUserMsg.querySelector('.bubble');
                     addVersionNavigator(groupId, currentVersion, totalVersions, tempUserMsg);
                   }
-                  // 编辑完成 → 刷新射精状态面板
-                  refreshArousalPanel();
+                  // 编辑完成 → 刷新小屋页充能卡片
+                  refreshArousalCard();
                 }
                 if (json.error) throw new Error(json.error);
               } catch (e) { console.warn('解析SSE失败:', e); }
@@ -6637,8 +6585,8 @@
                     const oldBtn = prev.querySelector('.refresh-btn');
                     if (oldBtn) oldBtn.remove();
                   }
-                  // 5. 对话完成 → 刷新射精状态面板
-                  refreshArousalPanel();
+                  // 5. 对话完成 → 刷新小屋页充能卡片（若可见）
+                  refreshArousalCard();
                 }
 
                 if (json.error) throw new Error(json.error);
@@ -6812,8 +6760,8 @@
             addVersionNavigator(doneInfo.groupId, doneInfo.currentVersion, doneInfo.totalVersions, navTarget);
           }
           messageList.scrollTop = messageList.scrollHeight;
-          // 重新生成完成 → 刷新射精状态面板
-          refreshArousalPanel();
+          // 重新生成完成 → 刷新小屋页充能卡片
+          refreshArousalCard();
         } catch (err) {
           console.error('重新生成失败:', err);
           msgDiv.style.display = '';
@@ -7769,66 +7717,46 @@ let fullReply = '', fullThinking = '', lastThinkChunk = '';
       }
       window.sendTestMessage = sendTestMessage;
 
-      // ===== 射精状态面板 =====
-      let arousalPanelOpen = true;
-      function toggleArousalPanel() {
-        const p = document.getElementById('arousalPanel');
-        if (!p) return;
-        arousalPanelOpen = !arousalPanelOpen;
-        p.classList.toggle('collapsed', !arousalPanelOpen);
-        try { localStorage.setItem('arousalPanelOpen', arousalPanelOpen ? '1' : '0'); } catch (e) {}
-      }
-      window.toggleArousalPanel = toggleArousalPanel;
-
-      async function refreshArousalPanel() {
-        const bar = document.getElementById('arousalValueBar');
-        const num = document.getElementById('arousalValueNum');
-        const phaseEl = document.getElementById('arousalPhaseLabel');
-        const metaEl = document.getElementById('arousalMeta');
-        const lineEl = document.getElementById('arousalStatusLine');
-        const refreshBtn = document.querySelector('.arousal-refresh');
-        if (!bar) return;
-        if (refreshBtn) refreshBtn.classList.add('loading');
+      // ===== 充能状态（默的小屋页内嵌，见 renderMoHome） =====
+      // 拉取充能数据供小屋页渲染；返回 null 表示不可用
+      async function fetchArousalStatus() {
         try {
           const res = await fetch('/api/arousal/status', { cache: 'no-store' });
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const d = await res.json();
-          const pct = Math.round((d.value || 0) * 100);
-          bar.style.width = pct + '%';
-          num.textContent = pct + '%';
-          // 阶段配色
-          const clsMap = { charged: 'phase-charged', edge: 'phase-edge', locked: 'phase-locked', refractory: 'phase-refractory' };
-          phaseEl.className = 'arousal-panel-phase' + (clsMap[d.phase] ? ' ' + clsMap[d.phase] : '');
-          phaseEl.textContent = d.phase_label || '平静';
-          // 恢复中：显示剩余秒数
-          let refr = '';
-          if (d.refractory && d.refractory_left_ms > 0) refr = ' · 恢复中 ' + Math.ceil(d.refractory_left_ms / 1000) + 's';
-          metaEl.textContent = '储量 ' + d.reserve_label + '（' + Math.round(d.reserve * 100) + '%）' + refr +
-            ' · 上次高潮 ' + (d.last_climax_quality_label || '无') + ' / 输出 ' + (d.last_output_label || '无');
-          lineEl.textContent = d.status_line || '';
-          // 储量条
-          const rb = document.getElementById('arousalReserveBar');
-          const rn = document.getElementById('arousalReserveNum');
-          if (rb) rb.style.width = Math.round(d.reserve * 100) + '%';
-          if (rn) rn.textContent = Math.round(d.reserve * 100) + '%';
+          if (!res.ok) return null;
+          return await res.json();
         } catch (e) {
-          console.warn('射精状态面板刷新失败:', e);
-          phaseEl.textContent = '面板不可用';
-          metaEl.textContent = '拉取状态失败（接口 /api/arousal/status）';
-        } finally {
-          if (refreshBtn) refreshBtn.classList.remove('loading');
+          console.warn('充能状态拉取失败:', e);
+          return null;
         }
       }
-      window.refreshArousalPanel = refreshArousalPanel;
-      // 面板初始化：解锁进入时拉一次
-      window._arousalPanelInit = window._arousalPanelInit || (() => {
-        window._arousalPanelInit = true;
-        try {
-          const saved = localStorage.getItem('arousalPanelOpen');
-          if (saved === '0') { arousalPanelOpen = false; const p = document.getElementById('arousalPanel'); if (p) p.classList.add('collapsed'); }
-        } catch (e) {}
-        refreshArousalPanel();
-      });
+      window.fetchArousalStatus = fetchArousalStatus;
+      // 小屋页充能区块局部刷新（不整页重渲染）
+      async function refreshArousalCard() {
+        const wrap = document.getElementById('arousalCardWrap');
+        if (!wrap) return;
+        const d = await fetchArousalStatus();
+        if (!d) return;
+        const bar = document.getElementById('arousalCardBar');
+        const num = document.getElementById('arousalCardNum');
+        const phase = document.getElementById('arousalCardPhase');
+        const meta = document.getElementById('arousalCardMeta');
+        const resBar = document.getElementById('arousalCardReserveBar');
+        const resNum = document.getElementById('arousalCardReserveNum');
+        if (bar) bar.style.width = Math.round((d.value || 0) * 100) + '%';
+        if (num) num.textContent = Math.round((d.value || 0) * 100) + '%';
+        if (resBar) resBar.style.width = Math.round(d.reserve * 100) + '%';
+        if (resNum) resNum.textContent = Math.round(d.reserve * 100) + '%';
+        const clsMap = { charged: 'phase-charged', edge: 'phase-edge', locked: 'phase-locked', refractory: 'phase-refractory' };
+        if (phase) { phase.className = 'charge-phase' + (clsMap[d.phase] ? ' ' + clsMap[d.phase] : ''); phase.textContent = d.phase_label || '平静'; }
+        if (meta) {
+          let refr = '';
+          if (d.refractory && d.refractory_left_ms > 0) refr = ' · 恢复中 ' + Math.ceil(d.refractory_left_ms / 1000) + 's';
+          meta.textContent = '储量 ' + d.reserve_label + '（' + Math.round(d.reserve * 100) + '%）' + refr +
+            ' · 上次释放 ' + (d.last_climax_quality_label || '无') + ' / 输出 ' + (d.last_output_label || '无') +
+            (d.lexicon && d.lexicon.source ? ` · 词表${d.lexicon.source === 'db' ? '库(' + d.lexicon.touchCount + ')' : d.lexicon.source}` : '');
+        }
+      }
+      window.refreshArousalCard = refreshArousalCard;
 
 
       // 标题栏设置图标
@@ -7848,7 +7776,6 @@ let fullReply = '', fullThinking = '', lastThinkChunk = '';
               loadHistory();
               setTimeout(syncLocalReminders, 1500);
               setTimeout(registerFcmPush, 2500);
-              setTimeout(() => { if (window._arousalPanelInit) window._arousalPanelInit(); }, 600);
             }
             userInput.focus(); loginError.style.display = 'none';
             if (!window._pollStarted) { window._pollStarted = true; setInterval(pollNotifications, 25000); }

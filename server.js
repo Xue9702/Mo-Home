@@ -2748,15 +2748,30 @@ const AROUSAL_LEXICON_FALLBACK = (() => {
 })();
 let arousalLexiconCache = null;
 let arousalLexiconAt = 0;
+// 词表来源诊断（面板可见，定位线上不命中问题）
+let arousalLexiconDiag = { source: 'none', touchCount: 0, error: '', updatedAt: 0 };
 async function getArousalLexicon() {
   const now = Date.now();
   if (arousalLexiconCache && now - arousalLexiconAt < 300000) return arousalLexiconCache;
   try {
-    const { data } = await supabase.from('arousal_lexicon').select('data').eq('id', 1).maybeSingle();
-    if (data && data.data && typeof data.data === 'object' && Object.keys(data.data).length > 1) {
+    const { data, error } = await supabase.from('arousal_lexicon').select('data').eq('id', 1).maybeSingle();
+    if (error) {
+      arousalLexiconDiag = { source: 'db_error', touchCount: 0, error: error.message, updatedAt: now };
+      console.error('⚠️ [arousal] 读词表失败:', error.message);
+    } else if (data && data.data && typeof data.data === 'object' && Object.keys(data.data).length > 1) {
       arousalLexiconCache = data.data;
       arousalLexiconAt = now;
+      arousalLexiconDiag = {
+        source: 'db',
+        touchCount: (data.data.touch || []).length,
+        partsCount: Object.keys(data.data.body_parts || {}).length,
+        error: '',
+        updatedAt: now
+      };
       return arousalLexiconCache;
+    } else {
+      arousalLexiconDiag = { source: 'db_empty', touchCount: 0, error: '表存在但无有效数据（id=1 为空？）', updatedAt: now };
+      console.error('⚠️ [arousal] 词表表存在但无有效数据');
     }
   } catch (e) { /* 表未建或读取失败用本地 */ }
   return AROUSAL_LEXICON_FALLBACK;
@@ -4418,6 +4433,8 @@ app.get('/api/emotion/panel', async (req, res) => {
 app.get('/api/arousal/status', async (req, res) => {
   try {
     const aState = await getArousalState();
+    // 面板主动探测词表来源（刷新即可诊断线上不命中问题）
+    await getArousalLexicon();
     const now = Date.now();
     const snap = publicSnapshot(aState, now);
     // 面板需要实时 value（含衰减后）——publicSnapshot 不暴露原始值，这里单独算
@@ -4438,7 +4455,8 @@ app.get('/api/arousal/status', async (req, res) => {
       last_climax_quality_label: snap.last_climax_quality_label,
       last_output: snap.last_output,
       last_output_label: snap.last_output_label,
-      updated_at: aState.at
+      updated_at: aState.at,
+      lexicon: arousalLexiconDiag
     });
   } catch (e) {
     console.error('射精状态面板错误:', e.message);
