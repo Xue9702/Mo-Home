@@ -4884,6 +4884,12 @@ app.get('/api/calendar', async (req, res) => {
 // 账本分类（支出 13 类；收入统一"画稿"）
 const LEDGER_CATEGORIES = ['住房', '餐饮', '饮品', '零食', '日用', '服饰', '订阅', '交通', '娱乐', '关系', '健康', '学习', '其他'];
 const LEDGER_INCOME_CATEGORY = '画稿';
+// 下月字符串（YYYY-MM）：处理跨年；用于月份查询区间（lt 下月-01，避免 31 号非法日期）
+function nextMonthStr(month) {
+  const [y, m] = String(month || '').split('-').map(Number);
+  if (!y || !m) return String(month || '');
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+}
 function validLedgerCategory(cat, type) {
   if (type === 'income') return LEDGER_INCOME_CATEGORY;
   return LEDGER_CATEGORIES.includes(String(cat || '')) ? String(cat) : '其他';
@@ -4899,7 +4905,10 @@ app.get('/api/ledger', async (req, res) => {
       .limit(500);
     const { date, month, year, category, type } = req.query;
     if (date) q = q.eq('entry_date', date);
-    else if (month) q = q.gte('entry_date', `${month}-01`).lte('entry_date', `${month}-31`);
+    else if (month) {
+      const nm = nextMonthStr(month);
+      q = q.gte('entry_date', `${month}-01`).lt('entry_date', `${nm}-01`);
+    }
     else if (year) q = q.gte('entry_date', `${year}-01-01`).lte('entry_date', `${year}-12-31`);
     if (category) q = q.eq('category', category);
     if (type === 'income' || type === 'expense') q = q.eq('type', type);
@@ -4973,11 +4982,12 @@ app.get('/api/ledger/summary', async (req, res) => {
       const r = await supabase.from('ledger_entries').select('*').eq('entry_date', date);
       entries = r.data || [];
     } else if (month) {
+      const nm = nextMonthStr(month);
       const r = await supabase
         .from('ledger_entries')
         .select('*')
         .gte('entry_date', `${month}-01`)
-        .lte('entry_date', `${month}-31`);
+        .lt('entry_date', `${nm}-01`);
       entries = r.data || [];
     } else if (year) {
       const r = await supabase
@@ -5024,11 +5034,12 @@ app.get('/api/ledger/summary', async (req, res) => {
       const m = String(month);
       const [y, mo] = m.split('-').map(Number);
       const pm = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`;
+      const pmn = nextMonthStr(pm);
       const { data: prevEntries } = await supabase
         .from('ledger_entries')
         .select('*')
         .gte('entry_date', `${pm}-01`)
-        .lte('entry_date', `${pm}-31`);
+        .lt('entry_date', `${pmn}-01`);
       result.prevMonth = calc(prevEntries || []);
       const days = {};
       for (const e of entries) {
@@ -5080,7 +5091,10 @@ app.get('/api/day-tags', async (req, res) => {
   try {
     let q = supabase.from('day_tags').select('*').order('tag_date', { ascending: true });
     if (req.query.date) q = q.eq('tag_date', req.query.date);
-    else if (req.query.month) q = q.gte('tag_date', `${req.query.month}-01`).lte('tag_date', `${req.query.month}-31`);
+    else if (req.query.month) {
+      const nm = nextMonthStr(String(req.query.month));
+      q = q.gte('tag_date', `${req.query.month}-01`).lt('tag_date', `${nm}-01`);
+    }
     const { data, error } = await q;
     if (error) return res.json({ items: [] });
     res.json({ items: data || [] });
@@ -6791,11 +6805,12 @@ async function getLedgerBrief() {
     const d = String(now.getDate()).padStart(2, '0');
     const month = `${y}-${m}`;
     const today = `${y}-${m}-${d}`;
+    const nm = nextMonthStr(month);
     const { data: cur } = await supabase
       .from('ledger_entries')
       .select('*')
       .gte('entry_date', `${month}-01`)
-      .lte('entry_date', `${month}-31`);
+      .lt('entry_date', `${nm}-01`);
     let income = 0, expense = 0;
     const byCat = {};
     const todayList = [];
