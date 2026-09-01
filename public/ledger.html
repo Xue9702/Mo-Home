@@ -243,9 +243,14 @@
     const date = document.getElementById('dateInput').value || new Date().toISOString().slice(0,10);
     if (!(amt > 0)) { alert('金额要大于 0'); return; }
     const body = { entry_date: date, type: curType, amount: amt, note, category: cat };
-    const r = await fetch('/api/ledger', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) { alert('保存失败：' + (d.error || '请确认已执行 setup_ledger_v2.sql')); return; }
+    try {
+      const r = await fetch('/api/ledger', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { alert('保存失败：' + (d.error || '请确认已执行 setup_ledger_v2.sql')); return; }
+    } catch (e) {
+      alert('保存失败（网络/服务器错误）：' + ((e && e.message) || e));
+      return;
+    }
     document.getElementById('amtInput').value = '';
     document.getElementById('noteInput').value = '';
     load();

@@ -2181,18 +2181,34 @@
         renderCalendar();
       };
       window.calendarAddLedger = async (type) => {
+        if (!calendarState.selected) { alert('先点选日历上的一天，再记账'); return; }
         const amount = parseFloat(document.getElementById('calAmount').value);
         const note = document.getElementById('calNote').value.trim();
         if (!(amount > 0)) { alert('请输入金额'); return; }
-        await fetch('/api/ledger', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entry_date: calendarState.selected, type, amount, note })
-        });
+        try {
+          const r = await fetch('/api/ledger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entry_date: calendarState.selected, type, amount, note })
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok || !d.ok) { alert('保存失败：' + (d.error || '服务器未返回成功')); return; }
+          document.getElementById('calAmount').value = '';
+          document.getElementById('calNote').value = '';
+        } catch (e) {
+          alert('保存失败（网络/服务器错误）：' + (e && e.message || e));
+          return;
+        }
         renderCalendar();
       };
       window.deleteLedgerEntry = async (id) => {
-        await fetch('/api/ledger/' + id, { method: 'DELETE' });
+        try {
+          const r = await fetch('/api/ledger/' + id, { method: 'DELETE' });
+          if (!r.ok) { alert('删除失败'); return; }
+        } catch (e) {
+          alert('删除失败（网络/服务器错误）：' + (e && e.message || e));
+          return;
+        }
         renderCalendar();
       };
       window.saveDayTag = async (ds) => {

@@ -109,6 +109,14 @@ async function updatePushState(lastPushTimeISO, cooldownMinutes) {
 
 const app = express();
 app.use(express.json({ limit: '40mb' }));
+// CORS：允许 Capacitor App / 手机 webview（capacitor://localhost、https://localhost 等）跨域访问
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 const port = process.env.PORT || 3000;
 
 // ================== 原有 Supabase 配置 ==================
@@ -4906,6 +4914,7 @@ app.get('/api/ledger', async (req, res) => {
 // 账本：新增（category 可选，收入固定"画稿"）
 app.post('/api/ledger', async (req, res) => {
   const { entry_date, type, amount, note, category } = req.body || {};
+  console.log('📒 [账本] POST /api/ledger 收到:', JSON.stringify({ entry_date, type, amount, note: String(note || '').slice(0, 30), category }).slice(0, 200));
   const date = String(entry_date || '').trim();
   const t = type === 'income' ? 'income' : 'expense';
   const amt = Math.round(Number(amount) * 100) / 100;
