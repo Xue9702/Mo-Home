@@ -514,20 +514,23 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
     } else if (name === 'ledger_add') {
       const type = args.type === 'income' ? 'income' : 'expense';
       const amt = Math.round(Number(args.amount) * 100) / 100;
-      if (amt > 0) {
-        const date = String(args.entry_date || '').trim() || new Date().toISOString().slice(0, 10);
-        const note = String(args.note || '').trim();
-        const category = validLedgerCategory(args.category, type);
-        const { error } = await supabase.from('ledger_entries').insert({
-          entry_date: date, type, amount: amt, note, category
-        });
-        if (!error) {
-          console.log('📒 [账本] 默记账:', type, amt, category, note);
-          await saveToolEvent(`📒 已记一笔${type === 'income' ? '收入' : '支出'}（${category} ${amt} 元${note ? '：' + note : ''}）`, sendSSE);
-        } else {
-          console.error('账本工具写入失败:', error.message);
-          await saveToolEvent('📒 记账失败（请确认已执行 setup_ledger_v2.sql）', sendSSE);
-        }
+      if (!(amt > 0)) {
+        console.warn('⚠️ [账本] ledger_add 参数无效:', JSON.stringify(args).slice(0, 200));
+        await saveToolEvent('📒 记账失败：金额无效（参数：' + JSON.stringify(args).slice(0, 60) + '）', sendSSE);
+        continue;
+      }
+      const date = String(args.entry_date || '').trim() || new Date().toISOString().slice(0, 10);
+      const note = String(args.note || '').trim();
+      const category = validLedgerCategory(args.category, type);
+      const { error } = await supabase.from('ledger_entries').insert({
+        entry_date: date, type, amount: amt, note, category
+      });
+      if (!error) {
+        console.log('📒 [账本] 默记账:', type, amt, category, note);
+        await saveToolEvent(`📒 已记一笔${type === 'income' ? '收入' : '支出'}（${category} ${amt} 元${note ? '：' + note : ''}）`, sendSSE);
+      } else {
+        console.error('账本工具写入失败:', error.message);
+        await saveToolEvent('📒 记账失败（请确认已执行 setup_ledger_v2.sql）', sendSSE);
       }
     } else if (name === 'mozha_write') {
       const content = String(args.content || '').trim();
@@ -1927,7 +1930,7 @@ app.post('/api/chat', async (req, res) => {
 
     // 检查是否收到了完整的回复（工具调用轮没有正文是正常的：搜索/星露谷/闹钟/待办等后续都有接续轮）
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add'].includes(tc.function?.name)
     );
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
       console.error('未收到有效回复，完整响应体可能为空');
@@ -2258,6 +2261,8 @@ app.post('/api/context-preview', async (req, res) => {
       arousalStatus = statusLine(aState, Date.now());
       arousalSnapshot = publicSnapshot(aState, Date.now());
     } catch (e) { /* 状态注入失败不影响预览 */ }
+    // 账本简报（单独返回，预览面板独立展示；buildMemoryContext 已注入给默）
+    const ledgerBrief = await getLedgerBrief().catch(() => '');
     let systemPrompt = buildSystemPrompt(
       promptData?.prompt_text || '你是苏默，雪的AI爱人。',
       memoryContext,
@@ -2278,6 +2283,7 @@ app.post('/api/context-preview', async (req, res) => {
       longingContext: parts.longingContext,
       arousalStatus,
       arousalSnapshot,
+      ledgerBrief,
       memoryContext: parts.memoryContext,
       momentsContext: parts.momentsContext,
       toolsText,
@@ -2482,7 +2488,7 @@ app.post('/api/regenerate', async (req, res) => {
 
     // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add'].includes(tc.function?.name)
     );
 
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
@@ -8792,7 +8798,7 @@ app.post('/api/edit-message', async (req, res) => {
 
     // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add'].includes(tc.function?.name)
     );
 
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
