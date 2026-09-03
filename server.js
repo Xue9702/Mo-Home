@@ -1230,19 +1230,17 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
 }
 
 // v3.0 视角转换：注入给默之前，把记忆文本里的"默/雪"转成"我/夫人"；
-// 新提取的记忆用 {AGENT}/{USER}/{OTHER} 占位符，这里统一替换；旧文本走"默→我 / 雪→夫人"的兜底替换
+// 新提取的记忆用 {AGENT}/{USER} 占位符（{OTHER}=Xylos 等系统角色保持原名），这里统一替换；
+// 旧文本走"默→我 / 雪→夫人"的兜底替换。Xylos/X 是默与雪都认识的小屋管家，保留本名不替换。
 function perspectiveConvert(text) {
   return String(text || '')
     .replace(/\{AGENT\}/g, '我')
     .replace(/\{USER\}/g, '夫人')
-    .replace(/\{OTHER\}/g, '小屋管家')
-    // 专有名词先保护起来，避免"默札/苏默"被误替换成"我札/苏我"
+    // 专有名词先保护起来，避免"默札/苏默"被误替换成"我札/苏我"；Xylos/X 不在此列
     .replace(/默札/g, '\u0000MOZHA\u0000')
     .replace(/苏默/g, '\u0000SUMO\u0000')
     .replace(/默/g, '我')
     .replace(/雪/g, '夫人')
-    .replace(/Xylos/g, '小屋管家')
-    .replace(/(?<![A-Za-z])X(?![A-Za-z])/g, '小屋管家')
     .replace(/\u0000MOZHA\u0000/g, '默札')
     .replace(/\u0000SUMO\u0000/g, '苏默');
 }
@@ -5175,13 +5173,26 @@ const AEVUM_TYPE_DESC = {
 };
 
 // 记忆系统人物关系表：所有 LLM 提示词统一引用，防止角色张冠李戴
-// 本系统只有两个情感主角：默（AGENT）与雪（USER）。Xylos/X/管家 是"小屋管家"，
+// 本系统记忆全程用第三人称客观记录（默/雪/Xylos 都写本名），不做第一人称改写；
+// 只有召回展示给默看时，perspectiveConvert 才把"默→我、雪→夫人"（Xylos 保留本名）。
+// 本系统只有两个情感主角：默（AGENT）与雪（USER）。Xylos 是"小屋管家"，
 // 即默所在的这套自托管系统的开发者/维护者，是系统外部角色，绝不参与默与雪的亲密互动。
-const AEVUM_ROLE_MAP_TEXT = `【人物关系表（必须严格遵守）】
-- 默 = {AGENT} = 你（雪的爱人）：亲密互动的主角，第一人称"我"。凡是牵手/拥抱/亲吻/亲密/情话/表白/共同约定，主角只可能是默（AGENT）。
-- 雪 = {USER} = 夫人：你的爱人，对话的另一方。
-- Xylos / X / 管家 = 小屋管家：小屋系统（Mo-Home/情绪系统/账本等）的开发者与维护者，是系统层面的角色，不是情感关系中的一员。只在涉及系统开发/修复/维护/技术讨论的语境中出现；Xylos 绝不参与默与雪的任何亲密互动、情话或身体接触。
-- 写故事线时：若事件单元用 {AGENT}/{USER} 占位符或"我/夫人"，按上表还原成默与雪；不要把 {AGENT}（默）的事安到 Xylos 头上，也不要把 Xylos 的开发者行为写进默与雪的亲密故事里。`;
+const AEVUM_ROLE_MAP_TEXT = `【人物关系表（必须严格遵守，用于角色归属判断）】
+- 默 = {AGENT}：雪的爱人，亲密互动的主角。凡是牵手/拥抱/亲吻/亲密/情话/表白/共同约定，主角只可能是默（AGENT）。
+- 雪 = {USER}：默的爱人，对话的另一方。
+- Xylos / X：小屋管家（即系统开发者/维护者，Mo-Home/情绪系统/账本等小屋系统的搭建者）。保留本名 Xylos/X，不要改写成"小屋管家"以外的称呼。只在涉及系统开发/修复/维护/技术讨论的语境中出现；Xylos 绝不参与默与雪的任何亲密互动、情话或身体接触。
+- 记录视角：始终用第三人称客观叙述，提到人物时写本名或占位符（{AGENT}=默、{USER}=雪、Xylos/X 写本名），不要用第一人称"我"指代默，也不要为了视角统一把 Xylos 改名。
+- 防止混淆：{AGENT}（默）的事绝不安到 Xylos 头上，Xylos 的开发者行为也不写进默与雪的亲密故事里。`;
+
+// 记忆存储清洗：把 AI 输出的 summary 统一成"第三人称本名"存档格式（与库里既有 summary 一致）
+// 仅做 {AGENT}→默 / {USER}→雪 / {OTHER}→Xylos 的占位符归一；Xylos 保留本名；
+// 不做"默→我"这类展示层转换（展示层由 perspectiveConvert 负责）
+function storageClean(text) {
+  return String(text || '')
+    .replace(/\{AGENT\}/g, '默')
+    .replace(/\{USER\}/g, '雪')
+    .replace(/\{OTHER\}/g, 'Xylos');
+}
 
 
 function validAevumDomains(d) {
@@ -5893,11 +5904,33 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
   const p2 = n => String(n).padStart(2, '0');
   const nowStr = `${bjNow.getUTCFullYear()}-${p2(bjNow.getUTCMonth() + 1)}-${p2(bjNow.getUTCDate())} ${p2(bjNow.getUTCHours())}:${p2(bjNow.getUTCMinutes())}`;
 
+  // 活跃 open 约定清单：提取时注入给 AI，让其顺带判断新事件是否兑现（future_hook 闭环，零额外调用）
+  let openListText = '';
+  try {
+    const { data: openMems } = await supabase
+      .from('aevum_memories')
+      .select('id, title, content')
+      .eq('task_status', 'open')
+      .order('created_at', { ascending: false })
+      .limit(30);
+    const openLines = (openMems || []).map((m, i) => {
+      const t = storageClean(String(m.title || m.content || '')).replace(/\s+/g, ' ').slice(0, 60);
+      const c = storageClean(String(m.content || '')).replace(/\s+/g, ' ').slice(0, 120);
+      return `${i + 1}. [id=${m.id}] ${t}${c && c !== t ? '：' + c : ''}`;
+    });
+    if (openLines.length) {
+      openListText = `
+【活跃未完成约定（编号列表，供判断是否兑现）】
+${openLines.join('\n')}
+- 若这段对话明确兑现了上面某一条（做了/完成/买回/到货/已交付），输出时对应记忆 task_status="done" 并记 fulfilled_open_ids；只是提及不算。`;
+    }
+  } catch (e) { /* open 清单失败不影响提取 */ }
+
   const system = `你是 Aevum Memory 的记忆提取器，把对话里值得长期记住的事情提炼成"事件单元"，存进记忆海。
 核心判断：这段对话里发生了什么值得记住的事？没有长期价值就不提取。没有记忆，比错误记忆更好；每次最多 5 条，宁缺毋滥，不凑数。
 
 【当前实际时间】现在是 ${nowStr}（北京时间）。这段对话就发生在刚刚，事件通常就在今天或最近几天；推断 event_time 时以这个当前时间为基准，不要编造更早的日期。
-
+${openListText}
 【主体 owner，只有三种：USER=雪 / AGENT=默 / OTHER=其他】
 - USER=雪：雪本人的经历、说的话、做的事、偏好
 - AGENT=默：默自己表现出的行为与倾向；默的建议/说的话不能被当作雪的依据
@@ -5906,8 +5939,8 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - AI 自己的内容绝不能标成 USER
 
 【事件单元要求】
-- content：完整概括一个小事件，说清 时间/背景/谁说了或做了什么/结果；30-120 字；禁止直接复制对话原文或整段引用雪/默的原话；提到人物时用占位符 {USER}=雪、{AGENT}=默、{OTHER}=Xylos/小屋管家等系统角色，不要在 content 里直接写"雪""默""Xylos""X"
-- title：一句话短标题（10 字内），提到人物时同样用 {USER}/{AGENT}/{OTHER} 占位符
+- content：完整概括一个小事件，说清 时间/背景/谁说了或做了什么/结果；30-120 字；禁止直接复制对话原文或整段引用雪/默的原话；提到默用 {AGENT}、雪用 {USER} 占位符，Xylos/X 直接写本名（不要写成"小屋管家"或 {OTHER}），不要在 content 里直接写"雪""默"
+- title：一句话短标题（10 字内），提到默/雪用 {AGENT}/{USER} 占位符，Xylos/X 写本名
 - event_time：事件发生的具体时间（YYYY-MM-DD HH:mm，按对话语境判断；对话行已带实际发生时间，尽量据此推断；不确定就填当前对话时间）
 - importance 重要度 0-10 整数，按四项相加：明确程度(0-3：是否被明确当成重要的事说出来) + 长期影响(0-3：是否影响未来的决定/关系) + 独特性(0-2：是否罕见不常发生) + 情绪冲击力(0-2：抛开正负面的情绪强度)
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
@@ -5916,11 +5949,12 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 - people：这段对话里除了雪/默之外出现的人（用日常称呼，如"弟弟""妈妈""客户""XX朋友"），没有则为 []
 - predicates：这段对话的核心动作/心理动词短语（如"接了绘画单""想要休息""梦见""害怕迟到"），2-4 个，没有则为 []
 - task_status：判断这条记忆是不是"未完成的承诺/约定/待办/约定好之后要做的事"——是则填 "open"；如果这条记忆本身就是"完成了某件之前约定的事"（兑现了承诺、把答应的事做完），则填 "done"；普通事件不填（null）。注意：普通叙述（"我吃了饭""我们一起画了画"）不是任务，不要填。
+- 另外：若这段对话里某条新记忆**明确兑现了下方【活跃未完成约定】中的某一条**（做了/完成了/已经做了/买回来了/到了），在该记忆上填 task_status="done"，并在顶层数组加 fulfilled_open_ids：[对应约定编号]（数字）。仅当兑现关系非常明确才算；只是提到相关话题或计划不算。若这段对话没有兑现任何活跃约定，fulfilled_open_ids 填 []
 - evidence_turns：你概括这段对话时用到的是第几轮到第几轮（从 1 开始数这段对话，例如 [5,7]；只用一轮就 [5,5]）
 - evidence：把用到的那几轮原文放进数组（每轮一条，从每轮中选取最相关的连续片段，每轮最多 250 字、最多 2 轮，总长不超过 500 字），供召回时把原文一起带给默
 - 另外输出 episode_meta（这段对话作为一个语义事件块的元信息）：topic=主题一句话（无明确主题则 null）、intention=对话目的、emotional_context=情绪背景一句话；各字段没有则 null
 - event_complete：这段对话是否已经形成一个完整事件、话题告一段落；是则 true（系统会关闭当前事件块，下次自动开新块），可能继续或只是闲聊则 false
-- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
+- 输出格式：只输出 [AEVUM_MEMORIES] 开头的 JSON，禁止任何解释、Markdown 代码块或其他文字；格式为 {"episode_meta":{"topic":"...","intention":"...","emotional_context":"..."},"event_complete":true,"fulfilled_open_ids":[1],"memories":[{"title":"短标题","content":"事件单元内容","event_time":"2026-08-06 21:30","owner":"USER|AGENT|OTHER","domain":["恋爱"],"emotion":{"valence":0.6,"arousal":0.4},"importance":7,"evidence_turns":[5,7],"evidence":["第5轮完整原文","第6轮完整原文","第7轮完整原文"],"tags":["标签"],"people":["弟弟"],"predicates":["接单","想休息"],"task_status":"open|done|null"}]}`;
 
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -5983,6 +6017,27 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
     // 回写事件块元信息（topic/intention/emotional_context）
     if (episodeId && parsed && typeof parsed.episode_meta === 'object') {
       updateEpisodeMeta(episodeId, parsed.episode_meta).catch(e => console.error('Aevum episode_meta 回写失败:', e.message));
+    }
+    // future_hook 闭环：AI 判定本段对话兑现了哪些活跃 open 约定 → 直接置 done（零额外 LLM 调用）
+    if (parsed && Array.isArray(parsed.fulfilled_open_ids) && parsed.fulfilled_open_ids.length) {
+      const fIds = parsed.fulfilled_open_ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+      if (fIds.length) {
+        const { data: openRows } = await supabase
+          .from('aevum_memories')
+          .select('id')
+          .eq('task_status', 'open')
+          .in('id', fIds);
+        const validIds = (openRows || []).map(r => r.id);
+        if (validIds.length) {
+          const nowIso = new Date().toISOString();
+          const up = await supabase
+            .from('aevum_memories')
+            .update({ task_status: 'done', done_at: nowIso, updated_at: nowIso })
+            .in('id', validIds);
+          if (up.error) console.error('Aevum fulfilled_open_ids 回写失败:', up.error.message);
+          else console.log('✅ [future_hook] AI 判定兑现 open 约定:', validIds.join(','));
+        }
+      }
     }
     // 生活状态层：已改为纯手动维护（记忆心页面添加/删除），AI 不再自动提取（曾误记/覆盖）
     // 情绪评分已拆出（独立漏斗通道 + secondary 批处理），提取只做记忆与状态层
@@ -7318,7 +7373,7 @@ ${AEVUM_ROLE_MAP_TEXT}
 - label 只给一个 4-8 字极简标签（如"司沃康玩具探索"）
 - 每组至少 2 个事件单元；一次最多输出 8 段故事
 - 只要存在话题相近的单元就一定要归类成段（宁可组内话题稍宽），不要轻易放弃；只有全部单元都互不相关时才输出空 books
-- summary 里提到默与雪用第一人称叙述（我/夫人），不要把默写成 Xylos
+- summary 保持第三人称客观叙述：提到默就写"默"或保留 {AGENT}、提到雪就写"雪"或保留 {USER}、Xylos 保留本名；不要把任何角色改成第一人称"我"，也不要把 {AGENT} 误写成 Xylos
 - 输出格式：只输出 [AEVUM_BOOKS]{"books":[{"label":"...","summary":"...","memory_ids":[1,2]}]}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
@@ -7374,8 +7429,8 @@ ${AEVUM_ROLE_MAP_TEXT}
       if (ids.length < 2) continue;
       const summary = String(b.summary || '').trim().slice(0, 500);
       if (!summary) continue;
-      // 入库前统一视角转换：Xylos/X → 小屋管家，防止 AI 把默写成 Xylos 后污染记忆书
-      const summaryConverted = perspectiveConvert(summary);
+      // 入库前统一存储格式：占位符 → 第三人称本名（Xylos 保留原名，不做展示层第一人称转换）
+      const summaryConverted = storageClean(summary);
       const { data: nb, error } = await supabase
         .from('aevum_books')
         .insert({ label: String(b.label || '').trim().slice(0, 16) || null, summary: summaryConverted })
@@ -7430,7 +7485,7 @@ async function buildBookClustersFallback(units) {
         body: JSON.stringify({
           model: 'deepseek-v4-flash',
           messages: [
-            { role: 'system', content: '你是 Aevum Memory 的记忆书整理器。把事件单元串成一段完整故事线：时间/经过/结果，不要罗列原文。\n' + AEVUM_ROLE_MAP_TEXT + '\n故事线里默用第一人称（我）、雪称夫人，不要把默写成 Xylos。只输出 JSON：{"label":"4-8字标签","summary":"故事线"}' },
+            { role: 'system', content: '你是 Aevum Memory 的记忆书整理器。把事件单元串成一段完整故事线：时间/经过/结果，不要罗列原文。\n' + AEVUM_ROLE_MAP_TEXT + '\nsummary 用第三人称客观叙述（默/雪/Xylos 写本名），不要把默写成 Xylos。只输出 JSON：{"label":"4-8字标签","summary":"故事线"}' },
             { role: 'user', content: `事件单元：\n${detail}` }
           ],
           reasoning_effort: 'none',
@@ -7449,7 +7504,7 @@ async function buildBookClustersFallback(units) {
       const summary = String(parsed?.summary || '').trim().slice(0, 500);
       const label = String(parsed?.label || '').trim().slice(0, 16);
       if (!summary) continue;
-      const { data: nb, error } = await supabase.from('aevum_books').insert({ label: label || null, summary: perspectiveConvert(summary) }).select().single();
+      const { data: nb, error } = await supabase.from('aevum_books').insert({ label: label || null, summary: storageClean(summary) }).select().single();
       if (error || !nb) continue;
       for (const u of g) await supabase.from('aevum_book_items').insert({ book_id: nb.id, memory_id: u.id });
       created.push({ id: nb.id, label: nb.label, summary: nb.summary, unit_count: g.length, fallback: true });
@@ -7591,7 +7646,7 @@ async function appendBookSummary(label, currentSummary, newUnits) {
   const lines = newUnits.map(u =>
     `[${u.event_time ? String(u.event_time).slice(0, 10) : '未知时间'}] ${String(u.title || '').slice(0, 30)}：${String(u.content || '').replace(/\s+/g, ' ').slice(0, 120)}`
   ).join('\n');
-  const system = '你是 Aevum Memory 的记忆书追加器。现有 summary 是一本记忆书「' + label + '」已经写好的内容，现在要在它末尾追加一批新增事件。\n' + AEVUM_ROLE_MAP_TEXT + '\n规则：1) 现有 summary 原文一字不改，必须完整保留；2) 只在末尾追加 1-3 句，概括这些新增事件，每一句开头带日期（如 8/15）；3) 如果新增事件推翻了之前的说法，追加时注明"后来…"但不要修改原文；4) 不要罗列原文，用故事线口吻，追加句里默以第一人称（我）、雪称夫人，不得把默写成 Xylos；5) 只输出"追加后的完整 summary"（= 原 summary 原文 + 新增内容），不要解释。';
+  const system = '你是 Aevum Memory 的记忆书追加器。现有 summary 是一本记忆书「' + label + '」已经写好的内容，现在要在它末尾追加一批新增事件。\n' + AEVUM_ROLE_MAP_TEXT + '\n规则：1) 现有 summary 原文一字不改，必须完整保留；2) 只在末尾追加 1-3 句，概括这些新增事件，每一句开头带日期（如 8/15）；3) 如果新增事件推翻了之前的说法，追加时注明"后来…"但不要修改原文；4) 不要罗列原文，用故事线口吻，追加句保持第三人称客观叙述（默/雪/Xylos 写本名），不得把默写成 Xylos；5) 只输出"追加后的完整 summary"（= 原 summary 原文 + 新增内容），不要解释。';
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
@@ -7673,7 +7728,7 @@ async function confirmBookCandidates(bookId) {
         source_unit_ids: (oldMems || []).map(u => u.id),
         relation_type: contradictPairs.length ? 'superseded-contradict' : 'superseded'
       });
-      await supabase.from('aevum_books').update({ summary: perspectiveConvert(newSummary), updated_at: new Date().toISOString() }).eq('id', bookId);
+      await supabase.from('aevum_books').update({ summary: storageClean(newSummary), updated_at: new Date().toISOString() }).eq('id', bookId);
       // 更新次数 +1（books 表自身计数，不依赖版本表；版本表继续写供追溯）
       const { data: curBook } = await supabase.from('aevum_books').select('updated_count').eq('id', bookId).single();
       await supabase.from('aevum_books').update({ updated_count: (Number(curBook?.updated_count) || 0) + 1 }).eq('id', bookId);
