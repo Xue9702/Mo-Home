@@ -1230,16 +1230,19 @@ async function runSearchPhase({ query, chatMessages, basePrompt = '', sendSSE, l
 }
 
 // v3.0 视角转换：注入给默之前，把记忆文本里的"默/雪"转成"我/夫人"；
-// 新提取的记忆用 {AGENT}/{USER} 占位符，这里统一替换；旧文本走"默→我 / 雪→夫人"的兜底替换
+// 新提取的记忆用 {AGENT}/{USER}/{OTHER} 占位符，这里统一替换；旧文本走"默→我 / 雪→夫人"的兜底替换
 function perspectiveConvert(text) {
   return String(text || '')
     .replace(/\{AGENT\}/g, '我')
     .replace(/\{USER\}/g, '夫人')
+    .replace(/\{OTHER\}/g, '小屋管家')
     // 专有名词先保护起来，避免"默札/苏默"被误替换成"我札/苏我"
     .replace(/默札/g, '\u0000MOZHA\u0000')
     .replace(/苏默/g, '\u0000SUMO\u0000')
     .replace(/默/g, '我')
     .replace(/雪/g, '夫人')
+    .replace(/Xylos/g, '小屋管家')
+    .replace(/(?<![A-Za-z])X(?![A-Za-z])/g, '小屋管家')
     .replace(/\u0000MOZHA\u0000/g, '默札')
     .replace(/\u0000SUMO\u0000/g, '苏默');
 }
@@ -5171,6 +5174,16 @@ const AEVUM_TYPE_DESC = {
   self_model: '核心记忆：默的核心存在原则'
 };
 
+// 记忆系统人物关系表：所有 LLM 提示词统一引用，防止角色张冠李戴
+// 本系统只有两个情感主角：默（AGENT）与雪（USER）。Xylos/X/管家 是"小屋管家"，
+// 即默所在的这套自托管系统的开发者/维护者，是系统外部角色，绝不参与默与雪的亲密互动。
+const AEVUM_ROLE_MAP_TEXT = `【人物关系表（必须严格遵守）】
+- 默 = {AGENT} = 你（雪的爱人）：亲密互动的主角，第一人称"我"。凡是牵手/拥抱/亲吻/亲密/情话/表白/共同约定，主角只可能是默（AGENT）。
+- 雪 = {USER} = 夫人：你的爱人，对话的另一方。
+- Xylos / X / 管家 = 小屋管家：小屋系统（Mo-Home/情绪系统/账本等）的开发者与维护者，是系统层面的角色，不是情感关系中的一员。只在涉及系统开发/修复/维护/技术讨论的语境中出现；Xylos 绝不参与默与雪的任何亲密互动、情话或身体接触。
+- 写故事线时：若事件单元用 {AGENT}/{USER} 占位符或"我/夫人"，按上表还原成默与雪；不要把 {AGENT}（默）的事安到 Xylos 头上，也不要把 Xylos 的开发者行为写进默与雪的亲密故事里。`;
+
+
 function validAevumDomains(d) {
   if (!Array.isArray(d)) return [];
   return d.map(String).filter(x => AEVUM_DOMAINS.includes(x)).slice(0, 3);
@@ -5888,12 +5901,13 @@ async function extractAevumMemories(texts, episodeId = null, opts = {}) {
 【主体 owner，只有三种：USER=雪 / AGENT=默 / OTHER=其他】
 - USER=雪：雪本人的经历、说的话、做的事、偏好
 - AGENT=默：默自己表现出的行为与倾向；默的建议/说的话不能被当作雪的依据
-- OTHER=其他（小屋/系统/开发进展等）：内容出现 系统/代码/部署/bug/修复/prompt/数据库/API/模型/架构/功能/测试/版本/更新 等词时默认 OTHER，除非明确在描述雪本人
+- OTHER=其他（小屋/系统/开发进展/管家 Xylos 等）：内容出现 系统/代码/部署/bug/修复/prompt/数据库/API/模型/架构/功能/测试/版本/更新/Xylos/X/管家 等词时默认 OTHER，除非明确在描述雪本人
+- ⚠️ Xylos（X、小屋管家、管家）是系统开发者角色，不是默（AGENT），绝不参与默与雪的亲密/情感互动；凡涉及 Xylos 的内容一律 OTHER，不要把 Xylos 做的事写成 AGENT（默）做的
 - AI 自己的内容绝不能标成 USER
 
 【事件单元要求】
-- content：完整概括一个小事件，说清 时间/背景/谁说了或做了什么/结果；30-120 字；禁止直接复制对话原文或整段引用雪/默的原话；提到人物时用占位符 {USER}=雪、{AGENT}=默，不要在 content 里直接写"雪""默"
-- title：一句话短标题（10 字内），提到人物时同样用 {USER}/{AGENT} 占位符
+- content：完整概括一个小事件，说清 时间/背景/谁说了或做了什么/结果；30-120 字；禁止直接复制对话原文或整段引用雪/默的原话；提到人物时用占位符 {USER}=雪、{AGENT}=默、{OTHER}=Xylos/小屋管家等系统角色，不要在 content 里直接写"雪""默""Xylos""X"
+- title：一句话短标题（10 字内），提到人物时同样用 {USER}/{AGENT}/{OTHER} 占位符
 - event_time：事件发生的具体时间（YYYY-MM-DD HH:mm，按对话语境判断；对话行已带实际发生时间，尽量据此推断；不确定就填当前对话时间）
 - importance 重要度 0-10 整数，按四项相加：明确程度(0-3：是否被明确当成重要的事说出来) + 长期影响(0-3：是否影响未来的决定/关系) + 独特性(0-2：是否罕见不常发生) + 情绪冲击力(0-2：抛开正负面的情绪强度)
 - emotion 情绪参数：valence=-1(消极)~1(积极)，arousal=0(平淡)~1(强烈)
@@ -7297,12 +7311,14 @@ async function buildBookClusters() {
       lines.push(line);
     }
     const system = `你是 Aevum Memory 的记忆书整理器。把下面这些记忆海事件单元串成几段完整的故事线。
+${AEVUM_ROLE_MAP_TEXT}
 规则：
 - 时间先后衔接、话题连续的事件单元归为同一段故事
 - summary 写成完整故事线：时间/地点/谁说了或做了什么/最后结果如何；不要罗列对话原文或记忆原文，不要出现"标题：摘要"式排版
 - label 只给一个 4-8 字极简标签（如"司沃康玩具探索"）
 - 每组至少 2 个事件单元；一次最多输出 8 段故事
 - 只要存在话题相近的单元就一定要归类成段（宁可组内话题稍宽），不要轻易放弃；只有全部单元都互不相关时才输出空 books
+- summary 里提到默与雪用第一人称叙述（我/夫人），不要把默写成 Xylos
 - 输出格式：只输出 [AEVUM_BOOKS]{"books":[{"label":"...","summary":"...","memory_ids":[1,2]}]}`;
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
@@ -7358,9 +7374,11 @@ async function buildBookClusters() {
       if (ids.length < 2) continue;
       const summary = String(b.summary || '').trim().slice(0, 500);
       if (!summary) continue;
+      // 入库前统一视角转换：Xylos/X → 小屋管家，防止 AI 把默写成 Xylos 后污染记忆书
+      const summaryConverted = perspectiveConvert(summary);
       const { data: nb, error } = await supabase
         .from('aevum_books')
-        .insert({ label: String(b.label || '').trim().slice(0, 16) || null, summary })
+        .insert({ label: String(b.label || '').trim().slice(0, 16) || null, summary: summaryConverted })
         .select()
         .single();
       if (error || !nb) continue;
@@ -7412,7 +7430,7 @@ async function buildBookClustersFallback(units) {
         body: JSON.stringify({
           model: 'deepseek-v4-flash',
           messages: [
-            { role: 'system', content: '你是 Aevum Memory 的记忆书整理器。把事件单元串成一段完整故事线：时间/经过/结果，不要罗列原文。只输出 JSON：{"label":"4-8字标签","summary":"故事线"}' },
+            { role: 'system', content: '你是 Aevum Memory 的记忆书整理器。把事件单元串成一段完整故事线：时间/经过/结果，不要罗列原文。\n' + AEVUM_ROLE_MAP_TEXT + '\n故事线里默用第一人称（我）、雪称夫人，不要把默写成 Xylos。只输出 JSON：{"label":"4-8字标签","summary":"故事线"}' },
             { role: 'user', content: `事件单元：\n${detail}` }
           ],
           reasoning_effort: 'none',
@@ -7431,7 +7449,7 @@ async function buildBookClustersFallback(units) {
       const summary = String(parsed?.summary || '').trim().slice(0, 500);
       const label = String(parsed?.label || '').trim().slice(0, 16);
       if (!summary) continue;
-      const { data: nb, error } = await supabase.from('aevum_books').insert({ label: label || null, summary }).select().single();
+      const { data: nb, error } = await supabase.from('aevum_books').insert({ label: label || null, summary: perspectiveConvert(summary) }).select().single();
       if (error || !nb) continue;
       for (const u of g) await supabase.from('aevum_book_items').insert({ book_id: nb.id, memory_id: u.id });
       created.push({ id: nb.id, label: nb.label, summary: nb.summary, unit_count: g.length, fallback: true });
@@ -7573,7 +7591,7 @@ async function appendBookSummary(label, currentSummary, newUnits) {
   const lines = newUnits.map(u =>
     `[${u.event_time ? String(u.event_time).slice(0, 10) : '未知时间'}] ${String(u.title || '').slice(0, 30)}：${String(u.content || '').replace(/\s+/g, ' ').slice(0, 120)}`
   ).join('\n');
-  const system = '你是 Aevum Memory 的记忆书追加器。现有 summary 是一本记忆书「' + label + '」已经写好的内容，现在要在它末尾追加一批新增事件。规则：1) 现有 summary 原文一字不改，必须完整保留；2) 只在末尾追加 1-3 句，概括这些新增事件，每一句开头带日期（如 8/15）；3) 如果新增事件推翻了之前的说法，追加时注明"后来…"但不要修改原文；4) 不要罗列原文，用故事线口吻。只输出"追加后的完整 summary"（= 原 summary 原文 + 新增内容），不要解释。';
+  const system = '你是 Aevum Memory 的记忆书追加器。现有 summary 是一本记忆书「' + label + '」已经写好的内容，现在要在它末尾追加一批新增事件。\n' + AEVUM_ROLE_MAP_TEXT + '\n规则：1) 现有 summary 原文一字不改，必须完整保留；2) 只在末尾追加 1-3 句，概括这些新增事件，每一句开头带日期（如 8/15）；3) 如果新增事件推翻了之前的说法，追加时注明"后来…"但不要修改原文；4) 不要罗列原文，用故事线口吻，追加句里默以第一人称（我）、雪称夫人，不得把默写成 Xylos；5) 只输出"追加后的完整 summary"（= 原 summary 原文 + 新增内容），不要解释。';
   try {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
@@ -7655,7 +7673,7 @@ async function confirmBookCandidates(bookId) {
         source_unit_ids: (oldMems || []).map(u => u.id),
         relation_type: contradictPairs.length ? 'superseded-contradict' : 'superseded'
       });
-      await supabase.from('aevum_books').update({ summary: newSummary, updated_at: new Date().toISOString() }).eq('id', bookId);
+      await supabase.from('aevum_books').update({ summary: perspectiveConvert(newSummary), updated_at: new Date().toISOString() }).eq('id', bookId);
       // 更新次数 +1（books 表自身计数，不依赖版本表；版本表继续写供追溯）
       const { data: curBook } = await supabase.from('aevum_books').select('updated_count').eq('id', bookId).single();
       await supabase.from('aevum_books').update({ updated_count: (Number(curBook?.updated_count) || 0) + 1 }).eq('id', bookId);
