@@ -5523,8 +5523,8 @@ const AEVUM_TYPE_CN = {
   user_tendency: '用户倾向', personality: '人格', self_model: '核心'
 };
 
-// 阿里百炼向量（text-embedding-v3，1024 维；失败返回 null）
-// v4 免费额度已耗尽，改用 v3（独立免费额度）。改模型后需全量重算已有向量（见 scripts/reindex-embeddings.js）
+// 阿里百炼向量（1024 维；失败返回 null）
+// 模型演进：text-embedding-v4 免费额度耗尽 → text-embedding-v3 → qwen3.7-text-embedding（2026/9/7 切换，同为 1024 维，历史向量无需重算）
 async function getEmbedding(text) {
   const key = process.env.DASHSCOPE_API_KEY;
   if (!key) return null;
@@ -5536,7 +5536,7 @@ async function getEmbedding(text) {
         'Authorization': `Bearer ${key}`
       },
       body: JSON.stringify({
-        model: process.env.AEVUM_EMBED_MODEL || 'text-embedding-v3',
+        model: process.env.AEVUM_EMBED_MODEL || 'qwen3.7-text-embedding',
         input: String(text || '').slice(0, 1000),
         dimensions: 1024,
         encoding_format: 'float'
@@ -5616,7 +5616,17 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     if (excludeNorm && excludeNorm.length >= 20) {
       excludeEmbedding = await getEmbedding(String(excludeText).slice(0, 500)).catch(() => null);
     }
-    const keywords = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2).slice(0, 3);
+    // 关键词：拆出更多候选（含 2 字以上词 + 整句短语），embedding 失败时靠它们兜底
+    const kwCandidates = q.replace(/[，。！？,.!?~、\s]+/g, ' ').split(' ').filter(w => w.length >= 2);
+    // 无分隔时按常见双字词滑动取，保证中文短句也有词可查
+    if (!kwCandidates.length && q.replace(/[，。！？,.!?~\s]+/g, '').length >= 4) {
+      const clean = q.replace(/[，。！？,.!?~\s]+/g, '');
+      for (let i = 0; i + 2 <= clean.length && kwCandidates.length < 8; i++) {
+        const w = clean.slice(i, i + 2);
+        if (!kwCandidates.includes(w)) kwCandidates.push(w);
+      }
+    }
+    const keywords = kwCandidates.slice(0, 8); // embedding 缺失时放宽到 8 个，提高命中
     // 向量 + 关键词并行召回，按 id 合并去重
     const [vecRes, kwRes] = await Promise.all([
       (async () => {
