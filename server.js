@@ -6430,11 +6430,17 @@ app.post('/api/aevum/indexes/delete', async (req, res) => {
   }
 });
 
-// 记忆列表：?type= &status= &owner= &q=
+// 记忆列表：?type= &status= &owner= &q= &limit= &offset=（分页，前端滚动加载）
 app.get('/api/aevum', async (req, res) => {
   try {
+    const pageLimit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const pageOffset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const build = () => {
-      let q = supabase.from('aevum_memories').select('*').order('updated_at', { ascending: false }).limit(200);
+      let q = supabase
+        .from('aevum_memories')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .range(pageOffset, pageOffset + pageLimit - 1);
       if (req.query.status) q = q.eq('status', req.query.status);
       if (AEVUM_OWNERS.includes(req.query.owner)) q = q.eq('owner', req.query.owner);
       if (AEVUM_DOMAINS.includes(req.query.domain)) q = q.contains('domain', [req.query.domain]);
@@ -6490,25 +6496,38 @@ app.get('/api/aevum', async (req, res) => {
 // 统计概览（Xylos 健康视角雏形）
 app.get('/api/aevum/stats', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('aevum_memories').select('type, status, layers');
-    if (error) return res.json({ total: 0, byType: {}, byStatus: {}, byTypeProcessed: {}, byTypeActive: {} });
+    // 真实总数：count 聚合，避免 Supabase 单次 1000 行上限导致 total 永远 1000
+    const { count, error: countErr } = await supabase
+      .from('aevum_memories')
+      .select('*', { count: 'exact', head: true });
+    if (countErr) return res.json({ total: 0, byType: {}, byStatus: {}, byTypeProcessed: {}, byTypeActive: {} });
+    // 状态分布：分页拉取直到取完（每页 1000）
     const byType = {};
     const byStatus = {};
     const byTypeProcessed = {};
     const byTypeActive = {};
-    for (const m of data || []) {
-      // 多维归属：同一记忆按它挂载的所有层级计数，与层级页展示一致
-      const typeKeys = (Array.isArray(m.layers) && m.layers.length)
-        ? m.layers.filter(t => AEVUM_TYPES.includes(t))
-        : [m.type];
-      for (const k of typeKeys) {
-        byType[k] = (byType[k] || 0) + 1;
-        if (m.status !== 'candidate') byTypeProcessed[k] = (byTypeProcessed[k] || 0) + 1;
-        if (m.status === 'active' || m.status === 'verified') byTypeActive[k] = (byTypeActive[k] || 0) + 1;
+    let offset = 0;
+    while (offset < (count || 0)) {
+      const { data, error } = await supabase
+        .from('aevum_memories')
+        .select('type, status, layers')
+        .range(offset, offset + 999);
+      if (error) break;
+      if (!data || !data.length) break;
+      for (const m of data) {
+        const typeKeys = (Array.isArray(m.layers) && m.layers.length)
+          ? m.layers.filter(t => AEVUM_TYPES.includes(t))
+          : [m.type];
+        for (const k of typeKeys) {
+          byType[k] = (byType[k] || 0) + 1;
+          if (m.status !== 'candidate') byTypeProcessed[k] = (byTypeProcessed[k] || 0) + 1;
+          if (m.status === 'active' || m.status === 'verified') byTypeActive[k] = (byTypeActive[k] || 0) + 1;
+        }
+        byStatus[m.status] = (byStatus[m.status] || 0) + 1;
       }
-      byStatus[m.status] = (byStatus[m.status] || 0) + 1;
+      offset += data.length;
     }
-    res.json({ total: (data || []).length, byType, byStatus, byTypeProcessed, byTypeActive });
+    res.json({ total: count || 0, byType, byStatus, byTypeProcessed, byTypeActive });
   } catch (e) {
     res.json({ total: 0, byType: {}, byStatus: {}, byTypeProcessed: {}, byTypeActive: {} });
   }

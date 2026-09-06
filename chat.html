@@ -2730,7 +2730,7 @@
       function aevumViewText(t) {
         return String(t || '').replace(/\{AGENT\}/g, '默').replace(/\{USER\}/g, '雪');
       }
-      let aevumState = { view: '', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false };
+      let aevumState = { view: '', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false, seaOffset: 0, seaAllLoaded: false, seaLoadingMore: false, seaAllMemories: [] };
 
       // ================== 玩具实验室（Web Bluetooth 直连） ==================
       let toyDevice = null;
@@ -3837,12 +3837,20 @@
           if (aevumState.view === 'sea') {
             if (aevumState.filters.status) params.set('status', aevumState.filters.status);
             else params.set('status', 'active');
+            // 记忆海分页：每次拉 100，滚动到底再拉下一页
+            params.set('limit', '100');
+            params.set('offset', String(aevumState.seaOffset || 0));
           }
           if (aevumState.filters.owner) params.set('owner', aevumState.filters.owner);
           if (aevumState.filters.domain) params.set('domain', aevumState.filters.domain);
           if (aevumState.filters.q) params.set('q', aevumState.filters.q);
+          // 记忆海：若已有累积列表（滚动加载过），直接用缓存；否则拉第一页
+          const useCachedSea = aevumState.view === 'sea' && aevumState.seaAllMemories.length > 0 && !aevumState.filters.q;
+          const listPromise = useCachedSea
+            ? Promise.resolve({ json: () => Promise.resolve({ memories: [] }) })
+            : fetch('/api/aevum?' + params.toString());
           const [listRes, statsRes, bookRes, planRes, todoRes, candRes, profRes, moRes, promRes, mozhaRes, stateRes] = await Promise.all([
-            fetch('/api/aevum?' + params.toString()),
+            listPromise,
             fetch('/api/aevum/stats'),
             fetch('/api/aevum/books').catch(() => null),
             fetch('/api/aevum/plans').catch(() => null),
@@ -3854,7 +3862,14 @@
             fetch('/api/aevum/mozha/count').catch(() => null),
             fetch('/api/xue-state').catch(() => null)
           ]);
-          let list = (await listRes.json()).memories || [];
+          if (aevumState.view === 'sea') {
+            if (!useCachedSea) {
+              const fresh = (await listRes.json()).memories || [];
+              aevumState.seaAllMemories = fresh;
+              aevumState.seaAllLoaded = fresh.length < 100;
+            }
+          }
+          const list = aevumState.view === 'sea' ? aevumState.seaAllMemories : ((await listRes.json()).memories || []);
           const stats = await statsRes.json();
           const bookData = bookRes && bookRes.ok ? await bookRes.json() : { books: [] };
           const planData = planRes && planRes.ok ? await planRes.json() : { active: [], expired: [] };
@@ -3930,12 +3945,15 @@
             ${aevumState.view === 'book' ? renderBookPanel(bookData, planData, todoData, candData) : ''}
             ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, stateData) : ''}
             ${inSea && (aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
-            ${inSea ? `<div style="display:flex;flex-direction:column;gap:10px;">
-              ${list.length ? renderSeaGrouped(list)
+            ${inSea ? `<div id="aevumSeaListWrap" style="display:flex;flex-direction:column;gap:10px;">
+              ${aevumState.seaAllMemories.length ? renderSeaGrouped(aevumState.seaAllMemories)
                 : `<div class="feature-card" style="align-items:center;color:#b0a6c4;font-size:14px;">${aevumState.filters.status === 'archived' ? '这里还没有归档的记忆' : '记忆海空空的~默的对话会自动把事件单元存进来'}</div>`}
+              ${aevumState.seaAllLoaded ? '' : '<div id="aevumSeaMore" style="text-align:center;color:var(--muted);font-size:12px;padding:6px;">上滑加载更多…</div>'}
             </div>` : ''}`;
           }
           box.innerHTML = html;
+          // 记忆海滚动加载：滚到底部触发下一页
+          if (aevumState.view === 'sea') attachAevumSeaScroll();
           // 记忆书更新提醒：新更新（超过上次查看）→ 弹窗（每批更新只弹一次）
           if (aevumState.view === 'book') {
             const lbv = Number(localStorage.getItem('aevumBookLastView') || 0);
@@ -3956,6 +3974,64 @@
         const d = Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
         return d;
       }
+
+      // 记忆海滚动加载：页面滚动接近底部时拉下一页（只在 sea 主视图、未筛选搜索时生效）
+      function attachAevumSeaScroll() {
+        if (aevumState.view !== 'sea' || aevumState.seaAllLoaded || aevumState.seaLoadingMore) return;
+        if (aevumState.filters.q || aevumState.filters.owner || aevumState.filters.domain) return; // 搜索/筛选不翻页
+        const scroller = document.getElementById('aevumContent') || document.querySelector('.page.active');
+        const tryLoad = () => {
+          if (aevumState.seaAllLoaded || aevumState.seaLoadingMore) return;
+          const el = document.getElementById('aevumSeaMore');
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          const vh = window.innerHeight || document.documentElement.clientHeight;
+          if (rect.top < vh + 60) aevumLoadMoreSea();
+        };
+        if (scroller && !scroller.__aevumScrollAttached) {
+          scroller.__aevumScrollAttached = true;
+          scroller.addEventListener('scroll', tryLoad, { passive: true });
+        }
+        setTimeout(tryLoad, 300); // 内容不满一屏时自动补拉
+      }
+
+      async function aevumLoadMoreSea() {
+        if (aevumState.seaLoadingMore || aevumState.seaAllLoaded) return;
+        aevumState.seaLoadingMore = true;
+        const moreEl = document.getElementById('aevumSeaMore');
+        if (moreEl) moreEl.textContent = '加载中…';
+        try {
+          const nextOffset = (aevumState.seaAllMemories || []).length;
+          const params = new URLSearchParams();
+          if (aevumState.filters.status) params.set('status', aevumState.filters.status);
+          else params.set('status', 'active');
+          params.set('limit', '100');
+          params.set('offset', String(nextOffset));
+          const res = await fetch('/api/aevum?' + params.toString());
+          const d = await res.json();
+          const newRows = (d.memories || []);
+          const seen = new Set(aevumState.seaAllMemories.map(m => String(m.id)));
+          const added = newRows.filter(m => !seen.has(String(m.id)));
+          aevumState.seaAllMemories = aevumState.seaAllMemories.concat(added);
+          if (newRows.length < 100) aevumState.seaAllLoaded = true; // 返回不足一页 = 到底
+          // 局部刷新（保留滚动位置）：重建列表容器 HTML
+          const wrap = document.getElementById('aevumSeaListWrap');
+          if (wrap) {
+            wrap.innerHTML = (aevumState.seaAllMemories.length ? renderSeaGrouped(aevumState.seaAllMemories) : '')
+              + (aevumState.seaAllLoaded ? '' : '<div id="aevumSeaMore" style="text-align:center;color:var(--muted);font-size:12px;padding:6px;">上滑加载更多…</div>');
+          } else {
+            aevumState.seaOffset = nextOffset;
+            renderAevum(); // 兜底整页重渲染
+            return;
+          }
+        } catch (e) {
+          console.warn('记忆海加载更多失败:', e);
+        } finally {
+          aevumState.seaLoadingMore = false;
+          attachAevumSeaScroll();
+        }
+      }
+      window.aevumLoadMoreSea = aevumLoadMoreSea;
 
       function renderPromisePanel(promData) {
         const active = promData.active || [];
@@ -4400,6 +4476,10 @@
         if (g('aevumOwner')) aevumState.filters.owner = g('aevumOwner').value;
         if (g('aevumDomain')) aevumState.filters.domain = g('aevumDomain').value;
         if (g('aevumQ')) aevumState.filters.q = g('aevumQ').value.trim();
+        // 筛选变化 → 重置分页从第一页开始
+        aevumState.seaOffset = 0;
+        aevumState.seaAllMemories = [];
+        aevumState.seaAllLoaded = false;
         renderAevum();
       }
       window.aevumFilter = aevumFilter;
@@ -4411,6 +4491,9 @@
         aevumState.editingId = null;
         aevumState.editingData = null;
         aevumState.moEditing = false;
+        aevumState.seaOffset = 0;
+        aevumState.seaAllMemories = [];
+        aevumState.seaAllLoaded = false;
         renderAevum();
       }
       window.aevumSetView = aevumSetView;
@@ -4422,6 +4505,9 @@
         aevumState.editingId = null;
         aevumState.editingData = null;
         aevumState.moEditing = false;
+        aevumState.seaOffset = 0;
+        aevumState.seaAllMemories = [];
+        aevumState.seaAllLoaded = false;
         renderAevum();
       }
       window.aevumBackToEntries = aevumBackToEntries;
