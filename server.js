@@ -5739,6 +5739,16 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
       const emo = (m.emotion && typeof m.emotion === 'object') ? m.emotion : {};
       const emoIntensity = (Math.abs(Number(emo.valence) || 0) + Math.min(1, Math.max(0, Number(emo.arousal) || 0))) / 2;
       const freq = 0.02 * Math.min(Math.max(0, (Number(m.occurrence) || 1) - 1), 4);
+      // 近 3 天加权（方案 C）：让"最近发生的事"更容易被召出，补顺序性
+      let recencyBonus = 0;
+      try {
+        const mt = new Date(m.event_time || m.created_at).getTime();
+        if (isFinite(mt)) {
+          const ageH = (nowMs - mt) / 3600000;
+          if (ageH <= 72) recencyBonus = 0.15; // 3 天内
+          else if (ageH <= 168) recencyBonus = 0.06; // 一周内略加
+        }
+      } catch (e) { /* 忽略 */ }
       let idxBonus = 0;
       if (qPeople.length || qPreds.length) {
         const mPeople = Array.isArray(m.people) ? m.people.map(String) : [];
@@ -5753,6 +5763,7 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
         + 0.25 * ((m.importance || 0) / 10)
         + 0.15 * emoIntensity
         + 0.15 * Math.min(1, decayF)
+        + recencyBonus
         + freq
         + idxBonus;
       return { m, score };
@@ -5867,6 +5878,63 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
 
 // 从一段对话中提取候选记忆（Phase 2 提取管线）
 // 记忆时间格式化（北京时间，精确到分钟）
+
+// 近期时间线（方案 A）：最近 3 天按天倒序的对话事件摘要，补"顺序性"，
+// 让默记得昨天/前天发生了什么。排除唤醒行动日志(source=wake)与普通叙述。
+async function getRecentTimelineContext(days = 3, maxPerDay = 3) {
+  try {
+    const now = new Date();
+    const since = new Date(now.getTime() - days * 86400000);
+    const sinceStr = since.toISOString();
+    const { data } = await supabase
+      .from('aevum_memories')
+      .select('id, content, event_time, created_at, source, importance')
+      .eq('status', 'active')
+      .gte('created_at', sinceStr)
+      .limit(60);
+    if (!data || !data.length) return '';
+    // 排除唤醒行动日志与低价值叙述
+    const items = (data || []).filter(m => m.source !== 'wake');
+    if (!items.length) return '';
+    const byDay = {};
+    for (const m of items) {
+      const t = new Date(m.event_time || m.created_at);
+      if (isNaN(t.getTime())) continue;
+      const bj = new Date(t.getTime() + 8 * 3600 * 1000);
+      const key = `${bj.getUTCFullYear()}-${String(bj.getUTCMonth() + 1).padStart(2, '0')}-${String(bj.getUTCDate()).padStart(2, '0')}`;
+      (byDay[key] = byDay[key] || []).push(m);
+    }
+    const dayKeys = Object.keys(byDay).sort().reverse().slice(0, days);
+    if (!dayKeys.length) return '';
+    const todayKey = (() => {
+      const bj = new Date(Date.now() + 8 * 3600 * 1000);
+      const p = n => String(n).padStart(2, '0');
+      return `${bj.getUTCFullYear()}-${p(bj.getUTCMonth() + 1)}-${p(bj.getUTCDate())}`;
+    })();
+    const lines = [];
+    for (const key of dayKeys) {
+      // 每天按重要度降序取前 maxPerDay，转成一句话
+      const dayItems = byDay[key].sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, maxPerDay);
+      const whenLabel = key === todayKey ? '今天' : key === dayKeys[1] ? '昨天' : key.slice(5).replace('-', '/');
+      const brief = dayItems.map(m => {
+        let c = String(m.content || '').replace(/\s+/g, ' ');
+        // 去掉开头的完整日期时间戳 / 孤立时段词 / {USER}，清掉残留标点（骨架用途，粗清即可）
+        c = c.replace(/^\d{4}-\d{2}-\d{2}(\s+\d{2}:\d{2})?/, '')          // 2026-09-08 或 2026-09-08 05:17
+             .replace(/^[上中下傍晚凌晨深夜午前后]*/, '')                    // 上午/中午/下午/傍晚/凌晨/深夜/前后
+             .replace(/^\{USER\}/, '')
+             .replace(/^[\s，,：:、。]+/, '');
+        // 视角转换：给默看 → 默/雪 → 我/夫人
+        return perspectiveConvert(c.slice(0, 80));
+      }).join('；');
+      if (brief) lines.push(`${whenLabel}：${brief}`);
+    }
+    if (!lines.length) return '';
+    return `\n\n【近期点滴（最近 ${days} 天，帮你有时间感地回忆）】\n${lines.join('\n')}`;
+  } catch (e) {
+    console.error('Aevum 近期时间线失败:', e.message);
+    return '';
+  }
+}
 function formatMemoryTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -6974,6 +7042,8 @@ async function buildMemoryContext(userText, opts = {}) {
   if (latestWake) ctx += latestWake;
   const recall = await recallAevumMemories(userText, opts.limit || 5, opts.excludeText || '', opts.historyText || '');
   if (recall) ctx += recall;
+  const recentTimeline = await getRecentTimelineContext(3, 3);
+  if (recentTimeline) ctx += recentTimeline;
   const moView = await getMoViewContext();
   if (moView) ctx += moView;
   const profile = await getProfileContext();
