@@ -6936,9 +6936,32 @@ async function getLedgerBrief() {
     }
     const top = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 3);
     if (top.length) lines.push('支出大头：' + top.map(([c, v]) => `${c} ${Math.round(v * 100) / 100} 元`).join('、'));
+    // 明细注入：当天有记录 → 注入当天全部收支明细（带备注，帮默知道记没记）；
+    // 当天无记录 → 注入最近 3 条收支明细（带备注与日期），让默能接上近期账目
+    const detailLines = [];
     if (todayList.length) {
-      lines.push('今天已记：' + todayList.map(e => `${e.type === 'income' ? '入' : '支'} ${e.amount}${e.note ? '（' + e.note + '）' : ''}`).join('、'));
+      // 当天记录按时间倒序（created_at 新的在前）
+      const ordered = [...todayList].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      for (const e of ordered) {
+        const cat = e.category || '其他';
+        const note = String(e.note || '').trim();
+        detailLines.push(`${e.type === 'income' ? '入' : '支'} ${e.amount} 元（${cat}${note ? '：' + note : ''}）`);
+      }
+    } else {
+      const { data: recent } = await supabase
+        .from('ledger_entries')
+        .select('*')
+        .order('entry_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(3);
+      for (const e of (recent || [])) {
+        const cat = e.category || '其他';
+        const note = String(e.note || '').trim();
+        detailLines.push(`${e.entry_date} ${e.type === 'income' ? '入' : '支'} ${e.amount} 元（${cat}${note ? '：' + note : ''}）`);
+      }
+      if (detailLines.length) detailLines.unshift('（今天还没记账，最近几笔：）');
     }
+    if (detailLines.length) lines.push('明细：' + detailLines.join('；'));
     return `\n\n【账本】\n${lines.join('\n')}`;
   } catch (e) {
     return '';
