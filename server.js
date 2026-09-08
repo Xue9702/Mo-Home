@@ -7471,11 +7471,12 @@ async function buildBookClusters() {
     try {
       const { data } = await supabase
         .from('aevum_memories')
-        .select('id, title, content, event_time, tags')
+        .select('id, title, content, event_time, tags, source')
         .eq('area', 'sea')
         .order('event_time', { ascending: false })
         .limit(200);
-      units = (data || []).filter(u => !used.has(u.id)).slice(0, 120);
+      // 排除唤醒行动日志（source='wake'）：唤醒流水账不进记忆书，只留在记忆海
+      units = (data || []).filter(u => !used.has(u.id) && u.source !== 'wake').slice(0, 120);
     } catch (e) {
       return { books: [], created: 0, message: '记忆书整理失败：请确认已执行 setup_aevum_v30.sql' };
     }
