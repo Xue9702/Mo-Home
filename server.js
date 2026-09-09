@@ -1193,6 +1193,23 @@ function buildAllTools() {
           required: ['id']
         }
       }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'recall_memory',
+        description: `访问你的记忆库（Aevum 长期记忆）。当你想不起某件往事的确切细节、雪提到过去的事而你只有模糊印象、或上下文里召回的【相关记忆】不够用时，主动调用它翻找记忆海。两种用法（每次只能一种）：
+1. 关键词搜索：传 query（一句话/关键词，如"电饭煲""我们约定过什么"），返回与它相关的记忆片段（含时间）。
+2. 追溯详情：传 memory_id（从上下文【记忆海】条目里的 #ID 或【相关记忆】的 id 获取），返回该条记忆的完整内容与当时对话原文片段。
+这是你主动探索记忆的能力——你不是只能接收系统塞给你的记忆，拿不准或想查证时就用它。只在真的需要时调用，不要为了调用而调用。`,
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '想搜的记忆关键词/一句话' },
+            memory_id: { type: 'integer', description: '要追溯详情的记忆 id（与 query 二选一）' }
+          }
+        }
+      }
     }
   );
   return tools.filter(t => {
@@ -2026,7 +2043,7 @@ app.post('/api/chat', async (req, res) => {
 
     // 检查是否收到了完整的回复（工具调用轮没有正文是正常的：搜索/星露谷/闹钟/待办等后续都有接续轮）
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
     );
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
       console.error('未收到有效回复，完整响应体可能为空');
@@ -2078,7 +2095,24 @@ app.post('/api/chat', async (req, res) => {
     // 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
-    if (mozhaRead) {
+    // 默主动翻记忆（recall_memory）：执行检索 → 第二轮基于结果回答（静默，同一气泡）
+    const recallToolCall = first.toolCalls && first.toolCalls.find(tc => tc.function?.name === 'recall_memory');
+    if (recallToolCall) {
+      console.log('🧠 默主动翻记忆:', (() => { try { return JSON.stringify(JSON.parse(recallToolCall.function?.arguments || '{}')).slice(0, 80); } catch (e) { return ''; } })());
+      sendSSE({ recallStart: true });
+      const recallResult = await executeRecallMemory(first.toolCalls);
+      const phase = await runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResult });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking);
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      fullReply = phase.reply || fullReply;
+      fullThinking = phase.thinking || fullThinking;
+      first.contentBuffer = undefined;
+      console.log('🧠 记忆翻查完成，最终回复长度:', fullReply.length);
+    } else if (mozhaRead) {
       // 翻阅默札：第一轮过渡语气泡收尾，第二轮接续
       await flushBufferedContent(first.contentBuffer, sendSSE);
       sendSSE({ done: true });
@@ -2584,7 +2618,7 @@ app.post('/api/regenerate', async (req, res) => {
 
     // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
     );
 
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
@@ -2650,7 +2684,24 @@ app.post('/api/regenerate', async (req, res) => {
     // 6.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
-    if (searchReq) {
+    // 默主动翻记忆（重新生成场景）
+    const recallToolCall = first.toolCalls && first.toolCalls.find(tc => tc.function?.name === 'recall_memory');
+    if (recallToolCall) {
+      console.log('🧠 重新生成-默主动翻记忆');
+      sendSSE({ recallStart: true });
+      const recallResult = await executeRecallMemory(first.toolCalls);
+      const phase = await runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResult });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, targetMsg.session_id);
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      fullReply = phase.reply || fullReply;
+      fullThinking = phase.thinking || fullThinking;
+      first.contentBuffer = undefined;
+      console.log('🧠 记忆翻查完成，最终回复长度:', fullReply.length);
+    } else if (searchReq) {
       // 静默搜索：不发过渡语、不新建气泡，搜索完成后直接在同一气泡回答
       console.log('🔍 重新生成-默请求联网搜索:', searchReq.query);
       sendSSE({ searchStart: true, query: searchReq.query });
@@ -5688,6 +5739,85 @@ async function getIndexConfig(kind) {
   } catch (e) {
     return new Set();
   }
+}
+
+// ========== recall_memory 工具执行（默主动翻记忆：关键词搜索 / 追溯详情） ==========
+// 返回 { text, found } 结构化结果，供第二轮注入给默
+
+// 追溯单条记忆的完整内容 + 原始对话证据
+async function recallTraceMemory(memoryId) {
+  try {
+    const { data } = await supabase
+      .from('aevum_memories')
+      .select('*')
+      .eq('id', Number(memoryId))
+      .eq('status', 'active')
+      .maybeSingle();
+    if (!data) return { text: '', found: false };
+    const when = formatMemoryTime(data.event_time || data.created_at);
+    const label = perspectiveConvert(String(data.title || '').trim());
+    const contentConv = perspectiveConvert(data.content);
+    let out = `【记忆详情 #${data.id}${when ? ' · ' + when : ''}】\n${contentConv}`;
+    // 附原始对话证据（evidence 数组，若存在）
+    const evs = (Array.isArray(data.evidence) ? data.evidence : []).filter(Boolean).slice(0, 2);
+    if (evs.length) {
+      out += `\n\n（当时对话原文片段：${evs.map(s => String(s).slice(0, 200)).join('\n')}）`;
+    }
+    return { text: out, found: true };
+  } catch (e) {
+    console.error('recall trace 失败:', e.message);
+    return { text: '', found: false };
+  }
+}
+
+// 关键词搜索记忆海（复用召回逻辑但走宽松一点，多返回几条给默自己判断）
+async function recallSearchMemories(queryText, limit = 8) {
+  try {
+    const text = await recallAevumMemories(queryText, limit, '', '');
+    return { text, found: !!text && text.includes('【记忆海】') };
+  } catch (e) {
+    console.error('recall search 失败:', e.message);
+    return { text: '', found: false };
+  }
+}
+
+// 执行 recall_memory 工具调用（支持 query / memory_id 二选一）
+async function executeRecallMemory(toolCalls) {
+  const tc = (toolCalls || []).find(c => c.function?.name === 'recall_memory');
+  if (!tc) return null;
+  let args = {};
+  try { args = JSON.parse(tc.function?.arguments || '{}'); } catch (e) { args = {}; }
+  const query = String(args.query || '').trim();
+  const mid = parseInt(args.memory_id, 10);
+  if (mid > 0) return await recallTraceMemory(mid);
+  if (query) return await recallSearchMemories(query);
+  return { text: '', found: false };
+}
+
+// 第二轮：让默基于检索结果自然回答（静默，同一气泡内）
+async function runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResult }) {
+  const rest = chatMessages.slice(1);
+  const history = rest.slice(0, -1);
+  const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
+  const note = recallResult.found && recallResult.text
+    ? `\n\n【你翻到的记忆】\n这是你主动调用 recall_memory 翻到的内容，请自然地把它融进回复（如"我想起来了/对，那天……"），不要机械地复述"我调用了记忆检索"。如果翻到的内容确实回答不上雪的问题，就如实说记忆里没有这段，不要编造。\n\n${recallResult.text}`
+    : '\n\n（你调用 recall_memory 但没有翻到相关内容，请如实告诉雪记忆里没有这段，不要编造或把推测说成事实。）';
+  const secondMessages = [
+    { role: 'system', content: systemPrompt },
+    ...history,
+    lastUser,
+    { role: 'system', content: note }
+  ];
+  let second = await callDeepSeekStream(secondMessages, sendSSE, {});
+  if (!second.error && !second.fullReply && !(second.toolCalls && second.toolCalls.length)) {
+    second = await callDeepSeekStream([
+      { role: 'system', content: `${systemPrompt}\n\n${note}` },
+      ...history,
+      lastUser
+    ], sendSSE, {});
+  }
+  if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
+  return { reply: second.fullReply, thinking: second.fullThinking };
 }
 
 // 召回：向量相似度取活跃记忆；向量不可用时退回关键词匹配
@@ -9150,7 +9280,7 @@ app.post('/api/edit-message', async (req, res) => {
 
     // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
     );
 
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
@@ -9216,7 +9346,24 @@ app.post('/api/edit-message', async (req, res) => {
     // 10.5 检查第一轮回复是否包含搜索意图（工具调用或标签）
     const searchReq = extractSearchRequest(fullReply, first.toolCalls);
 
-    if (searchReq) {
+    // 默主动翻记忆（编辑场景）
+    const recallToolCall = first.toolCalls && first.toolCalls.find(tc => tc.function?.name === 'recall_memory');
+    if (recallToolCall) {
+      console.log('🧠 编辑-默主动翻记忆');
+      sendSSE({ recallStart: true });
+      const recallResult = await executeRecallMemory(first.toolCalls);
+      const phase = await runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResult });
+      if (phase.error) {
+        if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, newVersion, originalMsg.session_id);
+        sendSSE({ error: phase.error });
+        res.end();
+        return;
+      }
+      fullReply = phase.reply || fullReply;
+      fullThinking = phase.thinking || fullThinking;
+      first.contentBuffer = undefined;
+      console.log('🧠 记忆翻查完成，最终回复长度:', fullReply.length);
+    } else if (searchReq) {
       // 静默搜索：不发过渡语、不新建气泡，搜索完成后直接在同一气泡回答
       console.log('🔍 编辑-默请求联网搜索:', searchReq.query);
       sendSSE({ searchStart: true, query: searchReq.query });

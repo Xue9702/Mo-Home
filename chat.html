@@ -6252,6 +6252,22 @@
                   const tbody = ensureThinkingStructure(currentThinkingContainer, true);
                   if (tbody) tbody.textContent = fullThinking;
                 }
+                if (json.recallStart) {
+                  // 默主动翻记忆：状态行提示
+                  if (!currentThinkingContainer) {
+                    currentThinkingContainer = document.createElement('div');
+                    currentThinkingContainer.className = 'thinking-content';
+                    currentThinkingContainer.style.display = 'block';
+                    currentMsgDiv.insertBefore(currentThinkingContainer, currentAssistantBubble);
+                  }
+                  const block = setupSearchStatusBlock(currentThinkingContainer);
+                  const sline = currentThinkingContainer.querySelector('.search-status-line');
+                  if (sline) sline.textContent = '🧠 正在翻记忆…';
+                  currentThinkBody = block.thinkBody;
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
+                }
                 if (json.searchStart) {
                   // 静默搜索：不新建气泡，把搜索状态行挂进当前思考区，同一气泡里直接回答
                   if (!currentThinkingContainer) {
@@ -6779,8 +6795,24 @@
                   smartScrollToBottom();
                 }
 
+                if (json.recallStart) {
+                  // 默主动翻记忆：状态行提示，随后在同一气泡回答
+                  if (!currentMsgDiv || !currentThinkDiv) {
+                    const m2 = createAssistantStreamMessage();
+                    currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
+                    messageList.appendChild(currentMsgDiv);
+                  }
+                  const block = setupSearchStatusBlock(currentThinkDiv);
+                  const sline = currentThinkDiv.querySelector('.search-status-line');
+                  if (sline) sline.textContent = '🧠 正在翻记忆…';
+                  currentThinkBody = block.thinkBody;
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  smartScrollToBottom();
+                }
+
                 if (json.searchStart) {
-                  // 静默搜索：不新建气泡，同一气泡里继续（思考→搜索状态→回答）
+                  // 静默搜索：同一气泡里继续（思考→搜索状态→回答）
                   if (!currentMsgDiv || !currentThinkDiv) {
                     const m2 = createAssistantStreamMessage();
                     currentMsgDiv = m2.msg; currentThinkDiv = m2.thinkDiv; currentBubble = m2.bubble;
@@ -6969,6 +7001,16 @@
                   currentThinkDiv.style.display = 'block';
                   const tbody = ensureThinkingStructure(currentThinkDiv, true);
                   if (tbody) tbody.textContent = fullThinking;
+                }
+                if (json.recallStart) {
+                  // 默主动翻记忆：状态行提示
+                  const block = setupSearchStatusBlock(currentThinkDiv);
+                  const sline = currentThinkDiv.querySelector('.search-status-line');
+                  if (sline) sline.textContent = '🧠 正在翻记忆…';
+                  currentThinkBody = block.thinkBody;
+                  searchPhaseActive = true;
+                  fullReply = ''; fullThinking = '';
+                  messageList.scrollTop = messageList.scrollHeight;
                 }
                 if (json.searchStart) {
                   // 静默搜索：不新建气泡，同一气泡里继续（思考→搜索状态→回答）
