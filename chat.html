@@ -5373,6 +5373,8 @@
 
       // ---------- 状态 ----------
       let isLoading = false;
+      let streamActive = false; // 是否有正在进行的回复流（切后台后回来靠它判断要不要补拉）
+      let lastShownMsgId = null; // 页面已显示的最后一条消息 id（补拉增量用）
       const CORRECT_PASSWORD = '9702520x';
 
       // ---------- 工具函数 ----------
@@ -6357,6 +6359,79 @@
       let historyHasMore = true;
       let historyLoadingMore = false;
 
+      // ---------- 后台切回补拉（Capacitor App 切后台后 SSE 中断，回来时补上服务器已保存的新消息） ----------
+      function currentShownMsgId() {
+        const msgs = messageList.querySelectorAll('.message[data-message-id]');
+        let maxId = 0;
+        msgs.forEach(m => { const v = parseInt(m.dataset.messageId, 10); if (v > maxId) maxId = v; });
+        return maxId || null;
+      }
+
+      // 增量补拉：拉比 afterId 新的消息并追加渲染（轻量，不整页重绘）
+      async function fetchNewMessages(afterId) {
+        try {
+          const res = await fetch('/api/history?after_id=' + afterId);
+          if (!res.ok) return [];
+          const d = await res.json();
+          return (d.messages || []).filter(m => m.id > afterId);
+        } catch (e) { return []; }
+      }
+
+      function renderFetchedMessage(msg) {
+        const shown = new Set();
+        document.querySelectorAll('.message[data-message-id]').forEach(m => shown.add(String(m.dataset.messageId)));
+        if (shown.has(String(msg.id))) return; // 已显示过，跳过
+        if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.indexOf('【工具事件】') === 0) {
+          addToolEventLine(msg.content.slice(6));
+          return;
+        }
+        const role = msg.role === 'user' ? 'user' : 'assistant';
+        addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
+        messageList.scrollTop = messageList.scrollHeight;
+      }
+
+      // 从后台切回时：若刚才在等回复（SSE 可能断了），轮询补拉直到看到完整回复
+      async function resumeAfterBackground() {
+        if (!streamActive && !isLoading) return; // 没有进行中的回复，不需要补拉
+        // 若流式气泡还在且 SSE 可能恢复：先等 2s 看它是否自己继续；仍无进展才补拉
+        await new Promise(r => setTimeout(r, 2000));
+        if (document.hidden) return;
+        const stillStreaming = !!document.getElementById('streaming-message');
+        if (stillStreaming) {
+          // 流式气泡还在但 2s 没动静 → 认为断了：清掉残留气泡，走补拉
+          const stale = document.getElementById('streaming-message');
+          if (stale && stale.parentNode) stale.remove();
+        }
+        const afterId = currentShownMsgId();
+        if (!afterId) return;
+        // 轮询最多 ~20 秒；每次间隔 2s
+        for (let i = 0; i < 10; i++) {
+          if (!document.hidden) {
+            const news = await fetchNewMessages(afterId);
+            let sawNew = false;
+            for (const m of news) { renderFetchedMessage(m); sawNew = true; }
+            if (sawNew) {
+              // 拉到了新内容（工具事件或正式回复），若最新是完整 assistant 回复则停止
+              const allAsst = messageList.querySelectorAll('.message.assistant');
+              const last = allAsst[allAsst.length - 1];
+              if (last && last.dataset.messageId) break;
+            }
+          }
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+      window.resumeAfterBackground = resumeAfterBackground;
+
+      // 页面可见性变化监听：切回前台触发补拉（CAP 后台时 WebView 被挂起，SSE 会断）
+      if (document.addEventListener) {
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) {
+            // 延迟一点，等 WebView 恢复 JS 执行
+            setTimeout(() => { resumeAfterBackground(); }, 400);
+          }
+        });
+      }
+
       async function loadHistory() {
         try {
           const response = await fetch('/api/history?limit=40'); if (!response.ok) return;
@@ -6732,7 +6807,7 @@
         imagePreviewImg.src = '';
         imagePreviewName.textContent = '';
 
-        isLoading = true; sendBtn.disabled = true;
+        isLoading = true; streamActive = true; sendBtn.disabled = true;
 
         // 创建流式消息容器
         const msgDiv = document.createElement('div');
@@ -6939,6 +7014,7 @@
           currentBubble.textContent = '❌ 请求失败：' + err.message;
         } finally {
           isLoading = false;
+          streamActive = false;
           sendBtn.disabled = false;
           // 流式结束后不强制 focus 输入框：避免在手机端强行弹出输入法、打断阅读；
           // 用户想继续打字点一下输入框即可

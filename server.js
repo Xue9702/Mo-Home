@@ -2324,9 +2324,23 @@ app.post('/api/chat', async (req, res) => {
 // ------------------ 获取历史消息 ------------------
 app.get('/api/history', async (req, res) => {
   try {
-    // 懒加载窗口：?limit=N&before_id=ID 返回指定区间，避免前端一次拉全部历史
+    // 懒加载窗口：?limit=N&before_id=ID 返回指定区间；?after_id=ID 返回比它新的消息（回前台补拉用）
     const limitParam = parseInt(req.query.limit, 10);
     const beforeId = parseInt(req.query.before_id, 10);
+    const afterId = parseInt(req.query.after_id, 10);
+    if (afterId > 0) {
+      // 回前台补拉：取比 after_id 新的消息（含工具事件），时间正序
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('session_id', 1)
+        .eq('visible', true)
+        .gt('id', afterId)
+        .order('id', { ascending: true })
+        .limit(200);
+      if (error) return res.status(500).json({ error: '读取历史消息失败' });
+      return res.json({ messages: data || [], hasMore: false });
+    }
     if (limitParam > 0) {
       let q = supabase
         .from('messages')
