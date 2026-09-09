@@ -2129,6 +2129,11 @@ app.post('/api/chat', async (req, res) => {
       fullReply = phase.reply || fullReply;
       fullThinking = phase.thinking || fullThinking;
       first.contentBuffer = undefined;
+      // 兜底：翻完记忆却没生成正文时，不让消息凭空消失
+      if (!String(fullReply || '').trim()) {
+        fullReply = '（我翻了一下记忆，但好像没接上话——你刚才问的是……？）';
+        sendSSE({ content: fullReply });
+      }
       console.log('🧠 记忆翻查完成，最终回复长度:', fullReply.length);
     } else if (mozhaRead) {
       // 翻阅默札：第一轮过渡语气泡收尾，第二轮接续
@@ -2719,6 +2724,10 @@ app.post('/api/regenerate', async (req, res) => {
       fullReply = phase.reply || fullReply;
       fullThinking = phase.thinking || fullThinking;
       first.contentBuffer = undefined;
+      if (!String(fullReply || '').trim()) {
+        fullReply = '（我翻了一下记忆，但好像没接上话——你刚才问的是……？）';
+        sendSSE({ content: fullReply });
+      }
       console.log('🧠 记忆翻查完成，最终回复长度:', fullReply.length);
     } else if (searchReq) {
       // 静默搜索：不发过渡语、不新建气泡，搜索完成后直接在同一气泡回答
@@ -5852,6 +5861,11 @@ async function runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResul
       ...history,
       lastUser
     ], sendSSE, {});
+  }
+  // 两次尝试后仍无正文：给出明确错误（主流程会兜底，不让消息凭空消失）
+  if (!second.error && !second.fullReply) {
+    console.error('🧠 recall 第二轮未生成正文（可能被中断）');
+    return { error: '记忆翻查后回复生成失败，请重试', reply: '', thinking: '' };
   }
   if (second.error) return { error: second.error, reply: second.fullReply, thinking: second.fullThinking };
   return { reply: second.fullReply, thinking: second.fullThinking };
@@ -9399,6 +9413,10 @@ app.post('/api/edit-message', async (req, res) => {
       fullReply = phase.reply || fullReply;
       fullThinking = phase.thinking || fullThinking;
       first.contentBuffer = undefined;
+      if (!String(fullReply || '').trim()) {
+        fullReply = '（我翻了一下记忆，但好像没接上话——你刚才问的是……？）';
+        sendSSE({ content: fullReply });
+      }
       console.log('🧠 记忆翻查完成，最终回复长度:', fullReply.length);
     } else if (searchReq) {
       // 静默搜索：不发过渡语、不新建气泡，搜索完成后直接在同一气泡回答
