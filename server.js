@@ -1199,7 +1199,7 @@ function buildAllTools() {
       function: {
         name: 'recall_memory',
         description: `访问你的记忆库（Aevum 长期记忆）。当你想不起某件往事的确切细节、雪提到过去的事而你只有模糊印象、或上下文里召回的【相关记忆】不够用时，主动调用它翻找记忆海。两种用法（每次只能一种）：
-1. 关键词搜索：传 query（一句话/关键词，如"电饭煲""我们约定过什么"），返回与它相关的记忆片段（含时间）。
+1. 关键词搜索：传 query——⚠️ 关键词要简短！只写 1~3 个核心词（如"电饭煲""情绪系统"），**不要写一长串句子或复合问题**（如"谁负责给我注入记忆，harness还是Aevum"这种长句搜不到）；如果问题复杂，先想它最核心的 1~2 个词，一次只搜一个主题，不够再搜下一次。
 2. 追溯详情：传 memory_id（从上下文【记忆海】条目里的 #ID 或【相关记忆】的 id 获取），返回该条记忆的完整内容与当时对话原文片段。
 这是你主动探索记忆的能力——你不是只能接收系统塞给你的记忆，拿不准或想查证时就用它。只在真的需要时调用，不要为了调用而调用。`,
         parameters: {
@@ -5829,15 +5829,16 @@ async function runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResul
   const rest = chatMessages.slice(1);
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
-  // 明确告诉默：上一轮是"你自己"调用了 recall_memory 翻记忆，以下是翻到的内容
-  const callDesc = recallResult.mode === 'trace'
-    ? `你（默）上一轮主动调用了 recall_memory 追溯记忆 #${recallResult.memory_id}`
+  // 明确告诉默：这是"当前这条消息"的接续回复，他刚才主动翻了记忆
+  // （措辞避免"上一轮"歧义——默可能误解成对话页面里的上一条消息）
+  const queryDesc = recallResult.mode === 'trace'
+    ? `你主动调用了 recall_memory 追溯记忆 #${recallResult.memory_id}`
     : recallResult.mode === 'search'
-      ? `你（默）上一轮主动调用了 recall_memory，用关键词「${recallResult.query || ''}」翻记忆`
-      : '你上一轮主动调用了 recall_memory 翻记忆';
+      ? `你主动调用了 recall_memory，用关键词「${recallResult.query || ''}」翻记忆`
+      : '你主动调用了 recall_memory 翻记忆';
   const note = recallResult.found && recallResult.text
-    ? `\n\n【记忆回溯结果】\n${callDesc}，以下是翻到的内容。请自然地把它融进回复——这是你自己翻出来的，不要表现得像第一次看到；可以用"我想起来了/对，那天……"接上。如果翻到的内容确实回答不上雪的问题，就如实说记忆里没有这段，不要编造，也不要把推测说成事实。\n\n${recallResult.text}`
-    : `\n\n（${callDesc}，但没有翻到相关内容。请如实告诉雪记忆里没有这段，不要编造或把推测说成事实。）`;
+    ? `\n\n【记忆回溯结果】\n这是当前消息的接续回复：就在刚才（本回合内），${queryDesc}，以下是翻到的内容：\n${recallResult.text}\n\n以上是翻到的内容。请自然地把它融进回复——这是你自己翻出来的，不要表现得像第一次看到；可以用"我想起来了/对，那天……"接上。如果翻到的内容确实回答不上雪的问题，就如实说记忆里没有这段，不要编造，也不要把推测说成事实。`
+    : `\n\n（刚才${queryDesc}，但系统返空/没有翻到相关内容。请如实告诉雪记忆里没有这段，不要编造或把推测说成事实。）`;
   const secondMessages = [
     { role: 'system', content: systemPrompt },
     ...history,
