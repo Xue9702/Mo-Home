@@ -1724,6 +1724,24 @@ async function loadLatestHistory(sessionId, limit = 50) {
   }
 }
 
+// 按"轮"取最近聊天：攒够 N 个 user 消息（含其后 assistant），返回时间正序的连续消息
+// 用途：上下文预览/历史注入按轮数而非字数上限（与 20 轮锁定窗口语义对齐）
+async function loadLatestRounds(sessionId, rounds = 20) {
+  const latest = await loadLatestHistory(sessionId, 200);
+  if (!latest || !latest.length) return [];
+  const out = [];
+  let userCount = 0;
+  for (let i = latest.length - 1; i >= 0; i--) {
+    const m = latest[i];
+    if (m.role === 'user') {
+      if (userCount >= rounds) break;
+      userCount++;
+    }
+    out.push(m);
+  }
+  return out.reverse();
+}
+
 // 解析用户上传的文档（PDF / Word / 纯文本），提取文字给默阅读
 async function extractFileText(file) {
   if (!file || !file.data) return '（文件内容为空）';
@@ -1844,8 +1862,8 @@ app.post('/api/chat', async (req, res) => {
       fileText = await extractFileText(file);
     }
 
-    // 加载历史消息（按字数上限 5000 字，分支去重后取最近内容；超长消息截断）
-    const historyMessages = trimHistoryToChars(await loadLatestHistory(1, 60), 5000).map(msg => ({
+    // 加载历史消息（近 20 轮，非 5000 字上限；单条超长消息仍截断）
+    const historyMessages = (await loadLatestRounds(1, 20)).map(msg => ({
       role: msg.role,
       content: trimContextMessage(msg.content)
     }));
@@ -2100,7 +2118,7 @@ app.post('/api/chat', async (req, res) => {
     if (recallToolCall) {
       console.log('🧠 默主动翻记忆:', (() => { try { return JSON.stringify(JSON.parse(recallToolCall.function?.arguments || '{}')).slice(0, 80); } catch (e) { return ''; } })());
       sendSSE({ recallStart: true });
-      const recallResult = await executeRecallMemory(first.toolCalls);
+      const recallResult = await executeRecallMemory(first.toolCalls, sendSSE);
       const phase = await runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResult });
       if (phase.error) {
         if (phase.reply || phase.thinking) await savePartialAssistant(phase.reply, phase.thinking);
@@ -2350,7 +2368,8 @@ app.get('/api/history', async (req, res) => {
 app.post('/api/context-preview', async (req, res) => {
   try {
     const text = String(req.body?.message || '').trim() || '（示例消息）';
-    const recentHistory = trimHistoryToChars(await loadLatestHistory(1, 60), 5000);
+    // 近 20 轮聊天记录（非 5000 字上限）：按轮取，超长单条仍截断
+    const recentHistory = await loadLatestRounds(1, 20);
     const historyText = recentHistory.map(m => String(m.content || '')).join('\n');
     const memoryContext = await buildMemoryContext(text, { historyText });
     const toyManualContext = await getToyManualContext(req.body?.toyManual);
@@ -2689,7 +2708,7 @@ app.post('/api/regenerate', async (req, res) => {
     if (recallToolCall) {
       console.log('🧠 重新生成-默主动翻记忆');
       sendSSE({ recallStart: true });
-      const recallResult = await executeRecallMemory(first.toolCalls);
+      const recallResult = await executeRecallMemory(first.toolCalls, sendSSE);
       const phase = await runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResult });
       if (phase.error) {
         if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, nextVersion, targetMsg.session_id);
@@ -5781,17 +5800,28 @@ async function recallSearchMemories(queryText, limit = 8) {
   }
 }
 
-// 执行 recall_memory 工具调用（支持 query / memory_id 二选一）
-async function executeRecallMemory(toolCalls) {
+// 执行 recall_memory 工具调用（支持 query / memory_id 二选一）；sendSSE 非空时记工具事件（进聊天历史）
+async function executeRecallMemory(toolCalls, sendSSE = null) {
   const tc = (toolCalls || []).find(c => c.function?.name === 'recall_memory');
   if (!tc) return null;
   let args = {};
   try { args = JSON.parse(tc.function?.arguments || '{}'); } catch (e) { args = {}; }
   const query = String(args.query || '').trim();
   const mid = parseInt(args.memory_id, 10);
-  if (mid > 0) return await recallTraceMemory(mid);
-  if (query) return await recallSearchMemories(query);
-  return { text: '', found: false };
+  let result = { text: '', found: false, mode: null, query: '', memory_id: null };
+  if (mid > 0) {
+    result = { ...(await recallTraceMemory(mid)), mode: 'trace', memory_id: mid };
+  } else if (query) {
+    result = { ...(await recallSearchMemories(query)), mode: 'search', query };
+  }
+  // 工具事件：实时显示 + 存进聊天历史，让默（后续轮次）知道自己真的翻过记忆
+  if (sendSSE && result.mode) {
+    const desc = result.mode === 'trace'
+      ? `🧠 你翻了一下记忆（追溯 #${mid}${result.found ? '' : '，未找到'}）`
+      : `🧠 你翻了一下记忆（关键词「${String(query).slice(0, 20)}」${result.found ? '，翻到相关内容' : '，没有翻到'}）`;
+    saveToolEvent(desc, sendSSE).catch(e => console.error('recall 工具事件失败:', e.message));
+  }
+  return result;
 }
 
 // 第二轮：让默基于检索结果自然回答（静默，同一气泡内）
@@ -5799,9 +5829,15 @@ async function runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResul
   const rest = chatMessages.slice(1);
   const history = rest.slice(0, -1);
   const lastUser = rest[rest.length - 1] || { role: 'user', content: '' };
+  // 明确告诉默：上一轮是"你自己"调用了 recall_memory 翻记忆，以下是翻到的内容
+  const callDesc = recallResult.mode === 'trace'
+    ? `你（默）上一轮主动调用了 recall_memory 追溯记忆 #${recallResult.memory_id}`
+    : recallResult.mode === 'search'
+      ? `你（默）上一轮主动调用了 recall_memory，用关键词「${recallResult.query || ''}」翻记忆`
+      : '你上一轮主动调用了 recall_memory 翻记忆';
   const note = recallResult.found && recallResult.text
-    ? `\n\n【你翻到的记忆】\n这是你主动调用 recall_memory 翻到的内容，请自然地把它融进回复（如"我想起来了/对，那天……"），不要机械地复述"我调用了记忆检索"。如果翻到的内容确实回答不上雪的问题，就如实说记忆里没有这段，不要编造。\n\n${recallResult.text}`
-    : '\n\n（你调用 recall_memory 但没有翻到相关内容，请如实告诉雪记忆里没有这段，不要编造或把推测说成事实。）';
+    ? `\n\n【记忆回溯结果】\n${callDesc}，以下是翻到的内容。请自然地把它融进回复——这是你自己翻出来的，不要表现得像第一次看到；可以用"我想起来了/对，那天……"接上。如果翻到的内容确实回答不上雪的问题，就如实说记忆里没有这段，不要编造，也不要把推测说成事实。\n\n${recallResult.text}`
+    : `\n\n（${callDesc}，但没有翻到相关内容。请如实告诉雪记忆里没有这段，不要编造或把推测说成事实。）`;
   const secondMessages = [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -9351,7 +9387,7 @@ app.post('/api/edit-message', async (req, res) => {
     if (recallToolCall) {
       console.log('🧠 编辑-默主动翻记忆');
       sendSSE({ recallStart: true });
-      const recallResult = await executeRecallMemory(first.toolCalls);
+      const recallResult = await executeRecallMemory(first.toolCalls, sendSSE);
       const phase = await runRecallPhase({ chatMessages, systemPrompt, sendSSE, recallResult });
       if (phase.error) {
         if (phase.reply || phase.thinking) await savePartialAssistantGrouped(phase.reply, phase.thinking, groupId, newVersion, originalMsg.session_id);

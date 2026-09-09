@@ -6582,7 +6582,7 @@
           ${section('⑦ 账本（本月收支/预算/支出大头/今日）', data.ledgerBrief || '（无账本数据）')}
           ${section('⑧ 注入的记忆（记忆海/记忆书/记忆心/计划）', data.memoryContext)}
           ${section('⑨ 动态', data.momentsContext)}
-          ${section('⑩ 聊天记录（按字数上限约5000字）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
+          ${section('⑩ 聊天记录（近 20 轮）', (data.history || []).map(m => `${m.role === 'user' ? '雪' : '默'}：${m.content}`).join('\n\n'))}
           ${section('⑪ 工具指令（搜索/动态/默札/玩具）· 放最后', data.toolsText)}
           ${section('⑫ 组装后的完整系统提示（供参考）', data.systemPrompt)}`;
         box.classList.add('feature-modal');
