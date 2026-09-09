@@ -1372,6 +1372,37 @@
               </div>
             </div>
 
+            <!-- 模型设置 -->
+            <div style="display: flex; flex-direction: column;">
+              <div class="setting-card" onclick="toggleSettingPanel('modelPanel','modelChevron')">
+                <span id="modelIcon"></span>
+                <span class="card-title">模型</span>
+                <span id="modelChevron" class="setting-chevron"></span>
+              </div>
+              <div id="modelPanel" class="setting-panel" style="display: none;">
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">默的对话模型（主对话/思考用）</div>
+                    <input id="mainModelInput" placeholder="如 deepseek-v4-flash"
+                      style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #e9e9e9; border-radius: 10px; font-size: 13px; outline: none;">
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">记忆提取/后台任务模型（记忆书整理、情绪评分等）</div>
+                    <input id="taskModelInput" placeholder="如 deepseek-v4-flash"
+                      style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #e9e9e9; border-radius: 10px; font-size: 13px; outline: none;">
+                  </div>
+                  <div style="font-size: 11px; color: #999;">V4.1 flash 发布后，想先换哪个就改哪个，保存后对后续对话立即生效。</div>
+                  <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button onclick="toggleSettingPanel('modelPanel','modelChevron')"
+                      style="padding: 8px 16px; border: 1px solid #ddd; border-radius: 20px; background: #fff; cursor: pointer;">取消</button>
+                    <button onclick="saveModelConfig()"
+                      style="padding: 8px 20px; border: none; border-radius: 20px; background: #1e90ff; color: #fff; cursor: pointer;">保存</button>
+                  </div>
+                  <p id="modelStatus" style="text-align: center; font-size: 13px; color: #888; padding: 0; margin: 0;"></p>
+                </div>
+              </div>
+            </div>
+
             <!-- 字体 -->
             <div style="display: flex; flex-direction: column;">
               <div class="setting-card" onclick="toggleSettingPanel('fontPanel','fontChevron')">
@@ -1856,6 +1887,7 @@
           chevron.appendChild(createSettingChevron(willOpen));
         }
         if (willOpen && panelId === 'promptPanel') loadPrompt();
+        if (willOpen && panelId === 'modelPanel') loadModelConfig();
         if (willOpen && panelId === 'fontPanel') {
           // 打开字体面板：从已保存的设置重新开始
           pendingFontCn = localStorage.getItem('moFontCn') || 'default';
@@ -1988,6 +2020,40 @@
         }
       }
       window.savePrompt = savePrompt;
+
+      // 模型配置：读取当前值填入设置页输入框
+      async function loadModelConfig() {
+        try {
+          const res = await fetch('/api/model-config');
+          const d = await res.json();
+          const main = document.getElementById('mainModelInput');
+          const task = document.getElementById('taskModelInput');
+          if (main) main.value = d.main_model || 'deepseek-v4-flash';
+          if (task) task.value = d.task_model || 'deepseek-v4-flash';
+        } catch (e) { /* 读取失败保持占位符 */ }
+      }
+      window.loadModelConfig = loadModelConfig;
+
+      async function saveModelConfig() {
+        const main = document.getElementById('mainModelInput').value.trim();
+        const task = document.getElementById('taskModelInput').value.trim();
+        const status = document.getElementById('modelStatus');
+        if (!main || !task) { status.textContent = '❌ 两个模型名都不能为空'; return; }
+        try {
+          const res = await fetch('/api/model-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ main_model: main, task_model: task })
+          });
+          const d = await res.json();
+          if (!res.ok || !d.ok) throw new Error(d.error || '保存失败');
+          status.textContent = '✅ 已保存，后续对话/后台任务立即使用新模型';
+          setTimeout(() => { status.textContent = ''; }, 2500);
+        } catch (e) {
+          status.textContent = '❌ 保存失败：' + (e.message || '请重试');
+        }
+      }
+      window.saveModelConfig = saveModelConfig;
 
       // 在 together 页面渲染天气 + 日历 + 动态/账本入口
       function renderTogetherPage() {

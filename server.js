@@ -735,6 +735,60 @@ async function performWebExtract(url) {
   }
 }
 
+// ================== 模型配置（前端设置页可切换，V4.1 等新模型发布时雪自助更换） ==================
+// main_model=对话/思考模型；task_model=记忆提取/书整理/情绪等后台任务模型
+let modelConfigCache = { main_model: 'deepseek-v4-flash', task_model: 'deepseek-v4-flash' };
+async function refreshModelConfig(force) {
+  if (force || !modelConfigCache._loaded) {
+    try {
+      const { data } = await supabase.from('model_config').select('*').limit(10);
+      if (data && data.length) {
+        for (const r of data) {
+          if (r.key === 'main_model') modelConfigCache.main_model = String(r.value || 'deepseek-v4-flash');
+          else if (r.key === 'task_model') modelConfigCache.task_model = String(r.value || 'deepseek-v4-flash');
+        }
+      }
+    } catch (e) { /* 表未建用默认 */ }
+    modelConfigCache._loaded = true;
+  }
+  return modelConfigCache;
+}
+const getMainModel = () => modelConfigCache.main_model || 'deepseek-v4-flash';
+const getTaskModel = () => modelConfigCache.task_model || 'deepseek-v4-flash';
+
+app.get('/api/model-config', async (req, res) => {
+  try {
+    const cfg = await refreshModelConfig();
+    res.json({ ok: true, main_model: cfg.main_model, task_model: cfg.task_model });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post('/api/model-config', async (req, res) => {
+  try {
+    const main = String(req.body?.main_model || '').trim();
+    const task = String(req.body?.task_model || '').trim();
+    if (!main || !task) return res.status(400).json({ error: 'main_model 与 task_model 都不能为空' });
+    // 宽松校验：只允许常见的模型标识字符
+    if (!/^[A-Za-z0-9_.:-]{1,80}$/.test(main) || !/^[A-Za-z0-9_.:-]{1,80}$/.test(task)) {
+      return res.status(400).json({ error: '模型名格式不对（只允许字母/数字/._:-）' });
+    }
+    const now = new Date().toISOString();
+    const upserts = [
+      { key: 'main_model', value: main, updated_at: now },
+      { key: 'task_model', value: task, updated_at: now }
+    ];
+    const { error } = await supabase.from('model_config').upsert(upserts, { onConflict: 'key' });
+    if (error) return res.status(500).json({ error: error.message });
+    modelConfigCache.main_model = main;
+    modelConfigCache.task_model = task;
+    console.log('🧠 模型配置已更新: 对话=' + main, '| 后台任务=' + task);
+    res.json({ ok: true, main_model: main, task_model: task });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 调用 DeepSeek（流式）。bufferContent=true 时先缓存可见内容，结束时统一返回，
 // 避免把 [SEARCH_QUERY] 这类工具标签直接流给前端；思考内容始终实时转发。
 async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false, tools = null } = {}) {
@@ -745,7 +799,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
       'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
     },
     body: JSON.stringify({
-      model: 'deepseek-v4-flash',
+      model: getMainModel(),
       messages: chatMessages,
       ...(tools ? { tools, tool_choice: 'auto' } : {}),
       reasoning_effort: 'high',
@@ -3053,7 +3107,7 @@ async function rateDialogueEmotion(userText, assistantReply) {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           { role: 'system', content: EMOTION_RATING_SYSTEM },
           { role: 'user', content: `请评估这条对话中默的情绪：\n${dialogue}` }
@@ -3952,7 +4006,7 @@ function buildMenuTools() {
 // 强制模式下若 API 报错（思考模式不支持强制 tool_choice），自动退回 auto+medium。
 async function callMenuChoice(messages, forced = true) {
   const base = {
-    model: 'deepseek-v4-flash',
+    model: getTaskModel(),
     messages,
     tools: buildMenuTools(),
     tool_choice: forced ? { type: 'function', function: { name: 'choose_action' } } : 'auto',
@@ -4228,7 +4282,7 @@ ${plansContext ? `${plansContext}\n\n` : ''}
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'deepseek-v4-flash',
+          model: getTaskModel(),
           messages: [
             { role: 'system', content: systemPrompt },
             {
@@ -6059,7 +6113,7 @@ ${openListText}
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: `请提取这段对话的记忆：\n${dialogue}` }
@@ -6362,7 +6416,7 @@ async function checkPromiseFulfillment(memoryId, content, eventTime, taskStatus)
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], reasoning_effort: 'low', max_tokens: 10, temperature: 0.1, stream: false })
+      body: JSON.stringify({ model: getTaskModel(), messages: [{ role: 'system', content: system }, { role: 'user', content: user }], reasoning_effort: 'low', max_tokens: 10, temperature: 0.1, stream: false })
     });
     if (!resp.ok) return;
     const data = await resp.json();
@@ -6700,7 +6754,7 @@ async function buildTopicClusters() {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: `事件块列表：\n${lines}` }
@@ -7123,7 +7177,7 @@ app.post('/api/aevum/profile/generate', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: `雪的长期记忆：\n${list}` }
@@ -7236,7 +7290,7 @@ app.post('/api/aevum/mo-view/generate', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [{ role: 'system', content: system }, { role: 'user', content: `默的行为记录：\n${list}` }],
         reasoning_effort: 'low',
         max_tokens: 500,
@@ -7522,7 +7576,7 @@ ${AEVUM_ROLE_MAP_TEXT}
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [{ role: 'system', content: system }, { role: 'user', content: `事件单元列表：\n${lines.join('\n')}` }],
         reasoning_effort: 'none',
         max_tokens: 5000,
@@ -7623,7 +7677,7 @@ async function buildBookClustersFallback(units) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
         body: JSON.stringify({
-          model: 'deepseek-v4-flash',
+          model: getTaskModel(),
           messages: [
             { role: 'system', content: '你是 Aevum Memory 的记忆书整理器。把事件单元串成一段完整故事线：时间/经过/结果，不要罗列原文。\n' + AEVUM_ROLE_MAP_TEXT + '\nsummary 用第三人称客观叙述（默/雪/Xylos 写本名），不要把默写成 Xylos。只输出 JSON：{"label":"4-8字标签","summary":"故事线"}' },
             { role: 'user', content: `事件单元：\n${detail}` }
@@ -7791,7 +7845,7 @@ async function appendBookSummary(label, currentSummary, newUnits) {
     const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: '现有 summary：\n' + String(currentSummary || '') + '\n\n新增事件：\n' + lines }], reasoning_effort: 'low', max_tokens: 3000, temperature: 0.4, stream: false })
+      body: JSON.stringify({ model: getTaskModel(), messages: [{ role: 'system', content: system }, { role: 'user', content: '现有 summary：\n' + String(currentSummary || '') + '\n\n新增事件：\n' + lines }], reasoning_effort: 'low', max_tokens: 3000, temperature: 0.4, stream: false })
     });
     if (!resp.ok) {
       console.error('记忆书追加失败:', resp.status, (await resp.text().catch(() => '')).slice(0, 200));
@@ -7823,7 +7877,7 @@ async function confirmBookCandidates(bookId) {
   const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
-    body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], reasoning_effort: 'low', max_tokens: 1500, temperature: 0.3, stream: false })
+    body: JSON.stringify({ model: getTaskModel(), messages: [{ role: 'system', content: system }, { role: 'user', content: user }], reasoning_effort: 'low', max_tokens: 1500, temperature: 0.3, stream: false })
   });
   if (!resp.ok) return { error: 'AI 判断失败，请稍后重试' };
   const data = await resp.json();
@@ -8052,7 +8106,7 @@ app.post('/api/aevum/:id/reanalyze', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [{ role: 'system', content: system }, { role: 'user', content: `对话原文：\n${sourceText.slice(0, 1500)}` }],
         reasoning_effort: 'low',
         max_tokens: 1000,
@@ -8206,7 +8260,7 @@ app.post('/api/aevum/:id/analyze-layers', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: userContent }
@@ -8421,7 +8475,7 @@ app.post('/api/aevum/merge-check', async (req, res) => {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: `记忆列表：\n${list}` }
@@ -8675,7 +8729,7 @@ async function generateMomentReply(moment) {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           {
             role: 'system',
@@ -8759,7 +8813,7 @@ async function generateCommentReply(comment) {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [
           {
             role: 'system',
@@ -9959,7 +10013,7 @@ async function commitGameDayToAevum(entries) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: getTaskModel(),
         messages: [{ role: 'system', content: system }, { role: 'user', content: `农场日志：\n${lines}` }],
         reasoning_effort: 'none',
         max_tokens: 1200,
