@@ -367,6 +367,16 @@ function buildSystemParts(basePrompt, memoryContext = '', momentsContext = '', w
   };
 }
 
+// 通用工具调用规则（注入所有对话；对雪不可见）
+// 解决：默思考里说"先调用工具再回复"，结果工具调用轮没有正文 → 本轮结束，雪收不到消息
+const TOOL_CALL_RULE = `
+
+【工具调用规则（重要）】
+- 记账、发动态、设闹钟、添加/完成待办、写默札、控制玩具这类工具，调用后本轮就结束了，系统不会再让你补一段话。
+- 所以：**如果有想对雪说的话（回应、关心、解释、承诺），必须先写进正文再调用工具，或与工具调用同轮一起输出**；不要"先在脑子里说要说什么、然后只调用工具"——那样工具执行完本轮结束，雪只看到工具事件，收不到你的话。
+- 调用工具的那一轮，正文可以很短（一句"记好啦~"），但不能为空。
+- 例外：web_search（联网搜索）与 stardew_*（农场行动）调用后系统会带你继续下一轮，这类工具调用轮可以没有正文。`;
+
 function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '', longingContext = '') {
   const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText, moodContext, longingContext);
   // 人设锚点：放在所有注入内容最后（权重最高），防止记忆/动态/规则把性格基调带偏
@@ -380,6 +390,7 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
     + p.searchInstruction
     + p.momentsInstruction
     + p.mozhaInstruction
+    + TOOL_CALL_RULE
     + personaAnchor;
 }
 
@@ -2261,7 +2272,7 @@ app.post('/api/context-preview', async (req, res) => {
       moodContext,
       longingContext
     );
-    const toolsText = parts.searchInstruction + parts.momentsInstruction + parts.mozhaInstruction + toyManualContext;
+    const toolsText = parts.searchInstruction + parts.momentsInstruction + parts.mozhaInstruction + toyManualContext + TOOL_CALL_RULE;
     // 射精值系统：状态注入（与主对话一致）；预览额外返回完整快照（调试用，不注入）
     let arousalStatus = '';
     let arousalSnapshot = null;
