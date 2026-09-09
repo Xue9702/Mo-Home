@@ -64,10 +64,16 @@ try {
       parsedKey = JSON.parse(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8'));
     }
     if (parsedKey && parsedKey.project_id) {
-      fbAdmin.initializeApp({ credential: fbAdmin.credential.cert(parsedKey) });
-      firebaseAdmin = fbAdmin;
-      FCM_ENABLED = true;
-      console.log('🔥 Firebase/FCM 已启用（project:', parsedKey.project_id, '）');
+      // firebase-admin v14：cert 挂在主模块顶层（旧版是 fbAdmin.credential.cert，v14 已移除 credential 命名空间）
+      const certFn = fbAdmin.cert || (fbAdmin.credential && fbAdmin.credential.cert);
+      if (typeof certFn !== 'function') {
+        console.warn('⚠️ firebase-admin 未暴露 cert 方法，跳过 FCM（版本兼容问题）');
+      } else {
+        fbAdmin.initializeApp({ credential: certFn(parsedKey) });
+        firebaseAdmin = fbAdmin;
+        FCM_ENABLED = true;
+        console.log('🔥 Firebase/FCM 已启用（project:', parsedKey.project_id, '）');
+      }
     }
   }
 } catch (e) {
@@ -2204,8 +2210,6 @@ app.post('/api/chat', async (req, res) => {
     // 本次对话原文存入 Aevum 原文档（不阻塞回复）
     saveAevumRaw(finalUserContent, fullReply, aevumEpisodeId).catch(e => console.error('Aevum 原文存档失败:', e.message));
 
-    // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
-    console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
     // 【提前】解析并移除 post_moment 工具调用标签（纯字符串分割版）
     const postMomentMarker = '[POST_MOMENT]';
@@ -2765,8 +2769,6 @@ app.post('/api/regenerate', async (req, res) => {
       await flushBufferedContent(first.contentBuffer, sendSSE);
     }
 
-    // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
-    console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
     // 【提前】解析并移除 post_moment 工具调用标签（纯字符串分割版）
     const postMomentMarker = '[POST_MOMENT]';
@@ -3220,7 +3222,8 @@ async function rateDialogueEmotion(userText, assistantReply) {
     });
     if (!resp.ok) return null;
     const data = await resp.json();
-    const raw = data.choices?.[0]?.message?.content || '';
+    const raw = (data.choices?.[0]?.message?.content || '').trim();
+    if (!raw) { console.warn('情绪评分：模型返回空内容，跳过'); return null; }
     const jsonStr = raw.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
     const parsed = JSON.parse(jsonStr);
     if (!parsed || parsed.has_shift === false) return null;
@@ -9454,8 +9457,6 @@ app.post('/api/edit-message', async (req, res) => {
       await flushBufferedContent(first.contentBuffer, sendSSE);
     }
 
-    // 调试：打印 fullReply 的末尾 300 个字符，查看是否有 POST_MOMENT 标签
-    console.log('🔍 [DEBUG] fullReply 末尾 300 字符:', fullReply.slice(-300));
 
     // 【提前】解析并移除 post_moment 工具调用标签（纯字符串分割版）
     const postMomentMarker = '[POST_MOMENT]';
