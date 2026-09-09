@@ -737,15 +737,16 @@ async function performWebExtract(url) {
 
 // ================== 模型配置（前端设置页可切换，V4.1 等新模型发布时雪自助更换） ==================
 // main_model=对话/思考模型；task_model=记忆提取/书整理/情绪等后台任务模型
-let modelConfigCache = { main_model: 'deepseek-v4-flash', task_model: 'deepseek-v4-flash' };
+let modelConfigCache = { main_model: 'deepseek-v4-flash', task_model: 'deepseek-v4-flash', embed_model: 'qwen3.7-text-embedding' };
 async function refreshModelConfig(force) {
   if (force || !modelConfigCache._loaded) {
     try {
-      const { data } = await supabase.from('model_config').select('*').limit(10);
+      const { data } = await supabase.from('model_config').select('*').limit(20);
       if (data && data.length) {
         for (const r of data) {
           if (r.key === 'main_model') modelConfigCache.main_model = String(r.value || 'deepseek-v4-flash');
           else if (r.key === 'task_model') modelConfigCache.task_model = String(r.value || 'deepseek-v4-flash');
+          else if (r.key === 'embed_model') modelConfigCache.embed_model = String(r.value || 'qwen3.7-text-embedding');
         }
       }
     } catch (e) { /* 表未建用默认 */ }
@@ -755,11 +756,12 @@ async function refreshModelConfig(force) {
 }
 const getMainModel = () => modelConfigCache.main_model || 'deepseek-v4-flash';
 const getTaskModel = () => modelConfigCache.task_model || 'deepseek-v4-flash';
+const getEmbedModel = () => modelConfigCache.embed_model || 'qwen3.7-text-embedding';
 
 app.get('/api/model-config', async (req, res) => {
   try {
     const cfg = await refreshModelConfig();
-    res.json({ ok: true, main_model: cfg.main_model, task_model: cfg.task_model });
+    res.json({ ok: true, main_model: cfg.main_model, task_model: cfg.task_model, embed_model: cfg.embed_model });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -768,22 +770,26 @@ app.post('/api/model-config', async (req, res) => {
   try {
     const main = String(req.body?.main_model || '').trim();
     const task = String(req.body?.task_model || '').trim();
-    if (!main || !task) return res.status(400).json({ error: 'main_model 与 task_model 都不能为空' });
+    const embed = String(req.body?.embed_model || '').trim();
+    if (!main || !task || !embed) return res.status(400).json({ error: '三个模型名都不能为空' });
     // 宽松校验：只允许常见的模型标识字符
-    if (!/^[A-Za-z0-9_.:-]{1,80}$/.test(main) || !/^[A-Za-z0-9_.:-]{1,80}$/.test(task)) {
+    const valid = (v) => /^[A-Za-z0-9_.:-]{1,80}$/.test(v);
+    if (!valid(main) || !valid(task) || !valid(embed)) {
       return res.status(400).json({ error: '模型名格式不对（只允许字母/数字/._:-）' });
     }
     const now = new Date().toISOString();
     const upserts = [
       { key: 'main_model', value: main, updated_at: now },
-      { key: 'task_model', value: task, updated_at: now }
+      { key: 'task_model', value: task, updated_at: now },
+      { key: 'embed_model', value: embed, updated_at: now }
     ];
     const { error } = await supabase.from('model_config').upsert(upserts, { onConflict: 'key' });
     if (error) return res.status(500).json({ error: error.message });
     modelConfigCache.main_model = main;
     modelConfigCache.task_model = task;
-    console.log('🧠 模型配置已更新: 对话=' + main, '| 后台任务=' + task);
-    res.json({ ok: true, main_model: main, task_model: task });
+    modelConfigCache.embed_model = embed;
+    console.log('🧠 模型配置已更新: 对话=' + main, '| 后台任务=' + task, '| 嵌入=' + embed);
+    res.json({ ok: true, main_model: main, task_model: task, embed_model: embed });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -5601,7 +5607,7 @@ async function getEmbedding(text) {
         'Authorization': `Bearer ${key}`
       },
       body: JSON.stringify({
-        model: process.env.AEVUM_EMBED_MODEL || 'qwen3.7-text-embedding',
+        model: process.env.AEVUM_EMBED_MODEL || getEmbedModel(),
         input: String(text || '').slice(0, 1000),
         dimensions: 1024,
         encoding_format: 'float'
@@ -10363,5 +10369,7 @@ app.post('/api/test/chat', async (req, res) => {
 loadToolSwitches().catch(() => {});
 app.listen(port, () => {
   console.log(`✅ 服务已启动，访问端口: ${port}`);
+  // 启动即加载模型配置（防止重启后缓存回默认，导致前端切换不生效）
+  refreshModelConfig(true).catch(() => {});
 });
 module.exports = app;

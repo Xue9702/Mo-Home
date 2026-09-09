@@ -1391,6 +1391,12 @@
                     <input id="taskModelInput" placeholder="如 deepseek-v4-flash"
                       style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #e9e9e9; border-radius: 10px; font-size: 13px; outline: none;">
                   </div>
+                  <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">向量嵌入模型（阿里百炼，记忆召回用；额度耗尽时手动切换）</div>
+                    <input id="embedModelInput" placeholder="如 qwen3.7-text-embedding"
+                      style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #e9e9e9; border-radius: 10px; font-size: 13px; outline: none;">
+                    <div style="font-size: 11px; color: #c07a6e; margin-top: 2px;">⚠️ 只能换同为 1024 维的嵌入模型（如 qwen3.7-text-embedding / text-embedding-v3/v4）；维度不同会导致历史记忆召回失效，需重算向量。</div>
+                  </div>
                   <div style="font-size: 11px; color: #999;">V4.1 flash 发布后，想先换哪个就改哪个，保存后对后续对话立即生效。</div>
                   <div style="display: flex; gap: 10px; justify-content: flex-end;">
                     <button onclick="toggleSettingPanel('modelPanel','modelChevron')"
@@ -1840,6 +1846,15 @@
         if (enChevron && !enChevron.hasChildNodes()) {
           enChevron.appendChild(createSettingChevron(false));
         }
+        // 模型设置卡片：图标 + chevron（防初始空白）
+        const modelIconSpan = document.getElementById('modelIcon');
+        if (modelIconSpan && !modelIconSpan.hasChildNodes()) {
+          modelIconSpan.appendChild(createBrainIcon());
+        }
+        const modelChevron = document.getElementById('modelChevron');
+        if (modelChevron && !modelChevron.hasChildNodes()) {
+          modelChevron.appendChild(createSettingChevron(false));
+        }
       }
 
       // 测试窗口图标（文件加号角标）
@@ -2028,8 +2043,10 @@
           const d = await res.json();
           const main = document.getElementById('mainModelInput');
           const task = document.getElementById('taskModelInput');
+          const embed = document.getElementById('embedModelInput');
           if (main) main.value = d.main_model || 'deepseek-v4-flash';
           if (task) task.value = d.task_model || 'deepseek-v4-flash';
+          if (embed) embed.value = d.embed_model || 'qwen3.7-text-embedding';
         } catch (e) { /* 读取失败保持占位符 */ }
       }
       window.loadModelConfig = loadModelConfig;
@@ -2037,13 +2054,14 @@
       async function saveModelConfig() {
         const main = document.getElementById('mainModelInput').value.trim();
         const task = document.getElementById('taskModelInput').value.trim();
+        const embed = document.getElementById('embedModelInput').value.trim();
         const status = document.getElementById('modelStatus');
-        if (!main || !task) { status.textContent = '❌ 两个模型名都不能为空'; return; }
+        if (!main || !task || !embed) { status.textContent = '❌ 三个模型名都不能为空'; return; }
         try {
           const res = await fetch('/api/model-config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ main_model: main, task_model: task })
+            body: JSON.stringify({ main_model: main, task_model: task, embed_model: embed })
           });
           const d = await res.json();
           if (!res.ok || !d.ok) throw new Error(d.error || '保存失败');
@@ -5691,6 +5709,32 @@
         const svg = open ? createChevronDownIcon() : createChevronRightIcon();
         svg.setAttribute('width', '16');
         svg.setAttribute('height', '16');
+        return svg;
+      }
+
+      // 模型设置图标（大脑）
+      function createBrainIcon() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('width', '22'); svg.setAttribute('height', '22');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round');
+        const paths = [
+          'M12 18V5',
+          'M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4',
+          'M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5',
+          'M17.997 5.125a4 4 0 0 1 2.526 5.77',
+          'M18 18a4 4 0 0 0 2-7.464',
+          'M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517',
+          'M6 18a4 4 0 0 1-2-7.464',
+          'M6.003 5.125a4 4 0 0 0-2.526 5.77'
+        ];
+        for (const d of paths) {
+          const p = document.createElementNS(svgNS, 'path');
+          p.setAttribute('d', d);
+          svg.appendChild(p);
+        }
         return svg;
       }
 

@@ -19,5 +19,6 @@ GRANT ALL ON public.model_config TO anon, authenticated;
 INSERT INTO public.model_config (key, value, updated_at)
 VALUES
   ('main_model', 'deepseek-v4-flash', now()),
-  ('task_model', 'deepseek-v4-flash', now())
+  ('task_model', 'deepseek-v4-flash', now()),
+  ('embed_model', 'qwen3.7-text-embedding', now())
 ON CONFLICT (key) DO NOTHING;
