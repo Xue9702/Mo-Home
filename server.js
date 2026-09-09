@@ -817,9 +817,34 @@ app.post('/api/model-config', async (req, res) => {
   }
 });
 
+// 活跃回复流快照：记录"默正在回复的半截内容"，供 Capacitor 切后台回来补看进度。
+// 只在内容逐片到达时节流更新（约 1.2s 一次）；recordStream=true 的调用（主对话/重生成/编辑）
+// 才会写入，避免搜索/默札等旁路流覆盖。单进程内存即可。
+let activeStreamSnapshot = { content: '', updatedAt: 0, thinking: '', active: false };
+let activeStreamTimer = 0;
+
+// 当前活跃回复流的半截内容（前端轮询此接口看到进度）
+app.get('/api/stream-status', (req, res) => {
+  const age = Date.now() - (activeStreamSnapshot.updatedAt || 0);
+  // active 且 30 秒内有更新才算"正在回复"（避免拿到陈旧快照当活跃流）
+  const isLive = activeStreamSnapshot.active && age < 30000;
+  res.json({
+    live: isLive,
+    active: !!activeStreamSnapshot.active,
+    content: isLive ? activeStreamSnapshot.content : '',
+    thinking: isLive ? activeStreamSnapshot.thinking : '',
+    updatedAt: activeStreamSnapshot.updatedAt
+  });
+});
+
 // 调用 DeepSeek（流式）。bufferContent=true 时先缓存可见内容，结束时统一返回，
 // 避免把 [SEARCH_QUERY] 这类工具标签直接流给前端；思考内容始终实时转发。
-async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false, tools = null } = {}) {
+// recordStream=true 时记录"当前活跃回复流快照"（Capacitor 切后台补看半截用）
+async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false, tools = null, recordStream = false } = {}) {
+  if (recordStream) {
+    activeStreamSnapshot = { content: '', updatedAt: Date.now(), thinking: '', active: true };
+    clearTimeout(activeStreamTimer);
+  }
   const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -914,6 +939,17 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
             } else {
               sendSSE({ content: c });
             }
+            // 流式快照节流更新：1.2s 内合并写，最后一次用定时器兜底（仅 recordStream 的对话流）
+            if (recordStream) {
+              const now = Date.now();
+              if (now - activeStreamSnapshot.updatedAt > 1200) {
+                activeStreamSnapshot = { content: fullReply, updatedAt: now, thinking: fullThinking, active: true };
+                clearTimeout(activeStreamTimer);
+                activeStreamTimer = setTimeout(() => {
+                  activeStreamSnapshot = { content: fullReply, updatedAt: Date.now(), thinking: fullThinking, active: true };
+                }, 1200);
+              }
+            }
           }
 
           // 累积模型发起的工具调用（可能分多次 delta 到达）
@@ -937,6 +973,7 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
   } catch (e) {
     // DeepSeek 流式连接中途断开：把已生成的部分带回去，让上层抢救保存，而不是整条丢弃
     console.error('❌ DeepSeek 流式中断:', e.message);
+    if (recordStream) { activeStreamSnapshot.active = false; clearTimeout(activeStreamTimer); }
     return {
       error: 'AI 回复中途被中断，请重试',
       fullReply,
@@ -946,6 +983,11 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
     };
   }
 
+  // 流结束：标记快照 inactive（若本轮记录过），并清掉兜底定时器
+  if (recordStream) {
+    activeStreamSnapshot.active = false;
+    clearTimeout(activeStreamTimer);
+  }
   const toolCalls = toolCallsMap.size ? [...toolCallsMap.values()] : null;
   return { fullReply, fullThinking, contentBuffer, toolCalls };
 }
@@ -2045,7 +2087,8 @@ app.post('/api/chat', async (req, res) => {
 
     const first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
-      tools: buildAllTools()
+      tools: buildAllTools(),
+      recordStream: true
     });
 
     if (first.error) {
@@ -2631,14 +2674,16 @@ app.post('/api/regenerate', async (req, res) => {
     // 6. 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
     let first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
-      tools: buildAllTools()
+      tools: buildAllTools(),
+      recordStream: true
     });
 
     // 中断兜底：完全空中断重试一次；有部分内容则补发并抢救保存（不整条消失）
     if (first.error && !first.fullReply && !first.fullThinking) {
       first = await callDeepSeekStream(chatMessages, sendSSE, {
         bufferContent: true,
-        tools: buildAllTools()
+        tools: buildAllTools(),
+        recordStream: true
       });
     }
 
@@ -9319,14 +9364,16 @@ app.post('/api/edit-message', async (req, res) => {
     // 10. 调用 DeepSeek 流式生成新回复（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
     let first = await callDeepSeekStream(chatMessages, sendSSE, {
       bufferContent: true,
-      tools: buildAllTools()
+      tools: buildAllTools(),
+      recordStream: true
     });
 
     // 中断兜底：完全空中断重试一次；有部分内容则补发并抢救保存（不整条消失）
     if (first.error && !first.fullReply && !first.fullThinking) {
       first = await callDeepSeekStream(chatMessages, sendSSE, {
         bufferContent: true,
-        tools: buildAllTools()
+        tools: buildAllTools(),
+        recordStream: true
       });
     }
 

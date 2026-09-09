@@ -6378,6 +6378,8 @@
       }
 
       function renderFetchedMessage(msg) {
+        // 只补默的回复与工具事件；用户消息发送时已在页面渲染过（当时无 id 所以去重不到），跳过避免重复
+        if (msg.role === 'user') return;
         const shown = new Set();
         document.querySelectorAll('.message[data-message-id]').forEach(m => shown.add(String(m.dataset.messageId)));
         if (shown.has(String(msg.id))) return; // 已显示过，跳过
@@ -6385,8 +6387,7 @@
           addToolEventLine(msg.content.slice(6));
           return;
         }
-        const role = msg.role === 'user' ? 'user' : 'assistant';
-        addMessage(role, msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
+        addMessage('assistant', msg.content, msg.reasoning_content || null, formatTime(msg.created_at), msg.id, false, msg.image_data || null, msg.file_name || null);
         messageList.scrollTop = messageList.scrollHeight;
       }
 
@@ -6404,21 +6405,56 @@
         }
         const afterId = currentShownMsgId();
         if (!afterId) return;
-        // 轮询最多 ~20 秒；每次间隔 2s
-        for (let i = 0; i < 10; i++) {
+        // 半截预览气泡：服务器仍在生成时显示"默正在回复…（部分内容实时同步）"
+        let liveBubble = null;
+        function showLivePreview(text) {
+          if (!liveBubble || !liveBubble.parentNode) {
+            liveBubble = document.createElement('div');
+            liveBubble.className = 'message assistant';
+            liveBubble.id = 'livePreviewMsg';
+            const b = document.createElement('div');
+            b.className = 'bubble';
+            b.style.color = '#8a83a8';
+            b.style.fontStyle = 'italic';
+            liveBubble.appendChild(b);
+            messageList.appendChild(liveBubble);
+          }
+          const b = liveBubble.querySelector('.bubble');
+          if (b) {
+            b.textContent = '默正在回复…\n' + String(text || '').slice(-200);
+            messageList.scrollTop = messageList.scrollHeight;
+          }
+        }
+        function removeLivePreview() {
+          if (liveBubble && liveBubble.parentNode) liveBubble.remove();
+          liveBubble = null;
+        }
+        // 轮询最多 ~30 秒；每次间隔 2s
+        for (let i = 0; i < 15; i++) {
           if (!document.hidden) {
+            // 1) 先看服务器是否仍在生成（活跃流快照）→ 显示半截
+            let stillLive = false;
+            try {
+              const sr = await fetch('/api/stream-status', { cache: 'no-store' });
+              const sd = await sr.json();
+              if (sd && sd.live && sd.content) { showLivePreview(sd.content); stillLive = true; }
+            } catch (e) { /* 快照接口失败忽略 */ }
+            // 2) 拉新消息：完整回复落库后能看到
             const news = await fetchNewMessages(afterId);
             let sawNew = false;
             for (const m of news) { renderFetchedMessage(m); sawNew = true; }
             if (sawNew) {
-              // 拉到了新内容（工具事件或正式回复），若最新是完整 assistant 回复则停止
               const allAsst = messageList.querySelectorAll('.message.assistant');
               const last = allAsst[allAsst.length - 1];
-              if (last && last.dataset.messageId) break;
+              if (last && last.dataset.messageId) { removeLivePreview(); break; } // 完整回复已到
+            }
+            if (!stillLive && !sawNew) {
+              // 服务器没在生成、也没新消息 → 可能回复已完成或从未开始；再等 1 轮确认
             }
           }
           await new Promise(r => setTimeout(r, 2000));
         }
+        removeLivePreview();
       }
       window.resumeAfterBackground = resumeAfterBackground;
 
