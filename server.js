@@ -5954,8 +5954,8 @@ async function recallAevumMemories(text, limit = 5, excludeText = '', historyTex
     } catch (e) {
       // v30 未执行时降级：无记忆书场景
     }
-    // 记忆海 + 记忆书 合计不超过 2500 字
-    if (out.length > 2500) out = out.slice(0, 2500) + '\n…（内容较长，已截断）';
+    // 记忆海 + 记忆书 合计不超过 5000 字（9/12 从 2500 放宽，对齐业界常驻/召回预算）
+    if (out.length > 5000) out = out.slice(0, 5000) + '\n…（内容较长，已截断）';
     return out;
   } catch (e) {
     console.error('Aevum 召回失败:', e.message);
@@ -6971,6 +6971,19 @@ async function getMoViewContext() {
   }
 }
 
+// 常驻系统背景（雪可编辑的"小屋与系统基础事实"）——每轮无条件注入，不参与召回竞争
+async function getSystemContext() {
+  try {
+    const { data } = await supabase.from('aevum_mo_view').select('content, updated_at').eq('id', 2).maybeSingle();
+    const text = String(data?.content || '').trim();
+    if (!text) return '';
+    return `\n\n【小屋与系统背景】（你所在小屋的固定事实，永远以此为准确认；不要记错或混淆）
+${perspectiveConvert(text.slice(0, 1200))}`;
+  } catch (e) {
+    return '';
+  }
+}
+
 // v3.0：计划上下文（进行中的计划固定注入，到期当天标注）
 async function getPlansContext(limit = 5) {
   try {
@@ -7125,6 +7138,9 @@ async function getLedgerBrief() {
 
 async function buildMemoryContext(userText, opts = {}) {
   let ctx = '';
+  // 常驻系统背景最先注入（固定事实不参与召回竞争，永不被挤掉）
+  const sysCtx = await getSystemContext();
+  if (sysCtx) ctx += sysCtx;
   const latestWake = await getLatestWakeContext();
   if (latestWake) ctx += latestWake;
   const recall = await recallAevumMemories(userText, opts.limit || 5, opts.excludeText || '', opts.historyText || '');
@@ -7282,6 +7298,29 @@ app.get('/api/aevum/mo-view', async (req, res) => {
     res.json({ content: data?.content || '', updated_at: data?.updated_at || null });
   } catch (e) {
     res.json({ content: '', updated_at: null });
+  }
+});
+
+// 常驻系统背景（id=2）：读取/保存默的小屋与系统基础事实
+app.get('/api/aevum/system-context', async (req, res) => {
+  try {
+    const { data } = await supabase.from('aevum_mo_view').select('content, updated_at').eq('id', 2).maybeSingle();
+    res.json({ content: data?.content || '', updated_at: data?.updated_at || null });
+  } catch (e) {
+    res.json({ content: '', updated_at: null });
+  }
+});
+app.put('/api/aevum/system-context', async (req, res) => {
+  try {
+    const content = String(req.body?.content || '').trim().slice(0, 2000);
+    const { error } = await supabase.from('aevum_mo_view').upsert(
+      { id: 2, content, updated_at: new Date().toISOString() },
+      { onConflict: 'id' }
+    );
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, content, updated_at: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

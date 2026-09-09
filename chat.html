@@ -2860,7 +2860,7 @@
       function aevumViewText(t) {
         return String(t || '').replace(/\{AGENT\}/g, '默').replace(/\{USER\}/g, '雪');
       }
-      let aevumState = { view: '', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false, seaOffset: 0, seaAllLoaded: false, seaLoadingMore: false, seaAllMemories: [] };
+      let aevumState = { view: '', filters: { type: '', status: '', owner: '', domain: '', q: '' }, editingId: null, editingData: null, showForm: false, mergeGroups: [], topicCache: {}, profileEditing: false, moEditing: false, sysEditing: false, seaOffset: 0, seaAllLoaded: false, seaLoadingMore: false, seaAllMemories: [] };
 
       // ================== 玩具实验室（Web Bluetooth 直连） ==================
       let toyDevice = null;
@@ -3979,7 +3979,7 @@
           const listPromise = useCachedSea
             ? Promise.resolve({ json: () => Promise.resolve({ memories: [] }) })
             : fetch('/api/aevum?' + params.toString());
-          const [listRes, statsRes, bookRes, planRes, todoRes, candRes, profRes, moRes, promRes, mozhaRes, stateRes] = await Promise.all([
+          const [listRes, statsRes, bookRes, planRes, todoRes, candRes, profRes, moRes, promRes, mozhaRes, stateRes, sysCtxRes] = await Promise.all([
             listPromise,
             fetch('/api/aevum/stats'),
             fetch('/api/aevum/books').catch(() => null),
@@ -3990,7 +3990,8 @@
             fetch('/api/aevum/mo-view').catch(() => null),
             fetch('/api/aevum/promises').catch(() => null),
             fetch('/api/aevum/mozha/count').catch(() => null),
-            fetch('/api/xue-state').catch(() => null)
+            fetch('/api/xue-state').catch(() => null),
+            fetch('/api/aevum/system-context').catch(() => null)
           ]);
           if (aevumState.view === 'sea') {
             if (!useCachedSea) {
@@ -4007,6 +4008,7 @@
           const candData = candRes && candRes.ok ? await candRes.json() : { groups: [] };
           const profData = profRes && profRes.ok ? await profRes.json() : { content: '', dimensions: null, updated_at: null };
           const moData = moRes && moRes.ok ? await moRes.json() : { content: '', updated_at: null };
+          const sysCtxData = sysCtxRes && sysCtxRes.ok ? await sysCtxRes.json() : { content: '', updated_at: null };
           const promData = promRes && promRes.ok ? await promRes.json() : { active: [], archived: [] };
           const mozhaCount = mozhaRes && mozhaRes.ok ? ((await mozhaRes.json()).count || 0) : 0;
           const stateData = stateRes && stateRes.ok ? await stateRes.json() : { items: [] };
@@ -4073,7 +4075,7 @@
               </div>` : ''}
             </div>
             ${aevumState.view === 'book' ? renderBookPanel(bookData, planData, todoData, candData) : ''}
-            ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, stateData) : ''}
+            ${aevumState.view === 'heart' ? renderHeartPanel(moData, profData, stateData, sysCtxData) : ''}
             ${inSea && (aevumState.showForm || aevumState.editingId) ? renderAevumForm() : ''}
             ${inSea ? `<div id="aevumSeaListWrap" style="display:flex;flex-direction:column;gap:10px;">
               ${aevumState.seaAllMemories.length ? renderSeaGrouped(aevumState.seaAllMemories)
@@ -4322,12 +4324,30 @@
         }, 150);
       }
 
-      // v3.0 记忆心面板：我眼里的默 / 画像 / 雪的生活状态
-      function renderHeartPanel(moData, profData, stateData) {
+      // v3.0 记忆心面板：系统背景 / 我眼里的默 / 画像 / 雪的生活状态
+      function renderHeartPanel(moData, profData, stateData, sysCtxData) {
         const mo = String(moData.content || '');
         const moEditing = aevumState.moEditing;
         const stateItems = (stateData && stateData.items) || [];
+        const sysCtx = String((sysCtxData && sysCtxData.content) || '');
+        const sysEditing = aevumState.sysEditing;
         return `
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">🏠 小屋与系统背景</span>
+              <span style="font-size:11px;color:#8a83a8;">默所在小屋的固定事实（自建前端/记忆系统/Xylos 等），每轮最先注入，不参与召回</span>
+              <span style="margin-left:auto;display:flex;gap:8px;">
+                ${sysEditing
+                  ? `<button onclick="aevumSysSave()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">保存</button>
+                     <button onclick="aevumSysCancelEdit()" style="border:1px solid #ddd;border-radius:12px;background:#fff;color:#888;padding:8px 14px;font-size:13px;cursor:pointer;">取消</button>`
+                  : `<button onclick="aevumSysEdit()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 14px;font-size:13px;cursor:pointer;">✎ ${sysCtx ? '编辑' : '填写'}</button>`}
+              </span>
+            </div>
+            ${sysEditing
+              ? `<textarea id="aevumSysContent" style="width:100%;min-height:140px;border:1px solid #eee;border-radius:10px;padding:8px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;line-height:1.7;" placeholder="例如：&#10;· 小屋是雪自建的前端（chat.html），运行在 Render 上，不是 harness&#10;· Xylos 是小屋管家，运行在 harness 上，负责帮雪改代码&#10;· 默的记忆来自 Aevum 记忆系统（Supabase 存储）&#10;· 每 10 轮对话会把聊天提炼成事件单元存入记忆海...">${escapeHtml2(sysCtx)}</textarea>`
+              : (sysCtx ? `<div style="font-size:13px;color:#555;line-height:1.8;white-space:pre-wrap;">${escapeHtml2(sysCtx)}</div>` : '<div style="font-size:13px;color:#b0a6c4;">还没有内容，点「✎ 填写」写下默该一直记得的小屋事实（比如：小屋是自己建的前端不是 harness、记忆系统怎么运作）~</div>')}
+            ${(sysCtxData && sysCtxData.updated_at) ? `<div style="font-size:11px;color:#b0a6c4;">上次更新：${new Date(sysCtxData.updated_at).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>` : ''}
+          </div>
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <span style="font-size:14px;font-weight:600;color:#333;">我眼里的默</span>
@@ -4624,6 +4644,7 @@
         aevumState.seaOffset = 0;
         aevumState.seaAllMemories = [];
         aevumState.seaAllLoaded = false;
+        aevumState.sysEditing = false;
         renderAevum();
       }
       window.aevumSetView = aevumSetView;
@@ -4954,6 +4975,28 @@
         } catch (e) { alert('保存失败，请稍后重试'); }
       }
       window.aevumMoSave = aevumMoSave;
+
+      // 小屋与系统背景：编辑/保存
+      function aevumSysEdit() { aevumState.sysEditing = true; renderAevum(); }
+      window.aevumSysEdit = aevumSysEdit;
+      function aevumSysCancelEdit() { aevumState.sysEditing = false; renderAevum(); }
+      window.aevumSysCancelEdit = aevumSysCancelEdit;
+      async function aevumSysSave() {
+        const content = document.getElementById('aevumSysContent').value.trim();
+        if (!content) { alert('内容不能为空'); return; }
+        try {
+          const res = await fetch('/api/aevum/system-context', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(data.error || '保存失败'); return; }
+          aevumState.sysEditing = false;
+          renderAevum();
+        } catch (e) { alert('保存失败，请稍后重试'); }
+      }
+      window.aevumSysSave = aevumSysSave;
 
       // 承诺区：新增 / 移除
       async function aevumAddPromise() {
