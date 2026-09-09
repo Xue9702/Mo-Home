@@ -6397,13 +6397,13 @@
         // 若流式气泡还在且 SSE 可能恢复：先等 2s 看它是否自己继续；仍无进展才补拉
         await new Promise(r => setTimeout(r, 2000));
         if (document.hidden) return;
-        const stillStreaming = !!document.getElementById('streaming-message');
-        if (stillStreaming) {
-          // 流式气泡还在但 2s 没动静 → 认为断了：清掉残留气泡，走补拉
-          const stale = document.getElementById('streaming-message');
-          if (stale && stale.parentNode) stale.remove();
-        }
-        const afterId = currentShownMsgId();
+        // 清理所有"无 message-id 的 assistant 残留气泡"（done 未到的中断遗留）：
+        // 它们会在补拉时与正式消息重复，先清掉
+        document.querySelectorAll('.message.assistant:not([data-message-id])').forEach(m => {
+          if (m.parentNode && m.id !== 'livePreviewMsg') m.remove();
+        });
+        // 补拉基准 = 发送那一刻的最后消息 id（固定），而不是实时取——实时取可能因中途渲染偏大/偏小导致漏拉或重复
+        const afterId = lastShownMsgId || currentShownMsgId();
         if (!afterId) return;
         // 半截预览气泡：服务器仍在生成时显示"默正在回复…（部分内容实时同步）"
         let liveBubble = null;
@@ -6844,6 +6844,7 @@
         imagePreviewName.textContent = '';
 
         isLoading = true; streamActive = true; sendBtn.disabled = true;
+        lastShownMsgId = currentShownMsgId(); // 记录发送前最后消息 id，作补拉基准（防补拉重复渲染旧内容）
 
         // 创建流式消息容器
         const msgDiv = document.createElement('div');
