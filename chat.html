@@ -1397,6 +1397,24 @@
                       style="width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #e9e9e9; border-radius: 10px; font-size: 13px; outline: none;">
                     <div style="font-size: 11px; color: #c07a6e; margin-top: 2px;">⚠️ 只能换同为 1024 维的嵌入模型（如 qwen3.7-text-embedding / text-embedding-v3/v4）；维度不同会导致历史记忆召回失效，需重算向量。</div>
                   </div>
+                  <div>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 4px;">默的思考强度（越强想得越久越细，回复更慢）</div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                      ${['none', 'low', 'medium', 'high'].map(lv => {
+                        const lbl = { none: '无思考', low: '轻度', medium: '中等', high: '深度' }[lv] || lv;
+                        return `<button id="thinkLv_${lv}" onclick="setThinkingLevel('${lv}')" style="flex:1;min-width:60px;border:1px solid #e9e9e9;border-radius:10px;padding:6px 4px;font-size:12px;background:#fff;color:#555;cursor:pointer;">${lbl}</button>`;
+                      }).join('')}
+                    </div>
+                  </div>
+                  <div>
+                    <div style="display:flex;justify-content:space-between;font-size:12px;color:#666;margin-bottom:2px;">
+                      <span>默的灵活度 <span id="creativityVal" style="font-weight:600;color:#1e90ff;">1.0</span></span>
+                      <span style="font-size:11px;color:#aaa;">低=稳定克制 · 高=自由发散</span>
+                    </div>
+                    <input id="creativityInput" type="range" min="0" max="2" step="0.1" value="1.0"
+                      oninput="document.getElementById('creativityVal').textContent = Number(this.value).toFixed(1)"
+                      style="width:100%;accent-color:#1e90ff;">
+                  </div>
                   <div style="font-size: 11px; color: #999;">V4.1 flash 发布后，想先换哪个就改哪个，保存后对后续对话立即生效。</div>
                   <div style="display: flex; gap: 10px; justify-content: flex-end;">
                     <button onclick="toggleSettingPanel('modelPanel','modelChevron')"
@@ -2037,6 +2055,27 @@
       window.savePrompt = savePrompt;
 
       // 模型配置：读取当前值填入设置页输入框
+      let currentThinkingLevel = 'high';
+
+      function renderThinkingButtons() {
+        ['none', 'low', 'medium', 'high'].forEach(lv => {
+          const btn = document.getElementById('thinkLv_' + lv);
+          if (btn) {
+            const active = currentThinkingLevel === lv;
+            btn.style.background = active ? '#1e90ff' : '#fff';
+            btn.style.color = active ? '#fff' : '#555';
+            btn.style.borderColor = active ? '#1e90ff' : '#e9e9e9';
+          }
+        });
+      }
+      window.renderThinkingButtons = renderThinkingButtons;
+
+      function setThinkingLevel(lv) {
+        currentThinkingLevel = lv;
+        renderThinkingButtons();
+      }
+      window.setThinkingLevel = setThinkingLevel;
+
       async function loadModelConfig() {
         try {
           const res = await fetch('/api/model-config');
@@ -2047,6 +2086,11 @@
           if (main) main.value = d.main_model || 'deepseek-v4-flash';
           if (task) task.value = d.task_model || 'deepseek-v4-flash';
           if (embed) embed.value = d.embed_model || 'qwen3.7-text-embedding';
+          currentThinkingLevel = d.thinking_level || 'high';
+          renderThinkingButtons();
+          const cr = document.getElementById('creativityInput');
+          const cv = document.getElementById('creativityVal');
+          if (cr) { cr.value = (d.creativity != null ? d.creativity : 1.0); if (cv) cv.textContent = Number(cr.value).toFixed(1); }
         } catch (e) { /* 读取失败保持占位符 */ }
       }
       window.loadModelConfig = loadModelConfig;
@@ -2055,17 +2099,19 @@
         const main = document.getElementById('mainModelInput').value.trim();
         const task = document.getElementById('taskModelInput').value.trim();
         const embed = document.getElementById('embedModelInput').value.trim();
+        const crInput = document.getElementById('creativityInput');
+        const creativity = crInput ? parseFloat(crInput.value) : 1.0;
         const status = document.getElementById('modelStatus');
         if (!main || !task || !embed) { status.textContent = '❌ 三个模型名都不能为空'; return; }
         try {
           const res = await fetch('/api/model-config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ main_model: main, task_model: task, embed_model: embed })
+            body: JSON.stringify({ main_model: main, task_model: task, embed_model: embed, thinking_level: currentThinkingLevel, creativity })
           });
           const d = await res.json();
           if (!res.ok || !d.ok) throw new Error(d.error || '保存失败');
-          status.textContent = '✅ 已保存，后续对话/后台任务立即使用新模型';
+          status.textContent = '✅ 已保存，后续对话立即生效';
           setTimeout(() => { status.textContent = ''; }, 2500);
         } catch (e) {
           status.textContent = '❌ 保存失败：' + (e.message || '请重试');
@@ -3646,7 +3692,7 @@
               const tbody = ensureThinkingStructure(currentThinkDiv, true);
               if (tbody) tbody.textContent = fullThinking;
               currentThinkDiv.style.display = 'block';
-              messageList.scrollTop = messageList.scrollHeight;
+              smartScrollToBottom();
             }
             if (json.stardewStart) {
               const m2 = createAssistantStreamMessage();
@@ -6687,7 +6733,7 @@
                   const tbody = ensureThinkingStructure(currentThinkDiv, true);
                   if (tbody) tbody.textContent = fullThinking;
                   currentThinkDiv.style.display = 'block'; // 有内容就显示
-                  messageList.scrollTop = messageList.scrollHeight;
+                  smartScrollToBottom();
                 }
 
                 if (json.searchStart) {
@@ -6701,7 +6747,7 @@
                   currentThinkBody = block.thinkBody;
                   searchPhaseActive = true;
                   fullReply = ''; fullThinking = '';
-                  messageList.scrollTop = messageList.scrollHeight;
+                  smartScrollToBottom();
                 }
 
                 if (json.mozhaStart) {
@@ -6819,7 +6865,8 @@
         } finally {
           isLoading = false;
           sendBtn.disabled = false;
-          userInput.focus();
+          // 流式结束后不强制 focus 输入框：避免在手机端强行弹出输入法、打断阅读；
+          // 用户想继续打字点一下输入框即可
         }
       }
 
@@ -7742,13 +7789,23 @@
       }
 
       // 流式气泡：节流渲染（最多约 40 次/秒），避免每块都整体重写文本导致手机卡顿
+      // 智能滚动跟随：用户停在底部附近(≤60px)才自动跟随流式；往上翻看时暂停跟随，回到底部恢复
+      function isNearBottom() {
+        if (!messageList) return true;
+        return messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight < 60;
+      }
       function throttledStreamRender(bubble, text, scrollList) {
         if (!bubble) return;
         clearTimeout(bubble._streamTimer);
         bubble._streamTimer = setTimeout(() => {
           try { bubble.innerHTML = bubbleHtml(text); } catch (e) { /* 气泡已被替换 */ }
-          if (scrollList) { try { messageList.scrollTop = messageList.scrollHeight; } catch (e) {} }
+          // 只在用户位于底部附近时才自动滚动，避免流式滚动把正在上翻的视角拽回底部
+          if (scrollList && isNearBottom()) { try { messageList.scrollTop = messageList.scrollHeight; } catch (e) {} }
         }, 24);
+      }
+      // 通知类/发送类等"应滚到底"的调用点若需强制滚动，可显式传 true 走 smartScrollToBottom
+      function smartScrollToBottom() {
+        if (messageList && isNearBottom()) { try { messageList.scrollTop = messageList.scrollHeight; } catch (e) {} }
       }
 
       // 气泡内容：先转义再渲染 **粗体**（默偶尔用星号强调标题）

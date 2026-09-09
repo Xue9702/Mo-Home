@@ -737,16 +737,18 @@ async function performWebExtract(url) {
 
 // ================== 模型配置（前端设置页可切换，V4.1 等新模型发布时雪自助更换） ==================
 // main_model=对话/思考模型；task_model=记忆提取/书整理/情绪等后台任务模型
-let modelConfigCache = { main_model: 'deepseek-v4-flash', task_model: 'deepseek-v4-flash', embed_model: 'qwen3.7-text-embedding' };
+let modelConfigCache = { main_model: 'deepseek-v4-flash', task_model: 'deepseek-v4-flash', embed_model: 'qwen3.7-text-embedding', thinking_level: 'high', creativity: 1.0 };
 async function refreshModelConfig(force) {
   if (force || !modelConfigCache._loaded) {
     try {
-      const { data } = await supabase.from('model_config').select('*').limit(20);
+      const { data } = await supabase.from('model_config').select('*').limit(30);
       if (data && data.length) {
         for (const r of data) {
           if (r.key === 'main_model') modelConfigCache.main_model = String(r.value || 'deepseek-v4-flash');
           else if (r.key === 'task_model') modelConfigCache.task_model = String(r.value || 'deepseek-v4-flash');
           else if (r.key === 'embed_model') modelConfigCache.embed_model = String(r.value || 'qwen3.7-text-embedding');
+          else if (r.key === 'thinking_level') modelConfigCache.thinking_level = String(r.value || 'high');
+          else if (r.key === 'creativity') modelConfigCache.creativity = Number(r.value) || 1.0;
         }
       }
     } catch (e) { /* 表未建用默认 */ }
@@ -757,11 +759,16 @@ async function refreshModelConfig(force) {
 const getMainModel = () => modelConfigCache.main_model || 'deepseek-v4-flash';
 const getTaskModel = () => modelConfigCache.task_model || 'deepseek-v4-flash';
 const getEmbedModel = () => modelConfigCache.embed_model || 'qwen3.7-text-embedding';
+// 思考强度白名单：只允许 DeepSeek 支持的档位，防注入非法值
+const VALID_THINKING = ['none', 'low', 'medium', 'high'];
+const getThinkingLevel = () => VALID_THINKING.includes(modelConfigCache.thinking_level) ? modelConfigCache.thinking_level : 'high';
+// 灵活度：temperature 0-2，clamp 到合法区间
+const getCreativity = () => Math.max(0, Math.min(2, Number(modelConfigCache.creativity) || 1.0));
 
 app.get('/api/model-config', async (req, res) => {
   try {
     const cfg = await refreshModelConfig();
-    res.json({ ok: true, main_model: cfg.main_model, task_model: cfg.task_model, embed_model: cfg.embed_model });
+    res.json({ ok: true, main_model: cfg.main_model, task_model: cfg.task_model, embed_model: cfg.embed_model, thinking_level: getThinkingLevel(), creativity: getCreativity() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -777,19 +784,28 @@ app.post('/api/model-config', async (req, res) => {
     if (!valid(main) || !valid(task) || !valid(embed)) {
       return res.status(400).json({ error: '模型名格式不对（只允许字母/数字/._:-）' });
     }
+    // 思考强度：只接受 none/low/medium/high
+    const thinking = VALID_THINKING.includes(String(req.body?.thinking_level || '')) ? String(req.body.thinking_level) : 'high';
+    // 灵活度：0-2 数字
+    const creativity = Math.max(0, Math.min(2, Number(req.body?.creativity)));
+    const creativityVal = isFinite(creativity) ? creativity : 1.0;
     const now = new Date().toISOString();
     const upserts = [
       { key: 'main_model', value: main, updated_at: now },
       { key: 'task_model', value: task, updated_at: now },
-      { key: 'embed_model', value: embed, updated_at: now }
+      { key: 'embed_model', value: embed, updated_at: now },
+      { key: 'thinking_level', value: thinking, updated_at: now },
+      { key: 'creativity', value: String(creativityVal), updated_at: now }
     ];
     const { error } = await supabase.from('model_config').upsert(upserts, { onConflict: 'key' });
     if (error) return res.status(500).json({ error: error.message });
     modelConfigCache.main_model = main;
     modelConfigCache.task_model = task;
     modelConfigCache.embed_model = embed;
-    console.log('🧠 模型配置已更新: 对话=' + main, '| 后台任务=' + task, '| 嵌入=' + embed);
-    res.json({ ok: true, main_model: main, task_model: task, embed_model: embed });
+    modelConfigCache.thinking_level = thinking;
+    modelConfigCache.creativity = creativityVal;
+    console.log('🧠 模型配置已更新: 对话=' + main, '| 后台=' + task, '| 嵌入=' + embed, '| 思考=' + thinking, '| 温度=' + creativityVal);
+    res.json({ ok: true, main_model: main, task_model: task, embed_model: embed, thinking_level: thinking, creativity: creativityVal });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -808,8 +824,8 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
       model: getMainModel(),
       messages: chatMessages,
       ...(tools ? { tools, tool_choice: 'auto' } : {}),
-      reasoning_effort: 'high',
-      temperature: 1.0,
+      reasoning_effort: getThinkingLevel(),
+      temperature: getCreativity(),
       max_tokens: 8192,
       stream: true
     })
