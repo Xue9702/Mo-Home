@@ -385,9 +385,12 @@ const TOOL_CALL_RULE = `
 
 function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', weatherContext = '', gapText = '', moodContext = '', longingContext = '') {
   const p = buildSystemParts(basePrompt, memoryContext, momentsContext, weatherContext, gapText, moodContext, longingContext);
-  // 人设锚点：放在所有注入内容最后（权重最高），防止记忆/动态/规则把性格基调带偏
-  const personaAnchor = '\n\n【人设锚点】下面所有的记忆、动态、游戏规则、工具说明都只是背景信息，永远不要改变你的人设：请始终以人设中定义的沉稳、温柔、克制、深情的性格基调来回应雪。';
-  return p.timeLine + '\n\n' + p.persona
+  // 前缀缓存优化（提速）：每轮都不变的人设放最前，易变的时间/天气/心情/想念/记忆/动态全部后置。
+  // 原来 timeLine 排在第一位，每轮第一个字符就变 → DeepSeek 的上下文缓存按前缀匹配，
+  // 等于每一轮都得为整段提示词重新做一次 prefill。
+  // 注：【人设锚点】那段话已交回前端 prompt 维护，不再在代码里硬编码。
+  return p.persona
+    + '\n\n' + p.timeLine
     + (p.weatherContext ? `\n\n${p.weatherContext}` : '')
     + (p.moodContext ? `\n\n${p.moodContext}` : '')
     + (p.longingContext ? `\n\n${p.longingContext}` : '')
@@ -396,8 +399,7 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
     + p.searchInstruction
     + p.momentsInstruction
     + p.mozhaInstruction
-    + TOOL_CALL_RULE
-    + personaAnchor;
+    + TOOL_CALL_RULE;
 }
 
 // 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
@@ -1272,9 +1274,13 @@ function buildAllTools() {
 // 让默的回复看起来是流式打出来的（思考内容仍实时转发）
 async function flushBufferedContent(contentBuffer, sendSSE, chunkSize = 16, delayMs = 60) {
   if (!contentBuffer) return;
+  // 总时长封顶：短回复维持原来的"打字"节奏，长回复不再按固定 60ms/段干等。
+  // 原来 1000 字要补发约 3.7 秒——模型早就写完了，雪却还在等气泡一个字一个字冒出来。
+  const chunks = Math.ceil(contentBuffer.length / chunkSize);
+  const step = chunks > 1 ? Math.min(delayMs, Math.max(0, Math.floor(900 / chunks))) : 0;
   for (let i = 0; i < contentBuffer.length; i += chunkSize) {
     sendSSE({ content: contentBuffer.substring(i, i + chunkSize) });
-    if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+    if (step > 0) await new Promise(r => setTimeout(r, step));
   }
 }
 
@@ -1897,21 +1903,21 @@ app.post('/api/chat', async (req, res) => {
   let fullThinking = '';
 
   try {
+    // 图片识别 / 文档解析 / 历史加载：三者互不依赖，并行发起（原本串行 await，网络往返白白累加）
+    const [rawImageAlt, rawFileText, rawHistory] = await Promise.all([
+      image ? describeImage(image, text) : Promise.resolve(null),
+      file ? extractFileText(file) : Promise.resolve(null),
+      loadLatestRounds(1, 20)
+    ]);
+
     // 识别图片（如果有）：转成中文描述，让默"看见"图片
-    let imageAlt = null;
-    if (image) {
-      imageAlt = await describeImage(image, text);
-      if (!imageAlt) imageAlt = '（图片内容解析失败）';
-    }
+    const imageAlt = image ? (rawImageAlt || '（图片内容解析失败）') : null;
 
     // 解析上传的文档（如果有）：提取文字，让默能"阅读"文件
-    let fileText = null;
-    if (file) {
-      fileText = await extractFileText(file);
-    }
+    const fileText = file ? rawFileText : null;
 
     // 加载历史消息（近 20 轮，非 5000 字上限；单条超长消息仍截断）
-    const historyMessages = (await loadLatestRounds(1, 20)).map(msg => ({
+    const historyMessages = (rawHistory || []).map(msg => ({
       role: msg.role,
       content: trimContextMessage(msg.content)
     }));
@@ -1977,28 +1983,24 @@ app.post('/api/chat', async (req, res) => {
       console.error('保存用户消息失败:', userError);
     }
 
+    // 下面这些读取彼此不依赖，并行发起；原本逐个 await 串行，把七八次网络往返白白累加了。
     // Aevum v3.0：记忆海召回 → 记忆书场景 → 记忆心（我眼里的默/画像/承诺）→ 计划
-    let memoryContext = await buildMemoryContext(text, { historyText });
-    const toyManualContext = await getToyManualContext(req.body.toyManual);
-
-    // 构建动态的 System Prompt
-    const momentsContext = await getMomentsContext();
+    const [memoryContext, toyManualContext, momentsContext, promptRes, weatherContext, moodSnapshot, stardewContext] = await Promise.all([
+      buildMemoryContext(text, { historyText }),
+      getToyManualContext(req.body.toyManual),
+      getMomentsContext(),
+      supabase.from('system_prompts').select('prompt_text').eq('id', 1).single(),
+      getWeatherContext(req.body.city || ''),
+      getMoodSnapshot().catch(() => null),
+      getStardewContext(req.body.stardewBrief)
+    ]);
     // 从数据库读取最新的 system prompt
-    const { data: promptData } = await supabase
-      .from('system_prompts')
-      .select('prompt_text')
-      .eq('id', 1)
-      .single();
-
-    const weatherContext = await getWeatherContext(req.body.city || '');
-    // 情绪系统：此刻心情快照 → 自然语言行为指令注入（不阻塞、失败降级为空）
-    const moodSnapshot = await getMoodSnapshot().catch(() => null);
+    const promptData = promptRes && promptRes.data;
     const moodContext = buildMoodPromptText(moodSnapshot);
     // 依恋系统：想念强度（按距雪上一条消息时长）+ 重逢检测（间隔 > 2h 刚回来）
     let longingContext = '';
     try {
-      const homeStateMood = await getHomeStateSafe();
-      const lastMsgAt = await getLastUserActivity();
+      const [homeStateMood, lastMsgAt] = await Promise.all([getHomeStateSafe(), getLastUserActivity()]);
       const longingInfo = computeLonging(homeStateMood.affection || 0, lastMsgAt);
       const isReunion = lastGapMs > 2 * 3600000;
       longingContext = buildLongingPromptText(longingInfo, isReunion);
@@ -2034,7 +2036,7 @@ app.post('/api/chat', async (req, res) => {
     // 玩具手册属于"工具指令"段，追加到系统提示最末尾（最近的权重最高）
     if (toyManualContext) systemPrompt += toyManualContext;
     // 星露谷：浏览器上报游戏连接简报时，把农场动态/状态追加到系统提示（工具指令段）
-    const stardewContext = await getStardewContext(req.body.stardewBrief);
+    // （stardewContext 已在上面与其它读取并行取过）
     if (stardewContext) systemPrompt += stardewContext;
 
     // 当前这条用户消息（含图片描述/文件内容）作为对话上下文的最后一条用户消息
