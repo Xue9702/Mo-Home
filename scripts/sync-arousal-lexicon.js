@@ -5,6 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
+// 项目根目录（不写死盘符，换机器也能跑）
+const ROOT = path.join(__dirname, '..');
+
 const envFile = path.join(__dirname, '..', '.env');
 for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
   const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
@@ -12,7 +15,7 @@ for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
 }
 const supabase = createClient(process.env.SUPABASE_URL_V2, process.env.SUPABASE_ANON_KEY_V2);
 
-const lexiconPath = process.argv[2] || 'E:/Mo-Home/arousal-lexicon.json';
+const lexiconPath = process.argv[2] || path.join(ROOT, 'arousal-lexicon.json');
 (async () => {
   const data = JSON.parse(fs.readFileSync(lexiconPath, 'utf8'));
   const counts = {

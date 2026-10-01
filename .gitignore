@@ -2,3 +2,10 @@ node_modules/
 .env
 docs/.pdf-vision-pages/
 arousal-lexicon.json
+
+# 本地素材与调研资料（体积大，按设计只留在本机）
+ChineseEmoBank/
+NRC-VAD-Lexicon-v2.1/
+_research/
+research-memory/
+__MACOSX/

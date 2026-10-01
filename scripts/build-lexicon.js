@@ -5,7 +5,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const outPath = 'E:/Mo-Home/emotion-lexicon-academic.json';
+// 项目根目录（不写死盘符，换机器也能跑）
+const ROOT = path.join(__dirname, '..');
+
+const outPath = path.join(ROOT, 'emotion-lexicon-academic.json');
 
 function normalizeCvaw(value) {
   const n = Number(value);
@@ -32,7 +35,7 @@ function normalizeCvawArousal(value) {
 
   // 1) CVAW：仅当 academic.json 不存在或为空时从 CSV 生成（避免覆盖繁转简）
   if (Object.keys(lexicon).length === 0) {
-    const cvawText = fs.readFileSync('E:/Mo-Home/ChineseEmoBank/CVAW_SD/CVAW_all_SD.csv', 'utf8');
+    const cvawText = fs.readFileSync(path.join(ROOT, 'ChineseEmoBank', 'CVAW_SD', 'CVAW_all_SD.csv'), 'utf8');
     const cvawLines = cvawText.split(/\r?\n/).filter(Boolean);
     for (let i = 1; i < cvawLines.length; i++) {
       const cols = cvawLines[i].split('\t');
@@ -50,7 +53,7 @@ function normalizeCvawArousal(value) {
 
   // 2) NRC 翻译结果（如已生成 emotion-lexicon-nrc.json）
   // 格式：{"english_term":{v,a}, "__zh__english_term":"中文翻译"} → 中文翻译作 key，取英文词坐标
-  const nrcPath = 'E:/Mo-Home/emotion-lexicon-nrc.json';
+  const nrcPath = path.join(ROOT, 'emotion-lexicon-nrc.json');
   if (fs.existsSync(nrcPath)) {
     try {
       const nrc = JSON.parse(fs.readFileSync(nrcPath, 'utf8'));

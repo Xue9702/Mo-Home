@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { PDFParse } = require('pdf-parse');
 
+// 项目根目录（不写死盘符，换机器也能跑）
+const ROOT = path.join(__dirname, '..');
+
 // 加载 .env
 const envFile = path.join(__dirname, '..', '.env');
 if (fs.existsSync(envFile)) {
@@ -16,7 +19,7 @@ const KEY = process.env.DASHSCOPE_API_KEY;
 if (!KEY) { console.error('缺少 DASHSCOPE_API_KEY'); process.exit(1); }
 
 const pdfPath = process.argv[2];
-const outPath = process.argv[3] || 'E:/Mo-Home/docs/pdf-vision-output.txt';
+const outPath = process.argv[3] || path.join(ROOT, 'docs', 'pdf-vision-output.txt');
 const pageDir = path.join(path.dirname(outPath), '.pdf-vision-pages');
 fs.mkdirSync(pageDir, { recursive: true });
 

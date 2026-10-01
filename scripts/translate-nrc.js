@@ -5,6 +5,9 @@
 const fs = require('fs');
 const path = require('path');
 
+// 项目根目录（不写死盘符，换机器也能跑）
+const ROOT = path.join(__dirname, '..');
+
 // 加载 .env
 const envFile = path.join(__dirname, '..', '.env');
 if (fs.existsSync(envFile)) {
@@ -16,12 +19,13 @@ if (fs.existsSync(envFile)) {
 const KEY = process.env.DASHSCOPE_API_KEY;
 if (!KEY) { console.error('缺少 DASHSCOPE_API_KEY'); process.exit(1); }
 
-const SRC = 'E:/Mo-Home/NRC-VAD-Lexicon-v2.1/Unigrams/unigrams-NRC-VAD-Lexicon-v2.1.txt';
-const OUT = 'E:/Mo-Home/emotion-lexicon-nrc.json';
+const SRC = path.join(ROOT, 'NRC-VAD-Lexicon-v2.1', 'Unigrams', 'unigrams-NRC-VAD-Lexicon-v2.1.txt');
+const OUT = path.join(ROOT, 'emotion-lexicon-nrc.json');
 const BATCH = 300;
 
 async function translateBatch(words) {
-  const system = '你是词典翻译器。把英文单词逐一翻译为简体中文，按"该词最常见/最自然的情绪语境义"翻译（多义词取最常用义，如 blue 翻译为"忧郁"而非"蓝色"）。只输出 JSON 对象：{"english_word":"中文翻译"}；若某词没有合适的中文翻译（专有名词/无意义词），对应值输出 null。不要解释。';
+  // 用"逐行 词=中文"格式，避免 JSON 键名被模型当字面量
+  const system = '你是词典翻译器。把每个英文单词翻译为简体中文，按"该词最常见/最自然的情绪语境义"翻译（多义词取最常用义，如 blue 翻译为"忧郁"而非"蓝色"）。逐行输出，每行一条，格式：english_word=中文翻译；若某词没有合适的中文翻译（专有名词/无意义词），该行输出 english_word=NULL。不要输出任何其他文字。';
   const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${KEY}` },
@@ -36,10 +40,15 @@ async function translateBatch(words) {
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
   const data = await resp.json();
   const raw = String(data.choices?.[0]?.message?.content || '');
-  const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
-  if (start === -1 || end <= start) return {};
-  try { return JSON.parse(raw.substring(start, end + 1)); }
-  catch (e) { console.error('解析失败:', raw.slice(0, 100)); return {}; }
+  const out = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+    const term = line.slice(0, idx).trim();
+    const zh = line.slice(idx + 1).trim();
+    if (words.includes(term)) out[term] = zh.toUpperCase() === 'NULL' ? null : zh;
+  }
+  return out;
 }
 
 (async () => {

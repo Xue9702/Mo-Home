@@ -4,6 +4,9 @@
 const fs = require('fs');
 const path = require('path');
 
+// 项目根目录（不写死盘符，换机器也能跑）
+const ROOT = path.join(__dirname, '..');
+
 const envFile = path.join(__dirname, '..', '.env');
 if (fs.existsSync(envFile)) {
   for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
@@ -14,7 +17,7 @@ if (fs.existsSync(envFile)) {
 const KEY = process.env.DASHSCOPE_API_KEY;
 if (!KEY) { console.error('缺少 DASHSCOPE_API_KEY'); process.exit(1); }
 
-const ACADEMIC = 'E:/Mo-Home/emotion-lexicon-academic.json';
+const ACADEMIC = path.join(ROOT, 'emotion-lexicon-academic.json');
 const BATCH = 200;
 
 async function convertBatch(words) {

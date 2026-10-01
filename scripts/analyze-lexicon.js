@@ -1,9 +1,13 @@
 // 分析两个词典文件：编码、词数、值域
 const fs = require('fs');
+const path = require('path');
+
+// 项目根目录（不写死盘符，换机器也能跑）
+const ROOT = path.join(__dirname, '..');
 
 (async () => {
   // CVAW（可能是 utf8 或 gb18030）
-  const cvawPath = 'E:/Mo-Home/ChineseEmoBank/CVAW_SD/CVAW_all_SD.csv';
+  const cvawPath = path.join(ROOT, 'ChineseEmoBank', 'CVAW_SD', 'CVAW_all_SD.csv');
   let cvawText = fs.readFileSync(cvawPath, 'utf8');
   // 检测编码：如果含替换字符 U+FFFD 或乱码，尝试 gb18030
   const hasReplacement = cvawText.includes('\uFFFD');
@@ -22,7 +26,7 @@ const fs = require('fs');
   console.log('CVAW V 范围:', minV, '~', maxV, '| A 范围:', minA, '~', maxA);
 
   // NRC v2.1 unigrams
-  const nrcPath = 'E:/Mo-Home/NRC-VAD-Lexicon-v2.1/Unigrams/unigrams-NRC-VAD-Lexicon-v2.1.txt';
+  const nrcPath = path.join(ROOT, 'NRC-VAD-Lexicon-v2.1', 'Unigrams', 'unigrams-NRC-VAD-Lexicon-v2.1.txt');
   const nrcText = fs.readFileSync(nrcPath, 'utf8');
   const nrcLines = nrcText.split(/\r?\n/).filter(Boolean);
   console.log('\nNRC 行数:', nrcLines.length, '| 表头:', nrcLines[0]);
