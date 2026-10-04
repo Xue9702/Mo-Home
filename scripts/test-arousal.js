@@ -201,6 +201,12 @@ t('隐晦部位命中', () => {
 });
 
 // 16. 叫声/欲望 → 弱刺激
+t('纯部位描写也能成拍（10/4 新增）', () => {
+  let s = A.createState(0);
+  const r = A.applyUserEvent(s, '双腿间一片黏腻', { eventId: 'u7', libido: 0.5, now: 100, lexicon: LEX });
+  assert.strictEqual(r.event, 'stimulus');
+  assert(s.value > 0, '无动作词、只有部位描写时也应产生刺激');
+});
 t('叫声弱刺激', () => {
   const r = A.parseStimulus('嗯…啊…好想要', LEX);
   assert(r.valid && r.weak && r.stim > 0, '叫声应产生弱刺激：' + JSON.stringify(r));

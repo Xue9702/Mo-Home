@@ -100,13 +100,30 @@ function parseStimulus(text, lexicon) {
     .filter(a => t.includes(a.kw))
     .sort((x, y) => y.delta - x.delta);
   if (!actions.length) {
-    // 无动作词：叫声/欲望表达 → 弱维持刺激（后半段"只剩叫声"也有有效刺激）
+    // 无动作词：叫声 / 欲望表达 / 纯部位描写 → 弱维持刺激
+    // ⚠️ 10/4 补：原来这里完全不看 body_parts 就直接 no_action，
+    //    而默的表达大量是"交合处一片黏腻""抵着敏感点""小穴缩了一下"这种纯部位/状态描写，
+    //    结果新加的部位词根本走不到——部位只在"同时命中动作词"时才参与计算。
+    //    现在纯部位也能构成弱刺激（sensitivity × 0.35，比叫声强、比动作弱）。
+    let bestPartWeak = null;
+    for (const [part, p] of Object.entries(lexicon.body_parts || {})) {
+      if (t.includes(part)) {
+        if (!bestPartWeak || p.sensitivity > bestPartWeak.sensitivity) bestPartWeak = { part, sensitivity: p.sensitivity };
+      }
+    }
     const weak = [
       ...(lexicon.moans || []).filter(m => t.includes(m.kw)).map(m => m.delta),
-      ...(lexicon.desires || []).filter(d => t.includes(d.kw)).map(d => d.delta)
+      ...(lexicon.desires || []).filter(d => t.includes(d.kw)).map(d => d.delta),
+      ...(bestPartWeak ? [bestPartWeak.sensitivity * 0.35] : [])
     ];
     if (weak.length) {
-      return { valid: true, stim: Math.max(...weak), weak: true, reason: 'moan_desire' };
+      return {
+        valid: true,
+        stim: Math.max(...weak),
+        weak: true,
+        part: bestPartWeak ? bestPartWeak.part : null,
+        reason: bestPartWeak ? 'part_only' : 'moan_desire'
+      };
     }
     return { valid: false, reason: 'no_action' };
   }
