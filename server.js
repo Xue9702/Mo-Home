@@ -39,6 +39,20 @@ const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY || '';
 const VISION_MODEL = process.env.VISION_MODEL || 'qwen3.5-omni-plus';
 const DASHSCOPE_BASE_URL = process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
+// ================== Aevum 向量模型（供应商可换） ==================
+// 阿里百炼的免费额度会耗尽；换供应商只改 Render 环境变量，不用再动代码：
+//   AEVUM_EMBED_STYLE     openai（默认，OpenAI 兼容端点）| cloudflare（Workers AI）
+//   AEVUM_EMBED_BASE_URL  OpenAI 兼容端点，默认阿里百炼 compatible-mode
+//   AEVUM_EMBED_API_KEY   该供应商的 key，默认回落到 DASHSCOPE_API_KEY
+//   AEVUM_EMBED_MODEL     模型名（也可在前端设置页的 embed_model 里改）
+//   AEVUM_EMBED_DIM       向量维度，默认 1024（必须与 pgvector 列一致）；设 0 = 请求里不带 dimensions
+// cloudflare 方式另需：CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN
+// ⚠️ 换模型 = 换向量空间：历史向量必须用 scripts/reindex-embeddings*.js 全量重算，否则召回是乱的。
+const EMBED_STYLE = (process.env.AEVUM_EMBED_STYLE || 'openai').toLowerCase();
+const EMBED_BASE_URL = process.env.AEVUM_EMBED_BASE_URL || DASHSCOPE_BASE_URL;
+const EMBED_API_KEY = process.env.AEVUM_EMBED_API_KEY || DASHSCOPE_API_KEY;
+const EMBED_DIM = process.env.AEVUM_EMBED_DIM === undefined ? 1024 : (Number(process.env.AEVUM_EMBED_DIM) || 0);
+
 // ================== Web Push 推送配置（闹钟/提醒） ==================
 // 密钥通过 Render 环境变量配置（仓库公开，不能写死密钥）：
 // VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT(可选)
@@ -5753,22 +5767,53 @@ const AEVUM_TYPE_CN = {
   user_tendency: '用户倾向', personality: '人格', self_model: '核心'
 };
 
-// 阿里百炼向量（1024 维；失败返回 null）
-// 模型演进：text-embedding-v4 免费额度耗尽 → text-embedding-v3 → qwen3.7-text-embedding（2026/9/7 切换，同为 1024 维，历史向量无需重算）
+// Aevum 向量（1024 维；失败返回 null）
+// 供应商演进：text-embedding-v4 → text-embedding-v3 → qwen3.7-text-embedding（2026/9/7）
+//            → 现在由 AEVUM_EMBED_* 环境变量决定，可随时换（阿里百炼免费额度会耗尽）
 async function getEmbedding(text) {
-  const key = process.env.DASHSCOPE_API_KEY;
-  if (!key) return null;
+  const input = String(text || '').slice(0, 1000);
+  if (!input) return null;
   try {
-    const resp = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings', {
+    // Cloudflare Workers AI：非 OpenAI 兼容，请求/响应结构都不一样，单独走一条
+    if (EMBED_STYLE === 'cloudflare') {
+      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+      const cfToken = process.env.CLOUDFLARE_API_TOKEN;
+      if (!accountId || !cfToken) {
+        console.error('Embedding 未配置: 缺少 CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN');
+        return null;
+      }
+      const model = process.env.AEVUM_EMBED_MODEL || '@cf/baai/bge-m3';
+      const resp = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cfToken}`
+        },
+        body: JSON.stringify({ text: [input] }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!resp.ok) {
+        console.error('Embedding API 错误(cloudflare):', resp.status, (await resp.text()).slice(0, 150));
+        return null;
+      }
+      const data = await resp.json();
+      const d = data?.result?.data;
+      const emb = Array.isArray(d) && Array.isArray(d[0]) ? d[0] : d;
+      return Array.isArray(emb) && emb.length ? emb : null;
+    }
+
+    // 默认：OpenAI 兼容端点（阿里百炼 / 硅基流动 / 其它）
+    if (!EMBED_API_KEY) return null;
+    const resp = await fetch(`${EMBED_BASE_URL.replace(/\/?$/, '')}/embeddings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`
+        'Authorization': `Bearer ${EMBED_API_KEY}`
       },
       body: JSON.stringify({
         model: process.env.AEVUM_EMBED_MODEL || getEmbedModel(),
-        input: String(text || '').slice(0, 1000),
-        dimensions: 1024,
+        input,
+        ...(EMBED_DIM > 0 ? { dimensions: EMBED_DIM } : {}),
         encoding_format: 'float'
       }),
       signal: AbortSignal.timeout(15000)
