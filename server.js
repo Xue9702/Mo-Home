@@ -1026,6 +1026,11 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
     clearTimeout(activeStreamTimer);
   }
   const toolCalls = toolCallsMap.size ? [...toolCallsMap.values()] : null;
+  // 思考诊断（雪 10/4 反馈：思考时有时无，日常消息后更容易没有）
+  // 只记录主对话流（recordStream=true），每轮打一行，用来判断到底是"模型没推理"还是"我们没转发"。
+  if (recordStream) {
+    console.log(`🧠 [思考诊断] model=${getMainModel()} effort=${getThinkingLevel()} 思考=${fullThinking.length}字 正文=${fullReply.length}字 工具=${toolCalls ? toolCalls.length : 0}`);
+  }
   return { fullReply, fullThinking, contentBuffer, toolCalls };
 }
 
