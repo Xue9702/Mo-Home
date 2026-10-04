@@ -6150,6 +6150,18 @@
           msg.style.display = msg.dataset.assistantVersion === String(targetVersion) ? '' : 'none';
         });
 
+        // 把"选中的版本"存到服务端：否则关掉小屋再打开，默读到的历史会回到版本号最大的那条
+        // （2026/10/4 修：刷新出 1/3、2/3、3/3 后选了 2/3 继续聊，重开却变回 3/3）
+        const persistSelection = (role, v) => {
+          fetch('/api/messages/select', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ group_id: groupId, role, version_number: v })
+          }).catch(() => {});
+        };
+        persistSelection('assistant', targetVersion);
+        if (hasUserVersion) persistSelection('user', targetVersion);
+
         // 更新导航器版本文字与按钮状态（无论导航器当前挂在哪条消息上）
         const nav = document.querySelector(`.version-nav[data-group-id="${groupId}"]`);
         if (nav) {

@@ -787,6 +787,27 @@ const getThinkingLevel = () => VALID_THINKING.includes(modelConfigCache.thinking
 // 灵活度：temperature 0-2，clamp 到合法区间
 const getCreativity = () => Math.max(0, Math.min(2, Number(modelConfigCache.creativity) || 1.0));
 
+// 选择分支组里"继续对话用哪一版"（刷新/编辑产生的多版本）
+// 雪在版本角标上点 ‹ / › 时调用；历史注入优先用被选中的那一版。
+app.post('/api/messages/select', async (req, res) => {
+  try {
+    const { group_id, role, version_number } = req.body || {};
+    const vn = Number(version_number);
+    if (!group_id || !role || !vn) return res.status(400).json({ error: '缺少 group_id / role / version_number' });
+    // 先清掉整组已选中的，再选中目标那条（避免多条同时为 true）
+    const clear = await supabase.from('messages').update({ is_selected: false })
+      .eq('group_id', group_id).eq('role', role).eq('is_selected', true);
+    if (clear.error) throw new Error(clear.error.message);
+    const set = await supabase.from('messages').update({ is_selected: true })
+      .eq('group_id', group_id).eq('role', role).eq('version_number', vn).select('id');
+    if (set.error) throw new Error(set.error.message);
+    res.json({ ok: true, group_id, role, version_number: vn, updated: (set.data || []).length });
+  } catch (e) {
+    console.error('版本选择保存失败（若提示 is_selected 不存在，请先执行 setup_message_selection.sql）:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/model-config', async (req, res) => {
   try {
     const cfg = await refreshModelConfig();
@@ -1728,14 +1749,14 @@ async function loadLatestHistory(sessionId, limit = 50) {
   try {
     let result = await supabase
       .from('messages')
-      .select('id, role, content, group_id, version_number, created_at, image_alt, file_name, file_text')
+      .select('id, role, content, group_id, version_number, created_at, image_alt, file_name, file_text, is_selected')
       .eq('session_id', sessionId)
       .eq('visible', true)
       .order('created_at', { ascending: false })
       .limit(Math.max(limit * 3, 150));
 
-    // 兼容尚未添加 image_alt 列的数据库：去掉该列重试
-    if (result.error && /image_alt|file_name|file_text/.test(result.error.message)) {
+    // 兼容尚未添加新列的数据库：逐级降级重试（is_selected 未加时回退到"版本号最大"）
+    if (result.error && /image_alt|file_name|file_text|is_selected/.test(result.error.message)) {
       console.warn('⚠️ 图片/文件列不存在，历史上下文暂不含附件内容（请执行 ALTER TABLE 开启）');
       result = await supabase
         .from('messages')
@@ -1761,7 +1782,9 @@ async function loadLatestHistory(sessionId, limit = 50) {
       return [];
     }
 
-    // 同组同角色只保留版本号最大的一条
+    // 同组同角色只保留一条：优先"雪选中的那一版"，没有标记时才回退到版本号最大
+    // （2026/10/4 修：原来永远取版本号最大 → 雪刷新出 1/3、2/3、3/3 后选了 2/3 继续聊，
+    //   关掉小屋再打开，默读到的历史又变回 3/3。）
     const latestByGroup = new Map();
     const plainMessages = [];
     for (const msg of data) {
@@ -1771,7 +1794,11 @@ async function loadLatestHistory(sessionId, limit = 50) {
       }
       const key = `${msg.group_id}|${msg.role}`;
       const existing = latestByGroup.get(key);
-      if (!existing || (msg.version_number || 0) > (existing.version_number || 0)) {
+      const msgSel = !!msg.is_selected;
+      const exSel = !!(existing && existing.is_selected);
+      if (!existing
+        || (msgSel && !exSel)
+        || (msgSel === exSel && (msg.version_number || 0) > (existing.version_number || 0))) {
         latestByGroup.set(key, msg);
       }
     }
@@ -6294,7 +6321,16 @@ async function getRecentTimelineContext(days = 3, maxPerDay = 3) {
       .limit(60);
     if (!data || !data.length) return '';
     // 排除唤醒行动日志与低价值叙述
-    const items = (data || []).filter(m => m.source !== 'wake');
+    // 缓冲期（2026/10/4 雪反馈）：最近 N 小时内发生的事已经在聊天历史里了，不该再经
+    // "近期点滴"复述一遍；而且被刷新掉的旧回复若已被提取成记忆，默会把它当成自己真做过
+    // 的事，从而困惑。默认 3 小时，可用 TIMELINE_BUFFER_HOURS 覆盖。
+    const bufferHours = Number(process.env.TIMELINE_BUFFER_HOURS || 3);
+    const bufferBefore = Date.now() - bufferHours * 3600000;
+    const items = (data || []).filter(m => {
+      if (m.source === 'wake') return false;
+      const t = new Date(m.event_time || m.created_at);
+      return isNaN(t.getTime()) ? true : t.getTime() <= bufferBefore;
+    });
     if (!items.length) return '';
     const byDay = {};
     for (const m of items) {
