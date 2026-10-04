@@ -1,5 +1,5 @@
 {
-  "version": "0.4.4",
+  "version": "0.4.5",
   "apkUrl": "https://github.com/Xue9702/Mo-Home/releases/latest/download/mo-home.apk",
-  "notes": "接入 Google 推送（App 关闭也能收到默的消息和闹钟）+ 记忆人物/谓词索引 + 底部系统栏颜色对齐"
+  "notes": "修复 Android 16 上整屏上移（标题顶进状态栏、底部导航压住版本号）：targetSdk 36 → 35，重新启用边到边逃生门"
 }
