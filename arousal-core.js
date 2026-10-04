@@ -403,6 +403,9 @@ function outputLabel(o) { return o > 0.7 ? '尚足' : o > 0.4 ? '一般' : '稀�
 function setRpMode(state, on) {
   state.rp_mode = !!on;
   state.scene_streak = 0;   // 开关一切换就清零累计，不跨场景延续（雪 10/4：用开关代替分钟判定）
+  // 同时清掉"持续接触"标记：否则关掉开关后的 2 分钟内，旧被动通道仍会偷偷 +0.01
+  state.passive_contact = false;
+  state.last_stim_at = 0;
   return state;
 }
 
