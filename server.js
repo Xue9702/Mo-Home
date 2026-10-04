@@ -7,7 +7,7 @@ const {
 } = require('./emotion-lexicon');
 const {
   PARAMS, createState, applyUserEvent, applyAssistantEvent, statusLine,
-  publicSnapshot, lockGate, releaseOnce, unlockGate, ackReleaseEffect
+  publicSnapshot, lockGate, releaseOnce, unlockGate, ackReleaseEffect, setRpMode
 } = require('./arousal-core');
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
@@ -4721,6 +4721,8 @@ app.get('/api/arousal/status', async (req, res) => {
       last_output_label: snap.last_output_label,
       updated_at: aState.at,
       locked: !!aState.release_gate.locked,
+      rp_mode: !!aState.rp_mode,
+      scene_streak: aState.scene_streak || 0,
       lexicon: arousalLexiconDiag
     });
   } catch (e) {
@@ -4743,6 +4745,22 @@ app.post('/api/arousal/gate', async (req, res) => {
     res.json({ ok: true, locked: !!aState.release_gate.locked, phase: publicSnapshot(aState, now).phase, phase_label: publicSnapshot(aState, now).phase_label });
   } catch (e) {
     console.error('射精锁控制失败:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 射精值系统：RP / 做爱模式开关（雪 10/4 定：用开关代替按分钟判定场景）
+// 开 → 没命中关键词也走小保底、默侧按句成拍；关 → 完全回到原逻辑。状态跟着 arousal_state 持久化，两端同步。
+app.post('/api/arousal/rp', async (req, res) => {
+  try {
+    const { on } = req.body || {};
+    const aState = await getArousalState();
+    setRpMode(aState, !!on);
+    await saveArousalState(aState);
+    console.log(`💗 [arousal] RP 模式 ${aState.rp_mode ? '开启' : '关闭'}`);
+    res.json({ ok: true, rp_mode: !!aState.rp_mode, scene_streak: aState.scene_streak || 0 });
+  } catch (e) {
+    console.error('RP 模式切换失败:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

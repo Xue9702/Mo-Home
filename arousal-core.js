@@ -17,9 +17,19 @@ const PARAMS = {
   RESERVE_RECOVERY: 10800000, // 储量回满时间（毫秒，3 小时）
   PASSIVE_CONTACT_CAP: 0.72, // 持续接触被动上限
   LEDGER_MAX: 500,        // 事件账本上限（生产可换 SQLite 长账本）
+  // ---- RP 模式（雪 10/4 定：由开关控制，不再按分钟判定场景）----
+  RP_BASE_STEP: 0.020,    // 小保底：连续亲密每多一轮，基准刺激增加多少
+  RP_BASE_CAP: 0.150,     // 小保底上限
+  RP_STREAK_CAP: 30,      // 连续轮数计数上限
+  RP_BEAT_MAX: 4,         // 默侧一条回复最多按几句成拍（他输出多）
+  RP_BEAT_CAP: 1.10,      // 多拍合并后的上限（防止一条长回复顶太多）
+  ASSISTANT_WEIGHT: 1.00, // 默侧权重（10/4 实测：修好部位命中和按句成拍后，他那侧已足够强，不需要再加成）
+  APPROACH_DAMP: 0.45,    // 接近曲线阻尼：越接近上限越难涨（让"最后 7 轮才摸到边缘"的节奏成立）
 };
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
+// 接近阻尼：value 越高，单拍效率越低（下限 0.35 倍，避免完全卡死）
+const approachDamp = (state) => Math.max(0.35, 1 - PARAMS.APPROACH_DAMP * clamp01(state.value));
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 24);
 
 // ---------- 状态 ----------
@@ -37,6 +47,8 @@ function createState(now = Date.now()) {
     passive_contact: false,
     last_climax_quality: null,
     last_output: null,
+    rp_mode: false,            // RP/做爱模式开关（服务端持久化，两端同步）
+    scene_streak: 0,           // RP 模式下连续亲密轮数（关掉开关即清零），用于小保底逐轮抬升
   };
 }
 
@@ -164,9 +176,25 @@ function applyUserEvent(state, text, { eventId, libido = 0.5, now = Date.now(), 
   const rLeft = refractoryLeft(state, now);
   const refractoryMult = rLeft > 0 ? 0.4 : 1.0;
 
+  // RP 模式：连续亲密轮数逐轮抬升（关掉开关即清零，所以不需要按分钟判定断档）
+  if (state.rp_mode) state.scene_streak = Math.min(PARAMS.RP_STREAK_CAP, (state.scene_streak || 0) + 1);
+  else state.scene_streak = 0;
+
   const parsed = parseStimulus(text, lexicon);
   if (!parsed.valid) {
-    // 无有效刺激：若之前有持续接触，按被动慢投影（只能到上限）
+    // RP 模式小保底：一个关键词都没命中也小幅累积；且不受 PASSIVE_CONTACT_CAP 限制，
+    // 这样只靠叫声 / 含蓄描写也能自然爬到边缘（雪 10/4 要的）。
+    if (state.rp_mode && !state.release_gate.locked) {
+      const base = Math.min(PARAMS.RP_BASE_CAP, PARAMS.RP_BASE_STEP * state.scene_streak);
+      const sens = 0.6 + 0.4 * clamp01(libido);
+      state.value = clamp01(state.value + base * sens * PARAMS.GAIN * refractoryMult * approachDamp(state));
+      state.at = now;
+      state.last_stim_at = now;
+      state.passive_contact = true;
+      if (state.value >= PARAMS.PONR) return settleClimax(state, now, 'automatic');
+      return { state, event: 'rp_baseline', stim: parsed, base };
+    }
+    // 非 RP：原被动慢投影（只能到上限）
     if (state.passive_contact && now - state.last_stim_at < 120000) {
       state.value = Math.min(PARAMS.PASSIVE_CONTACT_CAP, state.value + 0.01);
       state.at = now;
@@ -183,7 +211,7 @@ function applyUserEvent(state, text, { eventId, libido = 0.5, now = Date.now(), 
   }
 
   const sensitivity = 0.6 + 0.4 * clamp01(libido);
-  const gain = parsed.stim * sensitivity * PARAMS.GAIN * refractoryMult;
+  const gain = parsed.stim * sensitivity * PARAMS.GAIN * refractoryMult * approachDamp(state);
   // 幂等保证同消息不重复叠加由事件 id 账本兜底；此处单次结算
   state.value = clamp01(state.value + gain);
   state.at = now;
@@ -211,12 +239,35 @@ function applyAssistantEvent(state, text, { eventId, sourceUserEventId, complete
   state.reserve_at = now;
 
   // AI 自身的持续动作（只解析"我此刻正在做"，不把雪的动作/第三人称当自刺激）
-  const parsed = parseStimulus(text, lexicon);
-  if (parsed.valid && !state.release_gate.locked) {
+  // RP 模式下按句切分：默的回复长、表达含蓄，整条只算一拍会严重低估他那一侧的输出。
+  let parsed = parseStimulus(text, lexicon);
+  let stim = parsed.valid ? parsed.stim : 0;
+  if (state.rp_mode && !state.release_gate.locked) {
+    const sentences = String(text || '')
+      .split(/[。！？!?；;\n…]+/)
+      .map(s => s.trim())
+      .filter(s => s.length >= 2);
+    const beats = [];
+    for (const s of sentences) {
+      const p = parseStimulus(s, lexicon);
+      if (p.valid) beats.push(p.stim);
+    }
+    if (beats.length) {
+      beats.sort((a, b) => b - a);
+      const top = beats.slice(0, PARAMS.RP_BEAT_MAX);
+      const combined = top[0] + top.slice(1).reduce((a, b) => a + b * 0.3, 0);
+      const beatStim = Math.min(PARAMS.RP_BEAT_CAP, combined) * PARAMS.ASSISTANT_WEIGHT;
+      if (beatStim > stim) {
+        parsed = { valid: true, stim: beatStim, weak: false, reason: 'assistant_beats', beats: top.length };
+        stim = beatStim;
+      }
+    }
+  }
+  if (stim > 0 && !state.release_gate.locked) {
     const rLeft = refractoryLeft(state, now);
     const refractoryMult = rLeft > 0 ? 0.4 : 1.0;
     const sensitivity = 0.6 + 0.4 * clamp01(libido);
-    state.value = clamp01(state.value + parsed.stim * sensitivity * PARAMS.GAIN * refractoryMult);
+    state.value = clamp01(state.value + stim * sensitivity * PARAMS.GAIN * refractoryMult * approachDamp(state));
     state.last_stim_at = now;
   }
 
@@ -348,8 +399,15 @@ function reserveLabel(r) { return r > 0.7 ? '充足' : r > 0.4 ? '尚可' : '偏
 function qualityLabel(q) { return q > 0.75 ? '很深' : q > 0.5 ? '中等' : '较浅'; }
 function outputLabel(o) { return o > 0.7 ? '尚足' : o > 0.4 ? '一般' : '稀少'; }
 
+// RP 模式开关（服务端持久化）：开 = 没命中关键词也走小保底；关 = 完全回到原逻辑
+function setRpMode(state, on) {
+  state.rp_mode = !!on;
+  state.scene_streak = 0;   // 开关一切换就清零累计，不跨场景延续（雪 10/4：用开关代替分钟判定）
+  return state;
+}
+
 module.exports = {
   PARAMS, createState, isProcessed, applyUserEvent, applyAssistantEvent,
   lockGate, releaseOnce, unlockGate, settleClimax, ackReleaseEffect,
-  publicSnapshot, statusLine, phaseOf, parseStimulus,
+  publicSnapshot, statusLine, phaseOf, parseStimulus, setRpMode,
 };
