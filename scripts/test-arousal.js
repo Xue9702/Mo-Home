@@ -207,6 +207,20 @@ t('纯部位描写也能成拍（10/4 新增）', () => {
   assert.strictEqual(r.event, 'stimulus');
   assert(s.value > 0, '无动作词、只有部位描写时也应产生刺激');
 });
+t('RP 模式小保底 + 关闭清零（10/4 新增）', () => {
+  let s = A.createState(0);
+  A.setRpMode(s, true);
+  for (let i = 0; i < 6; i++) {
+    A.applyUserEvent(s, '……', { eventId: 'rp' + i, libido: 0.8, now: 1000 + i * 1000, lexicon: LEX });
+  }
+  assert(s.value > 0, '开启 RP 模式后，没命中关键词也应缓慢累积');
+  assert.strictEqual(s.scene_streak, 6, '连续轮数应累计到 6');
+  A.setRpMode(s, false);
+  assert.strictEqual(s.scene_streak, 0, '关掉开关后连续轮数应清零');
+  const before = s.value;
+  A.applyUserEvent(s, '……', { eventId: 'rp-off', libido: 0.8, now: 20000, lexicon: LEX });
+  assert(s.value <= before, '关掉开关后不再有小保底（只剩自然衰减）');
+});
 t('叫声弱刺激', () => {
   const r = A.parseStimulus('嗯…啊…好想要', LEX);
   assert(r.valid && r.weak && r.stim > 0, '叫声应产生弱刺激：' + JSON.stringify(r));
