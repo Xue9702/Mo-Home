@@ -1299,6 +1299,13 @@
       <div class="page active" id="chatPage">
         <div class="message-list" id="messageList"></div>
         <div class="input-area" id="inputArea">
+          <!-- 亲密模式下才出现的细充能条（隐晦：一条 4px 细线 + 极小百分比，无文字标签） -->
+          <div id="rpBar" style="display:none;align-items:center;gap:8px;padding:0 2px 6px;">
+            <div style="flex:1;height:4px;border-radius:2px;background:#EFE7E9;overflow:hidden;">
+              <div id="rpBarFill" style="height:100%;width:0%;background:linear-gradient(90deg,#DCC2C9,#B99AA4);border-radius:2px;transition:width .6s;"></div>
+            </div>
+            <span id="rpBarNum" style="font-size:10px;color:#C3B2B8;min-width:28px;text-align:right;">0%</span>
+          </div>
           <div class="image-preview" id="imagePreview" style="display:none;">
             <img id="imagePreviewImg" alt="预览">
             <span id="imagePreviewName" style="font-size: 13px; color: #555; word-break: break-all;"></span>
@@ -2557,6 +2564,7 @@
                   <div style="display:flex;align-items:center;gap:8px;">
                     <span style="font-size:13px;color:var(--dark);font-weight:500;">充能</span>
                     <button onclick="toggleArousalGate()" id="arousalGateBtn" title="锁定充能（锁住后不再增长）" style="border:none;background:none;cursor:pointer;padding:2px;display:flex;align-items:center;color:var(--muted);"></button>
+                    <button onclick="toggleRpMode()" id="arousalRpBtn" data-on="0" title="亲密模式：开启后即使没说到关键词也会缓慢累积" style="border:none;cursor:pointer;padding:3px 9px;border-radius:10px;font-size:11px;background:#F1EBE1;color:var(--muted);">亲密模式 · 关</button>
                   </div>
                   <span id="arousalCardPhase" class="charge-phase" style="font-size:11px;padding:2px 10px;border-radius:10px;background:#F1EBE1;color:var(--muted);">平静</span>
                 </div>
@@ -8239,8 +8247,57 @@ let fullReply = '', fullThinking = '', lastThinkChunk = '';
             ' · 上次释放 ' + (d.last_climax_quality_label || '无') + ' / 输出 ' + (d.last_output_label || '无') +
             (d.lexicon && d.lexicon.source ? ` · 词表${d.lexicon.source === 'db' ? '库(' + d.lexicon.touchCount + ')' : d.lexicon.source}` : '');
         }
+        refreshRpBar();
       }
       window.refreshArousalCard = refreshArousalCard;
+
+      // ===== RP（亲密）模式 =====
+      // 开关在小屋页充能卡上（状态存服务端，手机/电脑同步）；开启后聊天页输入框上方出现一条细充能条。
+      async function toggleRpMode() {
+        const btn = document.getElementById('arousalRpBtn');
+        const cur = btn && btn.dataset.on === '1';
+        try {
+          const res = await fetch('/api/arousal/rp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ on: !cur })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          await res.json();
+          if (typeof toast === 'function') toast(!cur ? '亲密模式已开启' : '亲密模式已关闭');
+          await refreshArousalCard();
+          await refreshRpBar();
+        } catch (e) {
+          if (typeof toast === 'function') toast('切换失败：' + e.message);
+        }
+      }
+      window.toggleRpMode = toggleRpMode;
+
+      // 拉一次状态：同步开关外观 + 聊天页细条（未开启则不显示）
+      async function refreshRpBar() {
+        const wrap = document.getElementById('rpBar');
+        const d = await fetchArousalStatus();
+        if (!d) return;
+        const on = !!d.rp_mode;
+        const btn = document.getElementById('arousalRpBtn');
+        if (btn) {
+          btn.dataset.on = on ? '1' : '0';
+          btn.textContent = on ? '亲密模式 · 开' : '亲密模式 · 关';
+          btn.style.background = on ? '#EBD9DE' : '#F1EBE1';
+          btn.style.color = on ? '#A98A96' : 'var(--muted)';
+        }
+        if (!wrap) return;
+        wrap.style.display = on ? 'flex' : 'none';
+        if (!on) return;
+        const pct = Math.round((d.value || 0) * 100);
+        const fill = document.getElementById('rpBarFill');
+        const num = document.getElementById('rpBarNum');
+        if (fill) fill.style.width = pct + '%';
+        if (num) num.textContent = pct + '%';
+      }
+      window.refreshRpBar = refreshRpBar;
+      window.addEventListener('load', () => setTimeout(refreshRpBar, 900));
+      setInterval(refreshRpBar, 20000);
 
       // 锁/解锁切换（小屋页按钮）
       async function toggleArousalGate() {
