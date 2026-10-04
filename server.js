@@ -3423,8 +3423,13 @@ async function maybeRateDialogue(userText, assistantReply) {
     if (!text && !reply) return;
     // 本地词典扫描（37k 词，零 LLM）：合并扫描雪的消息 + 默的回应
     const scan = scanTextMood(text + '\n' + reply);
-    // 漏斗判定：显著情绪词（强度 |v|×a ≥ 0.35）→ 立即评分；否则入 secondary 队列
-    const strong = scan && scan.hits.some(h => Math.abs(h.v) * h.a >= 0.35);
+    // 漏斗判定（10/4 调低门槛）：原 |v|×a ≥ 0.35 对日常亲昵对话太高——"想你/喜欢你"这类约 0.2，
+    // 够不到门槛，结果即时通道从来没触发过（默的情绪事件 10 天只出现 1 次，还是批处理那次）。
+    // 现在：单词够 0.22，或两个词各够 0.12（累积情绪）→ 立即评分。
+    const strong = scan && scan.hits.length > 0 && (
+      scan.hits.some(h => Math.abs(h.v) * h.a >= 0.22) ||
+      scan.hits.filter(h => Math.abs(h.v) * h.a >= 0.12).length >= 2
+    );
     if (strong) {
       const now = Date.now();
       if (now - (lastRateAt.get('mo') || 0) < 30000) return; // 节流
