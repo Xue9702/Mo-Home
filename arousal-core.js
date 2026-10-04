@@ -72,22 +72,23 @@ function refractoryLeft(state, now) {
 }
 
 // ---------- 语境过滤 + 刺激解析（context parser） ----------
-// 拒绝：问句 / 否定 / 停止 / 计划假设 / 引用代码 / 第三人称 / 回忆转述 / 同句撤回
-const NEGATE_RE = /不要|别|还没|停下|停一下|不许|不可以|不能|别碰|别摸|不要碰/;
-const PLAN_RE = /等会|等一下|下次|待会|如果|假如|想不想|要不要|好不好|试试|打算/;
-const QUESTION_RE = /[？?]$|[吗呢吧]$|会不会|能不能|是不是/;
+// ⚠️ 2026/10/4 按雪的要求删除了「否定词整条否决」规则：
+//    她在强迫向剧情里会用「不要/不可以/不行/别」表达「我要/继续/别停」（开演前会和默约定好），
+//    按停止处理等于把她的话整条丢掉；「别停」「不要停」更是直接的反向误判——最常用的台词被判成停止。
+//    需要真正叫停时用控制闸（锁住），不靠关键词猜。
+// 保留的三类过滤：明确疑问句 / 计划假设 / 引用转述。
+const PLAN_RE = /等会|等一下|下次|待会|如果|假如|想不想|打算/;
+const QUESTION_RE = /[？?]$|吗$|会不会|能不能|是不是/;
 const REFER_RE = /他说|她说|他们说|说明书|教程|代码|示例|玩具说|设备说/;
-const RECALL_RE = /刚才|刚刚|之前|上次|回忆|那时|她说|原话/;
+const RECALL_RE = /之前|上次|回忆|那时|原话/;
 
 function parseStimulus(text, lexicon) {
   const t = String(text || '');
-  const negIdx = t.search(NEGATE_RE);
   const planIdx = t.search(PLAN_RE);
   const qIdx = t.search(QUESTION_RE);
   const refIdx = t.search(REFER_RE);
   const recallIdx = t.search(RECALL_RE);
-  // 顺序：停止/否定 → 不安全语境 → 动作 → 部位 → 姿势（教程：不要先搜敏感词再补否定）
-  if (negIdx !== -1 && (planIdx === -1 || negIdx < planIdx)) return { valid: false, reason: 'negation' };
+  // 顺序：不安全语境 → 动作 → 部位 → 姿势
   if (qIdx !== -1) return { valid: false, reason: 'question' };
   if (planIdx !== -1) return { valid: false, reason: 'plan' };
   if (refIdx !== -1) return { valid: false, reason: 'reference' };

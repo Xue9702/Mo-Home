@@ -15,7 +15,7 @@ const LEX = {
   body_parts: { '锁骨': { sensitivity: 0.7 }, '后颈': { sensitivity: 0.8 }, '双腿间': { sensitivity: 0.9 }, '入口': { sensitivity: 0.75 } },
   poses: [{ kw: '从后面', multiplier: 1.1 }],
   moans: [{ kw: '嗯', delta: 0.2 }, { kw: '啊', delta: 0.2 }, { kw: '呻吟', delta: 0.25 }],
-  desires: [{ kw: '好想要', delta: 0.35 }]
+  desires: [{ kw: '好想要', delta: 0.35 }, { kw: '别停', delta: 0.4 }, { kw: '不要停', delta: 0.4 }]
 };
 
 let passed = 0, failed = 0;
@@ -32,16 +32,26 @@ t('肯定动作能涨', () => {
   assert(s.value > 0, 'value 应 > 0');
 });
 
-// 2. 问句/否定/计划/引用/第三人称不涨
+// 2. 问句/计划/引用/第三人称/回忆转述不涨
+// 注（10/4）：已删除「否定词整条否决」——强迫向剧情里「不要/别」表达的是「我要/继续/别停」，
+//             按停止处理会把她的话整条丢掉。故原「否定不涨」改为「否定不再否决」。
 t('问句不涨', () => {
   let s = A.createState(0);
   A.applyUserEvent(s, '要不要我亲吻你？', { eventId: 'u2', libido: 0.5, now: 100, lexicon: LEX });
   assert.strictEqual(s.value, 0);
 });
-t('否定不涨（别碰先于敏感词）', () => {
+t('否定词不再整条否决（10/4 改）', () => {
   let s = A.createState(0);
   A.applyUserEvent(s, '别碰，先别亲吻我', { eventId: 'u3', libido: 0.5, now: 100, lexicon: LEX });
-  assert.strictEqual(s.value, 0);
+  assert.ok(s.value > 0, '「别/不要」不再导致整条作废，应正常计入刺激');
+});
+t('「别停 / 不要停」判为正向（10/4 新增）', () => {
+  let s = A.createState(0);
+  A.applyUserEvent(s, '别停', { eventId: 'u3b', libido: 0.5, now: 100, lexicon: LEX });
+  assert.ok(s.value > 0, '别停应产生刺激');
+  let s2 = A.createState(0);
+  A.applyUserEvent(s2, '不要停…', { eventId: 'u3c', libido: 0.5, now: 100, lexicon: LEX });
+  assert.ok(s2.value > 0, '不要停应产生刺激');
 });
 t('计划不涨', () => {
   let s = A.createState(0);
@@ -55,7 +65,7 @@ t('第三人称引用不涨', () => {
 });
 t('回忆转述不涨', () => {
   let s = A.createState(0);
-  A.applyUserEvent(s, '刚才我们亲吻了', { eventId: 'u6', libido: 0.5, now: 100, lexicon: LEX });
+  A.applyUserEvent(s, '上次我们亲吻了', { eventId: 'u6', libido: 0.5, now: 100, lexicon: LEX });
   assert.strictEqual(s.value, 0);
 });
 
