@@ -524,6 +524,14 @@ function itemCat(id, texts) {
 function itemName(id, texts) {
   const t = texts || {};
   if (t.names && t.names[id]) return t.names[id];
+  const fm = String(id).match(/^fish_([a-z_]+)_(small|normal|fat)$/);
+  if (fm && t.fish && t.fish.kinds && t.fish.kinds[fm[1]]) {
+    const kk = t.fish.kinds[fm[1]];
+    return kk.name + (fm[2] === 'small' ? '（幼小）' : fm[2] === 'fat' ? '（肥）' : '');
+  }
+  if (t.fish && t.fish.junk && t.fish.junk[id]) return t.fish.junk[id].name;
+  if (id === 'rod') return ((t.fish || {}).rod || {}).name || '鱼竿';
+  if (String(id).startsWith('seed_')) { const ck = String(id).slice(5); if (t.crops && t.crops[ck]) return t.crops[ck].name + '种子'; }
   if (t.crops && t.crops[id]) return t.crops[id].name;
   if (t.goods && t.goods[id]) return t.goods[id].name;
   if (id === 'egg') return '鸡蛋';
@@ -656,6 +664,85 @@ function checkCook(state, recipeId, texts, use) {
   return r.ok ? { ok: true, tier: r.tier, use: pickList } : { ok: false, msg: r.msg };
 }
 
+// ---------- 湖边钓鱼（雪 10/4）----------
+// 概率：鱼 50%（鲈鱼20/虾15/螃蟹10/三文鱼5）、意外 20%、什么都没钓上 30%
+// 每种鱼三个品相：幼小 15% / 正常 60% / 肥 25%，品相决定卖价。
+function hasRod(state) {
+  return !!(((state || {}).bag || {}).rod || []).length;
+}
+function fishOnce(state, { rng = Math.random, texts = {}, day = null } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  const F = (texts || {}).fish || {};
+  if (!hasRod(s)) return { state: s, ok: false, msg: '你还没有鱼竿——去书桌的电脑上买一根' };
+  const ch = F.chances || { fish: 50, junk: 20, miss: 30 };
+  const roll = rng() * 100;
+  if (roll < ch.fish) {
+    const kinds = Object.keys(F.kinds || {});
+    const total = kinds.reduce((a, k) => a + (F.kinds[k].weight || 0), 0) || 1;
+    let x = rng() * total;
+    let pickK = kinds[0];
+    for (const k of kinds) { x -= (F.kinds[k].weight || 0); if (x <= 0) { pickK = k; break; } }
+    const kind = F.kinds[pickK] || {};
+    const gr = kind.grades || { small: 0.15, normal: 0.6, fat: 0.25 };
+    const r2 = rng();
+    const grade = r2 < (gr.small || 0) ? 'small' : (r2 < (gr.small || 0) + (gr.normal || 0) ? 'normal' : 'fat');
+    const itemId = 'fish_' + pickK + '_' + grade;
+    addItem(s.bag, itemId, 1, day || s.day);
+    const sell = Number(((kind.sell || {})[grade]) || 0);
+    return {
+      state: s, ok: true, type: 'fish', kind: pickK, grade, itemId, sell,
+      name: (kind.name || pickK) + (grade === 'small' ? '（幼小）' : grade === 'fat' ? '（肥）' : ''),
+      text: ((kind.text || {})[grade]) || '钓上来一条鱼'
+    };
+  }
+  if (roll < ch.fish + ch.junk) {
+    const keys = Object.keys(F.junk || {});
+    const jk = keys.length ? keys[Math.min(keys.length - 1, Math.floor(rng() * keys.length))] : 'trash_bag';
+    const junk = (F.junk || {})[jk] || {};
+    let coins = 0;
+    if (Array.isArray(junk.coins) && junk.coins.length === 2) {
+      coins = junk.coins[0] + Math.floor(rng() * (junk.coins[1] - junk.coins[0] + 1));
+      s.coins = (s.coins || 0) + coins;
+    } else {
+      addItem(s.bag, jk, 1, day || s.day);
+    }
+    return { state: s, ok: true, type: 'junk', junk: jk, coins, text: (junk.text || '钓上来点没用的东西') + (coins ? '——打开一看，里面有 ' + coins + ' 枚金币' : '') };
+  }
+  const misses = F.miss || ['水面很静，什么也没有。'];
+  const pick = misses[Math.min(misses.length - 1, Math.floor(rng() * misses.length))];
+  return { state: s, ok: true, type: 'miss', text: pick };
+}
+
+// 卖东西：作物按 sell_price、鸡蛋 15、鱼按品相
+function sellPriceOf(id, texts) {
+  const t = texts || {};
+  if (t.crops && t.crops[id] && t.crops[id].sell_price) return Number(t.crops[id].sell_price);
+  if (id === 'egg') return 15;
+  const m = String(id).match(/^fish_([a-z_]+)_(small|normal|fat)$/);
+  if (m && t.fish && t.fish.kinds && t.fish.kinds[m[1]]) return Number(((t.fish.kinds[m[1]].sell || {})[m[2]]) || 0);
+  return 0;
+}
+function sellItem(state, { item = '', texts = {} } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  if (!((s.bag[item] || []).length)) return { state: s, ok: false, msg: '背包里没有' + itemName(item, texts) };
+  const price = sellPriceOf(item, texts);
+  if (!price) return { state: s, ok: false, msg: itemName(item, texts) + '卖不了钱' };
+  s.bag[item].pop();
+  if (!s.bag[item].length) delete s.bag[item];
+  s.coins = (s.coins || 0) + price;
+  return { state: s, ok: true, price, msg: '你把' + itemName(item, texts) + '卖了 ' + price + ' 金币（现在 ' + s.coins + '）' };
+}
+
+// 垃圾桶：扔掉用不着的道具或放坏的食材（雪 10/4）
+function trashItem(state, { item = '', texts = {} } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  if (!((s.bag[item] || []).length)) return { state: s, ok: false, msg: '背包里没有' + itemName(item, texts) };
+  s.bag[item].pop();
+  if (!s.bag[item].length) delete s.bag[item];
+  s.trashed = (s.trashed || 0) + 1;
+  return { state: s, ok: true, msg: '你把' + itemName(item, texts) + '丢进垃圾桶，盖子啪地合上' };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
@@ -666,6 +753,7 @@ module.exports = {
   BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung, orderMany,
   SITES, SITE_NAME, newPlots, plotsOf, findPlot, ensureSites, siteAccepts, plotLabel,
   findRecipe, autoPick, checkCook,
+  hasRod, fishOnce, sellPriceOf, sellItem, trashItem,
   BUCKET_NAME, TIER_NAME, itemCat, fineCat, valueOf, itemName, tierOfRecipe, cook,
   viewPlot, viewGarden
 };

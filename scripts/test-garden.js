@@ -575,5 +575,76 @@ t('做菜：菜单列"能做什么"用的是只读检查，不会消耗材料', 
   assert.strictEqual(s.bag.egg.length, before, '检查不该消耗材料');
   assert.ok(!s.bag.dish_fried_egg, '检查不该出菜');
 });
+t('钓鱼：没有鱼竿钓不了', () => {
+  const s = G.newState('2026-10-06');
+  const r = G.fishOnce(s, { texts: GTEXTS });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('鱼竿'), r.msg);
+  assert.strictEqual(G.hasRod(s), false);
+});
+
+t('钓鱼：概率符合设定（鱼50/意外20/空30），鱼种与品相也对', () => {
+  const s = G.newState('2026-10-06');
+  s.bag.rod = [{ at: 'x' }];
+  const N = 4000;
+  const stat = { fish: 0, junk: 0, miss: 0 };
+  const byKind = {}, byGrade = { small: 0, normal: 0, fat: 0 };
+  for (let i = 0; i < N; i++) {
+    const r = G.fishOnce(s, { texts: GTEXTS });
+    stat[r.type]++;
+    if (r.type === 'fish') { byKind[r.kind] = (byKind[r.kind] || 0) + 1; byGrade[r.grade]++; }
+  }
+  const pct = (n) => (n / N) * 100;
+  assert.ok(Math.abs(pct(stat.fish) - 50) < 3, '鱼应约 50%，实际 ' + pct(stat.fish).toFixed(1));
+  assert.ok(Math.abs(pct(stat.junk) - 20) < 3, '意外应约 20%，实际 ' + pct(stat.junk).toFixed(1));
+  assert.ok(Math.abs(pct(stat.miss) - 30) < 3, '空应约 30%，实际 ' + pct(stat.miss).toFixed(1));
+  assert.ok(Math.abs(byKind.salmon / stat.fish * 100 - 10) < 6, '三文鱼在鱼里应约 10%（权重 5/50）');
+  assert.ok(Math.abs(byGrade.normal / stat.fish * 100 - 60) < 5, '正常品相应约 60%');
+});
+
+t('钓鱼：幼小/正常/肥三档的文案和卖价都在，且卖价递增', () => {
+  for (const kind of Object.keys(GTEXTS.fish.kinds)) {
+    const k = GTEXTS.fish.kinds[kind];
+    for (const g of ['small', 'normal', 'fat']) {
+      assert.ok(k.text[g], kind + ' 缺 ' + g + ' 的文案');
+      assert.ok(k.sell[g] > 0, kind + ' 缺 ' + g + ' 的卖价');
+    }
+    assert.ok(k.sell.small < k.sell.normal && k.sell.normal < k.sell.fat, kind + ' 的卖价应递增');
+  }
+  assert.ok(GTEXTS.fish.kinds.salmon.text.fat.includes('流口水'), '肥三文鱼该有雪会馋的那句');
+});
+
+t('钓鱼：钱包直接给金币（1~20），其他意外物进背包', () => {
+  const s = G.newState('2026-10-06');
+  s.bag.rod = [{ at: 'x' }];
+  // 0.60 → 落在'意外事件'区间(50~70)；0.99 → 取四件意外物里的最后一件(钱包)；0.5 → 金币 1+floor(0.5*20)=11
+  const wallet = G.fishOnce(s, { texts: GTEXTS, rng: (() => { let i = 0; const seq = [0.60, 0.99, 0.5]; return () => seq[Math.min(i++, seq.length - 1)]; })() });
+  assert.strictEqual(wallet.type, 'junk');
+  assert.ok(wallet.coins >= 1 && wallet.coins <= 20, '钱包金币应在 1~20，实际 ' + wallet.coins);
+  assert.strictEqual(wallet.state.coins, 30 + wallet.coins, '金币应直接加上');
+});
+
+t('卖东西：作物按售价、鸡蛋 15、鱼按品相；不能卖的东西明确拒绝', () => {
+  assert.strictEqual(G.sellPriceOf('tomato', GTEXTS), GTEXTS.crops.tomato.sell_price);
+  assert.strictEqual(G.sellPriceOf('egg', GTEXTS), 15);
+  assert.strictEqual(G.sellPriceOf('fish_salmon_fat', GTEXTS), GTEXTS.fish.kinds.salmon.sell.fat);
+  assert.strictEqual(G.sellPriceOf('wood', GTEXTS), 0, '建材卖不了钱');
+  const s = G.newState('2026-10-06');
+  s.bag.tomato = [{ at: 'x' }];
+  const r = G.sellItem(s, { item: 'tomato', texts: GTEXTS });
+  assert.ok(r.ok, r.msg);
+  assert.strictEqual(r.state.coins, 30 + GTEXTS.crops.tomato.sell_price);
+  assert.ok(!r.state.bag.tomato, '卖掉的那份应从背包移除');
+  assert.strictEqual(G.sellItem(s, { item: 'wood', texts: GTEXTS }).ok, false, '建材不该能卖');
+});
+
+t('垃圾桶：能扔掉背包里的东西', () => {
+  const s = G.newState('2026-10-06');
+  const r = G.trashItem(s, { item: 'seed_daisy', texts: GTEXTS });
+  assert.ok(r.ok, r.msg);
+  assert.strictEqual(r.state.bag.seed_daisy.length, 1, '5 颗里扔掉 1 颗');
+  assert.strictEqual(r.state.trashed, 1);
+  assert.strictEqual(G.trashItem(s, { item: 'nothing', texts: GTEXTS }).ok, false, '没有的东西扔不了');
+});
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);
