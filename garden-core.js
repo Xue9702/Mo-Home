@@ -538,6 +538,8 @@ function itemName(id, texts) {
 // 细分类（"任选"用）：肉/蛋/豆制品成品算 meat，蔬菜算 veg——这样"任选三种蔬菜"不会把牛肉选进沙拉
 function fineCat(id, texts) {
   const t = texts || {};
+  // 蛋单独一类：不该被「任选蔬菜」选走（沙拉里出现鸡蛋很怪），也不算「任选两种肉」；档次那边仍按 itemCat 走（蛋=veg=1分）
+  if (id === 'egg') return 'egg';
   if (t.goods && t.goods[id] && t.goods[id].fine) return t.goods[id].fine;
   return itemCat(id, t);
 }
@@ -618,6 +620,42 @@ function cook(state, { recipeId = '', use = [], texts = {} } = {}) {
   };
 }
 
+// 按 id 或中文名找菜谱（模型可能说"煎蛋"而不是 fried_egg）
+function findRecipe(text, texts) {
+  const list = ((texts || {}).recipes || {}).list || [];
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const low = raw.toLowerCase();
+  return list.find((r) => r.id === low)
+      || list.find((r) => r.name === raw)
+      || list.find((r) => r.name.includes(raw) || raw.includes(r.name))
+      || null;
+}
+
+// 自动从背包里凑出"任选"类要的几样（菜单列"现在能做什么"时用）
+function autoPick(state, rec, texts) {
+  const out = [];
+  for (const bucket of Object.keys(rec.pick || {})) {
+    const want = rec.pick[bucket];
+    let got = 0;
+    for (const id of Object.keys(state.bag || {})) {
+      if (got >= want) break;
+      if (!((state.bag[id] || []).length)) continue;
+      if (fineCat(id, texts) === bucket) { out.push(id); got++; }   // 只按细分类匹配：否则蛋（粗分类=veg）又会被当成蔬菜选进沙拉
+    }
+  }
+  return out;
+}
+
+// 只检查能不能做（不改状态）。use 没给就自动凑料——菜单用来列"现在能做什么"
+function checkCook(state, recipeId, texts, use) {
+  const list = ((texts || {}).recipes || {}).list || [];
+  const rec = list.find((r) => r.id === recipeId);
+  const pickList = (use && use.length) ? use : (rec ? autoPick(state, rec, texts) : []);
+  const r = cook(state, { recipeId, use: pickList, texts });
+  return r.ok ? { ok: true, tier: r.tier, use: pickList } : { ok: false, msg: r.msg };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
@@ -627,6 +665,7 @@ module.exports = {
   shopList, order, tickWake, wish,
   BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung, orderMany,
   SITES, SITE_NAME, newPlots, plotsOf, findPlot, ensureSites, siteAccepts, plotLabel,
+  findRecipe, autoPick, checkCook,
   BUCKET_NAME, TIER_NAME, itemCat, fineCat, valueOf, itemName, tierOfRecipe, cook,
   viewPlot, viewGarden
 };

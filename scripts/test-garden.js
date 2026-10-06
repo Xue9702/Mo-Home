@@ -545,5 +545,35 @@ t('温室里种的也跟着跨天生长（结算覆盖所有场地）', () => {
   const p = G.findPlot(r.state, 'mushroom', 1);
   assert.strictEqual(G.progressOf(p, '2026-10-08'), 2, '菌床的菇也该长了 2 天');
 });
+t('做菜：按名字或 id 都能找到菜谱', () => {
+  assert.strictEqual(G.findRecipe('煎蛋', GTEXTS).id, 'fried_egg');
+  assert.strictEqual(G.findRecipe('fried_egg', GTEXTS).id, 'fried_egg');
+  assert.strictEqual(G.findRecipe('火锅', GTEXTS).id, 'hotpot');
+  assert.strictEqual(G.findRecipe('不存在的菜', GTEXTS), null);
+});
+
+t('做菜：自动凑料不会把蛋当成蔬菜（沙拉里不该出现鸡蛋）', () => {
+  const s = G.newState('2026-10-06');
+  s.bag.egg = [{ at: 'x' }, { at: 'x' }];
+  s.bag.tomato = [{ at: 'x' }];
+  s.bag.carrot = [{ at: 'x' }];
+  s.bag.bokchoy = [{ at: 'x' }];
+  const picked = G.autoPick(s, GTEXTS.recipes.list.find((r) => r.id === 'salad'), GTEXTS);
+  assert.ok(!picked.includes('egg'), '蛋不该被当成蔬菜：' + JSON.stringify(picked));
+  assert.strictEqual(picked.length, 3, '应凑出三种蔬菜');
+  assert.strictEqual(G.fineCat('egg', GTEXTS), 'egg', '蛋有自己的细分类');
+  assert.strictEqual(G.itemCat('egg', GTEXTS), 'veg', '但档次分类仍是 veg（1 分）');
+});
+
+t('做菜：菜单列"能做什么"用的是只读检查，不会消耗材料', () => {
+  const s = G.newState('2026-10-06');
+  s.bag.egg = [{ at: 'x' }];
+  const before = s.bag.egg.length;
+  const chk = G.checkCook(s, 'fried_egg', GTEXTS);
+  assert.strictEqual(chk.ok, true);
+  assert.strictEqual(chk.tier, 1);
+  assert.strictEqual(s.bag.egg.length, before, '检查不该消耗材料');
+  assert.ok(!s.bag.dish_fried_egg, '检查不该出菜');
+});
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

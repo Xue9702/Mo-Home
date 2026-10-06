@@ -567,6 +567,7 @@ const WAKE_SCENE_TITLES = {
   greenhouse: '玻璃温室里',
   gh_flower: '花田前',
   gh_mushroom: '菌床前',
+  cook: '灶台前',
   yard: '院子里',
   tree: '垂枝梅底下',
   cat_house: '猫窝前'
@@ -4478,6 +4479,8 @@ const WAKE_MENU = {
   kitchen: {
     options: [
       { id: 'kitchen_fridge', label: '打开冰箱看看', cost: 0, tag: '里面还剩些什么？' },
+      { id: 'cook', label: '做饭', cost: 0, tag: '灶台是冷的' },
+      { id: 'eat', label: '吃点做好的菜', cost: 0, tag: '回体力' },
       { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
     ]
   },
@@ -4556,6 +4559,15 @@ const WAKE_MENU = {
       { id: 'garden_pest', label: '除虫', cost: 1, tag: '' },
       { id: 'garden_weed', label: '拔草', cost: 1, tag: '' },
       { id: 'back_greenhouse', label: '回温室中间', cost: 0, tag: '' }
+    ]
+  },
+  // 灶台（厨房里）—— 做饭 / 吃东西
+  cook: {
+    options: [
+      { id: 'cook_menu', label: '看看手头能做什么', cost: 0, tag: '按背包里的材料算' },
+      { id: 'cook_make', label: '做一道（说清哪道菜）', cost: 1, tag: '要花 1 点体力' },
+      { id: 'eat', label: '吃点做好的菜', cost: 0, tag: '普通回 1 点体力，高级回 2 点' },
+      { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
     ]
   },
   shop: {
@@ -4972,6 +4984,58 @@ function parseShopItems(args) {
       const note = (site === 'flower') ? (ghn.flower_note || '') : (ghn.mush_note || '');
       return { outcome: (note ? note + '\n' : '') + gardenViewText(resGH.views), energyDelta: 0, nextNode: optionId };
     }
+    // ---- 厨房 / 灶台 · 做饭、吃东西 ----
+    case 'kitchen': {
+      const tk = await getGardenText();
+      const kk = (tk && tk.kitchen) || {};
+      return { outcome: (kk.scene || '厨房里灶台擦得很干净。') + '\n' + (kk.cook_invite || ''), energyDelta: 0, nextNode: 'kitchen' };
+    }
+    case 'cook': {
+      const tk2 = await getGardenText();
+      const kk2 = (tk2 && tk2.kitchen) || {};
+      return { outcome: '你挽起袖子站到灶台前。' + (kk2.cook_invite || ''), energyDelta: 0, nextNode: 'cook' };
+    }
+    case 'cook_menu': {
+      const tk3 = await getGardenText();
+      const st3 = await getGardenState();
+      const list3 = ((tk3 || {}).recipes || {}).list || [];
+      const canDo = [];
+      const cant = [];
+      for (const rec of list3) {
+        const chk = gardenCore.checkCook(st3, rec.id, tk3);
+        if (chk.ok) canDo.push((rec.emoji || '') + rec.name + '（' + (gardenCore.TIER_NAME[chk.tier] || '') + '）');
+        else cant.push(rec.name);
+      }
+      const headK = canDo.length ? ('现在能做的：\n· ' + canDo.join('\n· ')) : (((tk3 || {}).kitchen || {}).nothing || '现在一道也凑不出来。');
+      const tailK = cant.length ? ('\n（还差材料的：' + cant.slice(0, 10).join('、') + (cant.length > 10 ? ' 等' : '') + '）') : '';
+      return { outcome: headK + tailK + '\n' + (((tk3 || {}).kitchen || {}).eat_invite || ''), energyDelta: 0, nextNode: 'cook' };
+    }
+    case 'cook_make': {
+      const tk4 = await getGardenText();
+      const st4 = await getGardenState();
+      const asked = menuArgStr(args, 'recipe', 'dish', 'content', 'message');
+      const rec4 = gardenCore.findRecipe(asked, tk4);
+      if (!rec4) return { outcome: '没听清是哪道菜——说菜名，或者让我先列一下能做什么。', energyDelta: 0, nextNode: 'cook' };
+      const useRaw = menuArgStr(args, 'items', 'use', 'ingredients');
+      const use4 = String(useRaw || '').split(/[,，、;；\s]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+      const r4 = gardenCore.cook(st4, { recipeId: rec4.id, use: use4, texts: tk4 });
+      if (!r4.ok) return { outcome: '没做成：' + r4.msg, energyDelta: 0, nextNode: 'cook' };
+      await saveGardenState(r4.state);
+      return { outcome: '你做好了' + (rec4.emoji || '') + rec4.name + '（' + r4.tierName + '），盛出来放在灶台上。', energyDelta: 1, nextNode: 'cook' };
+    }
+    case 'eat': {
+      const st5 = await getGardenState();
+      const dishes = Object.keys(st5.bag || {}).filter((k) => k.startsWith('dish_'));
+      if (!dishes.length) return { outcome: '背包里还没有做好的菜——先去灶台做一份。', energyDelta: 0, nextNode: ctx.node };
+      const want5 = menuArgStr(args, 'dish', 'recipe', 'item', 'content', 'message').toLowerCase();
+      const pick5 = dishes.find((k) => k.includes(want5)) || dishes[0];
+      const info5 = (st5.dishes || {})[pick5] || {};
+      st5.bag[pick5] = st5.bag[pick5].slice(1);
+      if (!st5.bag[pick5].length) delete st5.bag[pick5];
+      await saveGardenState(st5);
+      const gain5 = (Number(info5.tier) >= 3) ? 2 : 1;
+      return { outcome: '你把' + (info5.name || '那道菜') + '热了热吃掉。' + (gain5 > 1 ? '肚子里暖起来，撑得住一阵。' : '垫了垫肚子。'), energyDelta: -gain5, nextNode: ctx.node };
+    }
     case 'shop': {
       const texts = await getGardenText();
       const crops = (texts && texts.crops) || {};
@@ -5333,7 +5397,8 @@ function buildMenuTools() {
           query: { type: 'string', description: 'web_search 的搜索关键词' },
           mood_delta: { type: 'integer', description: 'adjust_mood 的心情调整量，范围 -10 到 +10' },
            text: { type: 'string', description: '要说的那句话本身（fountain_wish 许愿时填这里）' },
-           items: { type: 'string', description: '要买的东西（shop_buy 用），可以一次写好几样，例如「seed_rose x2, wood x4, nail x10」；只买一件就写一件，例如「chick」' },
+           recipe: { type: 'string', description: '菜名或菜谱 id（cook_make 用），例如「煎蛋」或 fried_egg' },
+           items: { type: 'string', description: '一串物品（shop_buy 买什么 / cook_make 里\，可以一次写好几样，例如「seed_rose x2, wood x4, nail x10」；只买一件就写一件，例如「chick」' },
            plot: { type: 'integer', description: '几号田（garden_plant / garden_harvest / garden_pest / garden_weed 用，1 到 4）' },
            crop: { type: 'string', description: '作物名（garden_plant 用）：daisy 雏菊 / sunflower 向日葵 / tulip 郁金香 / rose 玫瑰 / lily_of_the_valley 铃兰 / bokchoy 小白菜 / carrot 胡萝卜 / tomato 番茄 / potato 土豆 / corn 玉米' },
            item: { type: 'string', description: '商品 id（shop_buy 用）：seed_daisy、seed_sunflower、seed_tulip、seed_rose、seed_lily_of_the_valley、seed_bokchoy、seed_carrot、seed_tomato、seed_potato、seed_corn、chick、rice、flour' },
