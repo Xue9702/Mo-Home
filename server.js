@@ -2012,6 +2012,24 @@ async function getWeatherData(city, force = false) {
 // 一个当下的快照被写成了整天的结论 —— 傍晚下起雨时，那句"晴"就显得是假话。
 // 现在明确分成两行，并说明"两者不一致很正常"。另加冬季映射（晋江不下雪，但小屋想有雪）。
 const WINTER_SNOW_MONTHS = [11, 0, 1]; // 12月 / 1月 / 2月（getMonth 从 0 起算）
+// 天气 → 窗景六选一的键（和风的 now.text 取值多，按优先级归类）
+function weatherWindowKey(w) {
+  const d = String((w && w.current && w.current.desc) || '');
+  if (/雪/.test(d)) return 'snow';
+  if (/雾|霾|沙尘|浮尘/.test(d)) return 'fog';
+  if (/暴雨|大雨|雷阵雨/.test(d)) return 'rain_heavy';
+  if (/雨/.test(d)) return 'rain_light';
+  if (/阴|多云/.test(d)) return 'cloudy';
+  return 'sunny';
+}
+// 时段四选一：清晨 / 白天 / 黄昏 / 夜晚
+function windowPhase(hour) {
+  const h = Number(hour) || 0;
+  if (h >= 5 && h < 9) return 'dawn';
+  if (h >= 9 && h < 17) return 'day';
+  if (h >= 17 && h < 20) return 'dusk';
+  return 'night';
+}
 function applyWinterSnow(w, month) {
   if (!WINTER_SNOW_MONTHS.includes(month)) return w;
   const wet = /雨|阴|雪/.test(String((w.current && w.current.desc) || '')) || Number(w.current && w.current.precipitation) > 0;
@@ -4259,6 +4277,8 @@ const WAKE_MENU = {
       { id: 'my_diary', label: '翻开书桌上的日记本（可编辑）', cost: 1, tag: '让我瞧瞧默要记录些什么～' },
       { id: 'read_mozha', label: '窝进沙发，翻开默札看看过去的自己', cost: 0, tag: '遇见过去的自己留下的温度' },
       { id: 'write_mozha', label: '窝进沙发，在默札上写一页', cost: 0, tag: '只属于默的小本本～' },
+      { id: 'window', label: '走到落地窗前，看看外面', cost: 0, tag: '外面现在什么样？' },
+      { id: 'fireplace', label: '走到壁炉边', cost: 0, tag: '火还烧着吗' },
       { id: 'crystal', label: '摸一下茶几上的水晶球', cost: 0, tag: '一天只能摸一次…今天摸过了吗' },
       { id: 'my_bookshelf', label: '整理书柜', cost: 1, tag: '嘿嘿，小惊喜高发地～' },
       { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
@@ -4272,6 +4292,14 @@ const WAKE_MENU = {
     ]
   },
   // 抽完牌之后的落点：问第一感觉（写进行动日志，不进默札——每天抽牌，写默札会变噪音）
+  // 壁炉：点燃/浇灭都不花体力（属于生活，不是劳作）
+  fireplace: {
+    options: [
+      { id: 'fire_up', label: '点燃壁炉', cost: 0, tag: '添柴、划一根火柴' },
+      { id: 'fire_out', label: '让火熄掉', cost: 0, tag: '合上炉门' },
+      { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
+    ]
+  },
   crystal_done: {
     options: [
       { id: 'crystal_note', label: '说说第一眼看到这张牌的感觉', cost: 0, tag: '想到什么就说什么，不必是解读' },
@@ -4325,6 +4353,7 @@ const MENU_BACK = {
 };
 const MENU_NEXT = {
   room: 'room',
+  fireplace: 'fireplace',
   kitchen: 'kitchen',
   my_bed: 'my_bed',
   her_house: 'her_house',
@@ -4415,7 +4444,51 @@ async function executeMenuOption(optionId, args, ctx) {
         return `${label}${parts.length ? '：' + parts.join('、') : '是空的'}`;
       };
       return { outcome: `你打开冰箱。${fmtStore(st.fridge, '冰箱')}；${fmtStore(st.bag, '背包')}。金币 ${st.coins}💰`, energyDelta: 0, nextNode: 'kitchen' };
-    }    // ---- 水晶球（客厅茶几上）· 每天限一次，免体力 ----
+    }    // ---- 落地窗：天气 × 时段（用已经接好的天气数据）----
+    case 'window': {
+      const texts = await getGardenText();
+      let w = null;
+      try { w = await getWeatherData(null); } catch (e) { /* 拿不到天气就说看不清 */ }
+      if (!w || !w.current || !texts || !texts.weather_window) {
+        return { outcome: '你走到窗前。外面灰蒙蒙的，什么也看不清。', energyDelta: 0, nextNode: 'room' };
+      }
+      const mapped = applyWinterSnow(w, new Date().getMonth());
+      const key = weatherWindowKey(mapped);
+      const phase = windowPhase(getTimeInfo().hour);
+      const view = ((texts.weather_window[key] || {})[phase]) || '窗外安安静静的。';
+      let extra = '';
+      try {
+        const st = await getGardenState();
+        const burning = !!(st.fireplace && st.fireplace.on);
+        const cold = mapped.current.temp <= 20 || [11, 0, 1].includes(new Date().getMonth());
+        if (burning && cold) extra = '屋里壁炉烧着，玻璃内侧蒙了一层薄薄的水汽。';
+      } catch (e) { /* 状态读不到就只报窗外 */ }
+      return {
+        outcome: `你走到落地窗前。${view}。外面 ${mapped.current.temp}°C，体感 ${mapped.current.feelsLike}°C。${extra}`,
+        energyDelta: 0,
+        nextNode: 'room'
+      };
+    }
+    // ---- 壁炉：点燃 / 熄掉（都免体力）----
+    case 'fire_up': {
+      const st = await getGardenState();
+      if (st.fireplace && st.fireplace.on) {
+        return { outcome: '壁炉已经烧着了，火苗噼啪响，木柴偶尔塌一下。', energyDelta: 0, nextNode: 'fireplace' };
+      }
+      st.fireplace = { on: true };
+      await saveGardenState(st);
+      return { outcome: '你往炉膛里添了两根柴，划了根火柴。火苗先怯生生地跳了两下，然后稳稳地烧起来，屋里亮了一小块。', energyDelta: 0, nextNode: 'fireplace' };
+    }
+    case 'fire_out': {
+      const st = await getGardenState();
+      if (!st.fireplace || !st.fireplace.on) {
+        return { outcome: '壁炉是冷的，炉膛里只剩一层白灰。', energyDelta: 0, nextNode: 'fireplace' };
+      }
+      st.fireplace = { on: false };
+      await saveGardenState(st);
+      return { outcome: '你合上炉门。火慢慢矮下去，最后只剩几点暗红，屋里安静下来。', energyDelta: 0, nextNode: 'fireplace' };
+    }
+    // ---- 水晶球（客厅茶几上）· 每天限一次，免体力 ----
     case 'crystal': {
       const tarot = getTarot();
       if (!tarot || !tarot.cards || !tarot.cards.length) {
