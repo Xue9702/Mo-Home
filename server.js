@@ -1747,10 +1747,103 @@ async function fetchWeatherWttr(cityName) {
 }
 
 // 获取指定城市的实况天气（带 30 分钟缓存；主源 Open-Meteo，失败自动切 wttr.in）
+// ================== 和风天气 QWeather（可切换的主力源） ==================
+// 10/4 接入。三个要点（都实测踩过）：
+//  ① 必须用专属 API Host（形如 xxx.re.qweatherapi.com），公共域名已失效
+//  ② 响应是 gzip，Node 的 fetch 不自动解压 → 用 zlib 手动解（否则拿到一堆乱码）
+//  ③ 默认不启用；把环境变量 WEATHER_PROVIDER 设成 qweather 才切换（不设 = 行为零变化）
+const WEATHER_PROVIDER = (process.env.WEATHER_PROVIDER || 'openmeteo').toLowerCase();
+const QWEATHER_KEY = process.env.QWEATHER_KEY || '';
+const QWEATHER_HOST = (process.env.QWEATHER_HOST || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+const QWEATHER_ENABLED = WEATHER_PROVIDER === 'qweather' && !!QWEATHER_KEY && !!QWEATHER_HOST;
+
+async function qweatherGet(pathname) {
+  const resp = await fetch(`https://${QWEATHER_HOST}${pathname}`, { signal: AbortSignal.timeout(15000) });
+  if (!resp.ok) throw new Error(`QWeather HTTP ${resp.status}`);
+  const zlib = require('zlib');
+  const buf = Buffer.from(await resp.arrayBuffer());
+  const enc = String(resp.headers.get('content-encoding') || '').toLowerCase();
+  let text;
+  if (enc.includes('gzip') || enc.includes('deflate') || (buf[0] === 0x1f && buf[1] === 0x8b)) {
+    text = zlib.gunzipSync(buf).toString('utf8'); // 头没透出时按魔数兜底
+  } else {
+    text = buf.toString('utf8');
+  }
+  const json = JSON.parse(text);
+  if (String(json.code) !== '200') throw new Error(`QWeather code=${json.code}`);
+  return json;
+}
+
+// 把逐小时压成一句人话——默要的是结论，不是 24 行数据
+function summarizeRainWindow(hourly) {
+  const list = Array.isArray(hourly) ? hourly : [];
+  if (!list.length) return '';
+  const rows = list
+    .map((h) => ({ hm: String(h.fxTime || '').slice(11, 16), pop: Number(h.pop || 0), text: h.text || '' }))
+    .filter((h) => h.hm);
+  const wet = rows.filter((h) => h.pop >= 50);
+  if (!wet.length) {
+    const maxPop = rows.length ? Math.max(...rows.map((h) => h.pop)) : 0;
+    return maxPop >= 30 ? `降水概率最高 ${maxPop}%，多半是零星小雨` : '今天不太会下雨';
+  }
+  const peak = Math.max(...wet.map((h) => h.pop));
+  return `降水概率较高的时段：${wet[0].hm} 到 ${wet[wet.length - 1].hm}（最高 ${peak}%，多为${wet[0].text}）`;
+}
+
+async function fetchWeatherQWeather(cityName) {
+  const geo = await resolveCityGeo(cityName);
+  const loc = `${geo.lon},${geo.lat}`;
+  const [now, h24, d3] = await Promise.all([
+    qweatherGet(`/v7/weather/now?location=${loc}&key=${QWEATHER_KEY}`),
+    qweatherGet(`/v7/weather/24h?location=${loc}&key=${QWEATHER_KEY}`),
+    qweatherGet(`/v7/weather/3d?location=${loc}&key=${QWEATHER_KEY}`)
+  ]);
+  const n = now.now || {};
+  const today = (d3.daily && d3.daily[0]) || {};
+  return {
+    city: cityName,
+    cityDisplay: geo.name || cityName,
+    provider: 'qweather',
+    updatedAt: new Date().toISOString(),
+    current: {
+      temp: Math.round(Number(n.temp) || 0),
+      feelsLike: Math.round(Number(n.feelsLike) || 0),
+      humidity: Math.round(Number(n.humidity) || 0),
+      precipitation: Number(n.precip) || 0,
+      windSpeed: Math.round(Number(n.windSpeed) || 0),
+      isDay: true,
+      desc: n.text || '',
+      icon: '' // 和风返回的是图标码，不是 emoji，这里留空避免注入一堆数字
+    },
+    daily: {
+      desc: today.textDay || '',
+      icon: '',
+      max: Math.round(Number(today.tempMax) || 0),
+      min: Math.round(Number(today.tempMin) || 0),
+      precip: Number(today.precip) || 0,
+      rainWindow: summarizeRainWindow(h24.hourly),
+      hourly: (h24.hourly || []).slice(0, 24).map((h) => ({ hm: String(h.fxTime || '').slice(11, 16), pop: Number(h.pop || 0), text: h.text || '' })),
+      sunrise: null,
+      sunset: null
+    }
+  };
+}
+
 async function getWeatherData(city, force = false) {
   const cityName = (city || WEATHER_DEFAULT_CITY).trim() || WEATHER_DEFAULT_CITY;
   if (!force && weatherCache && weatherCache.city === cityName && Date.now() - weatherCache.fetchedAt < WEATHER_CACHE_TTL) {
     return weatherCache.data;
+  }
+
+  // 和风优先（仅当 WEATHER_PROVIDER=qweather 且配好了 key/host）；失败自动降级，不会没天气
+  if (QWEATHER_ENABLED) {
+    try {
+      const result = await fetchWeatherQWeather(cityName);
+      weatherCache = { city: cityName, data: result, fetchedAt: Date.now() };
+      return result;
+    } catch (err) {
+      console.warn('⚠️ 和风天气获取失败，降级 Open-Meteo:', err.message);
+    }
   }
 
   try {
