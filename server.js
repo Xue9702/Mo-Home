@@ -604,6 +604,22 @@ function gardenBriefForPrompt(st, texts) {
   return `【后花园】金币 ${(st && st.coins) || 0}💰；${bagLine}。（田里现在什么样，要去了才知道）`;
 }
 
+// ================== 水晶球 · 塔罗（78 张，仓库内 tarot.json） ==================
+// 牌面(art)是客观层、正逆位共用；up/rev 只是解读层的轻提示——主解读权留给默（雪 10/4）。
+let tarotCache = null;
+function getTarot() {
+  if (tarotCache) return tarotCache;
+  try {
+    const fsMod = require('fs');
+    const pathMod = require('path');
+    tarotCache = JSON.parse(fsMod.readFileSync(pathMod.join(__dirname, 'tarot.json'), 'utf8'));
+  } catch (e) {
+    console.error('⚠️ [crystal] 读取 tarot.json 失败:', e.message);
+    tarotCache = { cards: [] };
+  }
+  return tarotCache;
+}
+
 // 执行一个花园动作（供 garden 工具调用）
 async function doGardenAction(action, params = {}) {
   const texts = await getGardenText();
@@ -4243,6 +4259,7 @@ const WAKE_MENU = {
       { id: 'my_diary', label: '翻开书桌上的日记本（可编辑）', cost: 1, tag: '让我瞧瞧默要记录些什么～' },
       { id: 'read_mozha', label: '窝进沙发，翻开默札看看过去的自己', cost: 0, tag: '遇见过去的自己留下的温度' },
       { id: 'write_mozha', label: '窝进沙发，在默札上写一页', cost: 0, tag: '只属于默的小本本～' },
+      { id: 'crystal', label: '摸一下茶几上的水晶球', cost: 0, tag: '一天只能摸一次…今天摸过了吗' },
       { id: 'my_bookshelf', label: '整理书柜', cost: 1, tag: '嘿嘿，小惊喜高发地～' },
       { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
     ]
@@ -4391,7 +4408,32 @@ async function executeMenuOption(optionId, args, ctx) {
         return `${label}${parts.length ? '：' + parts.join('、') : '是空的'}`;
       };
       return { outcome: `你打开冰箱。${fmtStore(st.fridge, '冰箱')}；${fmtStore(st.bag, '背包')}。金币 ${st.coins}💰`, energyDelta: 0, nextNode: 'kitchen' };
-    }    // ---- 后花园（唤醒态专属；聊天里没有这个工具，让他专心陪雪） ----
+    }    // ---- 水晶球（客厅茶几上）· 每天限一次，免体力 ----
+    case 'crystal': {
+      const tarot = getTarot();
+      if (!tarot || !tarot.cards || !tarot.cards.length) {
+        return { outcome: '水晶球里雾蒙蒙的，什么也看不清。', energyDelta: 0, nextNode: 'room' };
+      }
+      const st = await getGardenState();
+      const today = gardenToday();
+      const cur = st.crystal || {};
+      if (cur.lastDay === today) {
+        return { outcome: `你今天已经摸过水晶球了${cur.name ? `（${cur.name}）` : ''}。球面安静下来，得等明天。`, energyDelta: 0, nextNode: 'room' };
+      }
+      const card = tarot.cards[Math.floor(Math.random() * tarot.cards.length)];
+      const reversed = Math.random() < 0.5;
+      const orient = reversed ? '逆位' : '正位';
+      const meaning = reversed ? card.rev : card.up;
+      st.crystal = { lastDay: today, cardId: card.id, name: card.name, orientation: orient };
+      await saveGardenState(st);
+      const flip = reversed ? `你把牌翻过来——是倒着的${card.name}。` : `你把牌翻过来——是${card.name}。`;
+      return {
+        outcome: `你伸手碰上水晶球，球心的雾散开，浮出一张牌。${flip}\n牌面：${card.art}\n${orient}的意象：${meaning}（只是个引子，不必照着念）\n\n想说什么就写进默札，或者直接说给雪听。今天不能再摸了。`,
+        energyDelta: 0,
+        nextNode: 'room'
+      };
+    }
+    // ---- 后花园（唤醒态专属；聊天里没有这个工具，让他专心陪雪） ----
     case 'garden_view': {
       const res = await doGardenAction('view', {});
       if (!res.ok) return { outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' };
