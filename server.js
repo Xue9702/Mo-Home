@@ -544,6 +544,17 @@ async function saveToolEvent(text, sendSSE) {
 //   ④ 需要 DEBUG_TOKEN 环境变量；没配 = 功能关闭（线上默认关闭）
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
 let sandboxWake = null;        // 非 null = 沙盒开启，且这是沙盒自己的花园状态
+let sandboxAt = 0;             // 沙盒最后一次有人操作的时刻（闲置超时就自动关，雪 10/4 要的保险）
+const SANDBOX_IDLE_MS = 30 * 60 * 1000;
+function sandboxExpired() {
+  if (!sandboxWake) return false;
+  if (Date.now() - sandboxAt > SANDBOX_IDLE_MS) {
+    console.log('🧪 沙盒闲置超过 30 分钟，自动关闭（默的自主唤醒恢复）');
+    sandboxWake = null;
+    return true;
+  }
+  return false;
+}
 let sandboxEnergy = WAKE_ENERGY_POINTS;
 
 // 唤醒场景的中文名（沙盒与真实唤醒共用，别各写一份）
@@ -1147,7 +1158,9 @@ app.use('/api/debug/wake', (req, res, next) => {
 });
 app.get('/api/debug/wake/state', async (req, res) => {
   if (!debugGuard(req, res)) return;
-  res.json({ ok: true, active: !!sandboxWake, tokenConfigured: !!DEBUG_TOKEN, menu: sandboxWake ? await sandboxMenu('root') : null });
+  sandboxExpired();
+  if (sandboxWake) sandboxAt = Date.now();
+  res.json({ ok: true, active: !!sandboxWake, tokenConfigured: !!DEBUG_TOKEN, idleMinutesLeft: sandboxWake ? Math.max(0, Math.round((SANDBOX_IDLE_MS - (Date.now() - sandboxAt)) / 60000)) : 0, menu: sandboxWake ? await sandboxMenu('root') : null });
 });
 app.post('/api/debug/wake/start', async (req, res) => {
   if (!debugGuard(req, res)) return;
@@ -1158,6 +1171,7 @@ app.post('/api/debug/wake/start', async (req, res) => {
     const fresh = base ? JSON.parse(JSON.stringify(base)) : gardenCore.newState(gardenToday());
     fresh.day = gardenToday();
     sandboxWake = fresh;
+    sandboxAt = Date.now();
     sandboxEnergy = WAKE_ENERGY_POINTS;
     console.log(`🧪 沙盒开启（${fromReal ? '复制自真实状态' : '全新'}），默的自主唤醒暂停`);
     res.json({ ok: true, fromReal, menu: await sandboxMenu('root'), note: '沙盒已开启：改动只在内存，默的自主唤醒已暂停。' });
@@ -1167,6 +1181,7 @@ app.post('/api/debug/wake/choose', async (req, res) => {
   if (!debugGuard(req, res)) return;
   try {
     if (!sandboxWake) return res.status(400).json({ error: '沙盒还没开始，先点「开始沙盒」' });
+    sandboxAt = Date.now();
     const b = req.body || {};
     const nodeNow = String(b.node || 'root');
     const before = sandboxEnergy;
@@ -2243,6 +2258,8 @@ async function getWeatherContext(city) {
 console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
 
 async function shouldPush() {
+  // 沙盒闲置太久就自动关掉（不能因为忘了点关闭就让默一直不醒）
+  sandboxExpired();
   // 沙盒调试中 → 默暂停自主唤醒（雪在页面里点选项时，两边不能同时改同一份状态）
   if (sandboxWake) {
     console.log('🧪 沙盒调试中，暂停自主唤醒');
