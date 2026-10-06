@@ -413,9 +413,9 @@
   "goods": {
     "_comment": "成品食材（商店直接卖的）。cat 决定菜品档次：veg=蔬菜/家禽/肉/蛋/豆制品（雪定：肉好买，和蔬菜算同一类）、staple=主食与调料（不计入档次）",
     "tofu":       { "name": "豆腐", "emoji": "🧊", "cat": "veg",    "price": 6,  "bag_days": 2,  "fridge_days": 5 },
-    "beef":       { "name": "牛肉", "emoji": "🥩", "cat": "veg",    "price": 25, "bag_days": 2,  "fridge_days": 5 },
-    "pork":       { "name": "猪肉", "emoji": "🥓", "cat": "veg",    "price": 18, "bag_days": 2,  "fridge_days": 5 },
-    "chicken":    { "name": "鸡肉", "emoji": "🍗", "cat": "veg",    "price": 20, "bag_days": 2,  "fridge_days": 5 },
+    "beef":       { "name": "牛肉", "emoji": "🥩", "cat": "veg", "fine": "meat",    "price": 25, "bag_days": 2,  "fridge_days": 5 },
+    "pork":       { "name": "猪肉", "emoji": "🥓", "cat": "veg", "fine": "meat",    "price": 18, "bag_days": 2,  "fridge_days": 5 },
+    "chicken":    { "name": "鸡肉", "emoji": "🍗", "cat": "veg", "fine": "meat",    "price": 20, "bag_days": 2,  "fridge_days": 5 },
     "vermicelli": { "name": "粉条", "emoji": "🍜", "cat": "staple", "price": 6,  "bag_days": 30, "fridge_days": 60 },
     "flatbread":  { "name": "面饼", "emoji": "🥯", "cat": "staple", "price": 6,  "bag_days": 5,  "fridge_days": 12 }
   },
@@ -430,6 +430,19 @@
     "salmon": "seafood",
     "crab": "seafood",
     "oyster": "seafood"
+  },
+
+  "names": {
+    "_comment": "不在作物/成品表里的食材的中文名（海鲜等；湖边钓鱼做好后会真的产出）",
+    "shrimp": "虾", "sea_bass": "鲈鱼", "salmon": "三文鱼", "crab": "螃蟹", "oyster": "生蚝", "egg": "鸡蛋", "rice": "大米", "flour": "面粉"
+  },
+
+  "food_value": {
+    "_comment": "食材价值分，决定菜品档次：总分 ≤3 初级 / ≤6 中级 / ≤9 高级 / ≥10 顶级。嫌哪样太便宜或太贵就调这里（雪 10/4 换成按价值算）",
+    "staple": 1, "veg": 1, "flower": 1,
+    "fruit": 2, "mushroom": 2, "meat": 2,
+    "seafood": 3, "shrimp": 3, "sea_bass": 3, "oyster": 3,
+    "salmon": 4, "crab": 4
   },
 
   "recipes": {
@@ -469,7 +482,8 @@
       { "id": "mango_lemon_drink", "name": "芒果柠檬饮", "emoji": "🥤", "need": { "mango": 1, "lemon": 1 } },
       { "id": "watermelon_juice", "name": "西瓜汁", "emoji": "🍉", "need": { "watermelon": 1 } },
       { "id": "cantaloupe_smoothie", "name": "哈密瓜冰沙", "emoji": "🍈", "need": { "cantaloupe": 1 } },
-      { "id": "veggie_wrap", "name": "卷饼", "emoji": "🌯", "need": { "flatbread": 1, "egg": 1 }, "pick": { "veg": 1 } }
+      { "id": "veggie_wrap", "name": "卷饼", "emoji": "🌯", "need": { "flatbread": 1, "egg": 1 }, "pick": { "veg": 1 } },
+      { "id": "hotpot", "name": "鸳鸯火锅", "emoji": "🍲", "need": { "vermicelli": 1 }, "pick": { "veg": 3, "meat": 2, "seafood": 1 } }
     ]
   }
 }

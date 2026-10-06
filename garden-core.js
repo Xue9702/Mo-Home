@@ -475,6 +475,7 @@ function itemCat(id, texts) {
 }
 function itemName(id, texts) {
   const t = texts || {};
+  if (t.names && t.names[id]) return t.names[id];
   if (t.crops && t.crops[id]) return t.crops[id].name;
   if (t.goods && t.goods[id]) return t.goods[id].name;
   if (id === 'egg') return '鸡蛋';
@@ -486,18 +487,45 @@ function itemName(id, texts) {
   }
   return id;
 }
+// 细分类（"任选"用）：肉/蛋/豆制品成品算 meat，蔬菜算 veg——这样"任选三种蔬菜"不会把牛肉选进沙拉
+function fineCat(id, texts) {
+  const t = texts || {};
+  if (t.goods && t.goods[id] && t.goods[id].fine) return t.goods[id].fine;
+  return itemCat(id, t);
+}
+
+// 食材价值分（雪 10/4：档次改成按价值算，比按种类数更符合直觉）
+function valueOf(id, texts) {
+  const t = texts || {};
+  const fv = t.food_value || {};
+  if (typeof fv[id] === 'number') return fv[id];
+  const c = itemCat(id, t);
+  if (typeof fv[c] === 'number') return fv[c];
+  const f = fineCat(id, t);
+  if (typeof fv[f] === 'number') return fv[f];
+  return 1;
+}
+
+// 档次：总分 ≤3 初级 / ≤6 中级 / ≤9 高级 / ≥10 顶级。
+// 没配 food_value 时退回旧的"按种类数"算法（两套都留着，切换不用改代码结构）
 function tierOfRecipe(rec, texts) {
+  const t = texts || {};
+  if (t.food_value && Object.keys(t.food_value).length) {
+    let score = 0;
+    for (const k of Object.keys(rec.need || {})) score += valueOf(k, t) * (Number(rec.need[k]) || 1);
+    for (const k of Object.keys(rec.pick || {})) score += valueOf(k, t) * (Number(rec.pick[k]) || 1);
+    return score <= 3 ? 1 : score <= 6 ? 2 : score <= 9 ? 3 : 4;
+  }
   const set = new Set();
   for (const k of Object.keys(rec.need || {})) {
-    const b = itemCat(k, texts);
+    const b = itemCat(k, t);
     if (BUCKET_NAME[b]) set.add(b);
   }
   for (const k of Object.keys(rec.pick || {})) {
     if (BUCKET_NAME[k]) set.add(k);
   }
-  return set.size;
+  return Math.min(4, set.size);
 }
-
 // 做菜：need 是固定材料；pick 是"从某类里任选 N 种"（use 里挑，不重复）
 function cook(state, { recipeId = '', use = [], texts = {} } = {}) {
   const s = JSON.parse(JSON.stringify(state));
@@ -512,7 +540,7 @@ function cook(state, { recipeId = '', use = [], texts = {} } = {}) {
     for (const id of use) {
       if (chosen.length >= want) break;
       if (picked.has(id)) continue;
-      if (itemCat(id, texts) !== bucket) continue;
+      if (fineCat(id, texts) !== bucket) continue;
       if (!((s.bag[id] || []).length)) continue;
       chosen.push(id); picked.add(id);
     }
@@ -550,6 +578,6 @@ module.exports = {
   buyChick, feedChickens, nameChick, collectEggs, viewCoop,
   shopList, order, tickWake, wish,
   BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung, orderMany,
-  BUCKET_NAME, TIER_NAME, itemCat, itemName, tierOfRecipe, cook,
+  BUCKET_NAME, TIER_NAME, itemCat, fineCat, valueOf, itemName, tierOfRecipe, cook,
   viewPlot, viewGarden
 };

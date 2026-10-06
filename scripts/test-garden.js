@@ -355,20 +355,42 @@ t('狗屋：配方 5 木板 + 10 钉子，与猫窝互不影响', () => {
 });
 const GTEXTS = require('../garden-text.json');   // 真实文案（与上面给花园逻辑用的假 TEXTS 区分开）
 
-t('菜品档次：按涉及的种类数算（1初级/2中级/3高级/4顶级）', () => {
+t('菜品档次：按食材价值分算（≤3初级 / ≤6中级 / ≤9高级 / ≥10顶级）', () => {
   const by = (id) => G.tierOfRecipe(GTEXTS.recipes.list.find((r) => r.id === id), GTEXTS);
-  assert.strictEqual(by('fried_egg'), 1, '煎蛋只有蛋一类 → 初级');
-  assert.strictEqual(by('fried_rice'), 1, '蛋炒饭：米不算、蛋与胡萝卜同类 → 初级');
-  assert.strictEqual(by('mushroom_rib_soup'), 2, '菌菇排骨汤：菌菇 + 肉 → 中级');
-  assert.strictEqual(by('corn_mushroom_soup'), 3, '奶油玉米蘑菇汤：蔬菜+菌菇+海鲜 → 高级');
-  assert.strictEqual(by('birthday_cake'), 3, '生日蛋糕：肉蛋+水果+花 → 高级');
-  // 现在还没有四类的真菜，用一条合成配方验证"四类=顶级"这条规则本身
-  const fake4 = { need: { shrimp: 1, strawberry: 1, enoki: 1, tomato: 1 } };
-  assert.strictEqual(G.tierOfRecipe(fake4, GTEXTS), 4, '海鲜+水果+菌菇+蔬菜 → 顶级');
-  // 五类不存在：真要凑五类也只有 veg/seafood/fruit/mushroom/flower 五个桶
-  const fake5 = { need: { shrimp: 1, strawberry: 1, enoki: 1, tomato: 1, rose: 1 } };
-  assert.strictEqual(G.tierOfRecipe(fake5, GTEXTS), 5, '五类会算出 5（规则上界之外，说明确实不该有）');
+  assert.strictEqual(by('fried_egg'), 1, '煎蛋：蛋 1 分 → 初级');
+  assert.strictEqual(by('mushroom_rib_soup'), 2, '菌菇排骨汤：肉2 + 菌菇2×2 = 6 → 中级');
+  assert.strictEqual(by('corn_mushroom_soup'), 3, '奶油玉米蘑菇汤：1+2+1+3 = 7 → 高级');
+  assert.strictEqual(by('birthday_cake'), 3, '生日蛋糕：蛋3+面1+水果4+花1 = 9 → 高级');
+  assert.strictEqual(by('seafood_cured'), 4, '生腌拼盘：柠檬2+三文鱼4+螃蟹4+虾3 = 13 → 顶级');
+  assert.strictEqual(by('hotpot'), 4, '鸳鸯火锅：粉条1+菜3+肉4+海鲜3 = 11 → 顶级');
+  // 边界
+  assert.strictEqual(G.tierOfRecipe({ need: { corn: 2 } }, GTEXTS), 1, '2 分 → 初级');
+  assert.strictEqual(G.tierOfRecipe({ need: { salmon: 1, corn: 1 } }, GTEXTS), 2, '5 分 → 中级');
+  assert.strictEqual(G.tierOfRecipe({ need: { salmon: 2 } }, GTEXTS), 3, '8 分 → 高级');
+  assert.strictEqual(G.tierOfRecipe({ need: { salmon: 3 } }, GTEXTS), 4, '12 分 → 顶级');
 });
+
+t('细分类：任选蔬菜不会把肉选进去（沙拉里不该出现牛肉）', () => {
+  assert.strictEqual(G.fineCat('beef', GTEXTS), 'meat', '牛肉是 meat');
+  assert.strictEqual(G.fineCat('tomato', GTEXTS), 'veg', '番茄是 veg');
+  assert.strictEqual(G.fineCat('tofu', GTEXTS), 'veg', '豆腐算 veg');
+  const s = G.newState('2026-10-06');
+  s.bag.beef = [{ at: 'x' }];
+  s.bag.tomato = [{ at: 'x' }];
+  s.bag.carrot = [{ at: 'x' }];
+  s.bag.bokchoy = [{ at: 'x' }];
+  const r = G.cook(s, { recipeId: 'salad', use: ['beef', 'tomato', 'carrot', 'bokchoy'], texts: GTEXTS });
+  assert.ok(r.ok, r.msg);
+  assert.strictEqual(r.state.bag.beef.length, 1, '牛肉不该被当成蔬菜用掉');
+  assert.ok(!r.state.bag.tomato && !r.state.bag.carrot && !r.state.bag.bokchoy, '三种蔬菜被消耗');
+});
+
+t('海鲜有中文名（材料清单里不能出现 shrimp 这种英文）', () => {
+  assert.strictEqual(G.itemName('shrimp', GTEXTS), '虾');
+  assert.strictEqual(G.itemName('salmon', GTEXTS), '三文鱼');
+  assert.strictEqual(G.itemName('sea_bass', GTEXTS), '鲈鱼');
+});
+
 
 t('主食与调料不计入档次（米/面不算一类）', () => {
   assert.strictEqual(G.itemCat('rice', GTEXTS), 'staple');
