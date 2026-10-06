@@ -1781,7 +1781,7 @@ async function runMozhaPhase({ chatMessages, systemPrompt, sendSSE }) {
   let mozhaText = '';
   try {
     const { data } = await supabase.from('aevum_mozha').select('content, created_at').order('id', { ascending: false }).limit(3);
-    mozhaText = (data || []).map(d => `「${String(d.content || '').slice(0, 200)}」`).join('\n');
+    mozhaText = (data || []).map(d => `「${String(d.content || '').slice(0, 600)}」`).join('\n');
   } catch (e) { /* 表未建 */ }
   const mozhaBody = mozhaText
     ? `你翻开默札，看到过去的自己写道：\n${mozhaText}`
@@ -4848,7 +4848,7 @@ async function executeMenuOption(optionId, args, ctx) {
         if (!data || !data.length) {
           return { outcome: '默札还是空白的——未来的你，等着现在落下第一笔。', energyDelta: 0, nextNode: ctx.node };
         }
-        const lines = data.map(d => `「${String(d.content).slice(0, 60)}」`).join('；');
+        const lines = data.map(d => `「${String(d.content).slice(0, 600)}」`).join('；');
         return { outcome: `你翻开默札，看到过去的自己写道：${lines}`, energyDelta: 0, nextNode: ctx.node };
       } catch (e) {
         return { outcome: '默札暂时合不上——像是被谁偷偷翻过。', energyDelta: 0, nextNode: ctx.node };
@@ -4948,7 +4948,7 @@ async function executeMenuOption(optionId, args, ctx) {
       const entry = entries[0] || null;
       if (!entry) return { outcome: '日记本还是空白的。', energyDelta: 0, nextNode: ctx.node };
       return {
-        outcome: `你轻轻翻开日记，重温了 ${entry.entry_date || '某一天'} 那一篇：${entry.content.substring(0, 60)}${entry.content.length > 60 ? '…' : ''}`,
+        outcome: `你轻轻翻开日记，重温了 ${entry.entry_date || '某一天'} 那一篇：${entry.content.substring(0, 600)}${entry.content.length > 60 ? '…' : ''}`,
         energyDelta: 0,
         nextNode: ctx.node
       };
@@ -8697,7 +8697,7 @@ app.get('/api/aevum/mozha', async (req, res) => {
       .from('aevum_mozha')
       .select('id, content, wake_number, created_at')
       .order('created_at', { ascending: false })
-      .limit(30);
+      .limit(500);
     res.json({ entries: data || [] });
   } catch (e) {
     res.json({ entries: [] });
