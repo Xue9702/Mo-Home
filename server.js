@@ -1762,10 +1762,16 @@ async function qweatherGet(pathname) {
   if (!resp.ok) throw new Error(`QWeather HTTP ${resp.status}`);
   const zlib = require('zlib');
   const buf = Buffer.from(await resp.arrayBuffer());
-  const enc = String(resp.headers.get('content-encoding') || '').toLowerCase();
+  // ⚠️ 不能按 content-encoding 头判断：Node 的 fetch 会自动解压 gzip，但**响应头里仍写着 gzip**，
+  // 照着头去 gunzip 会抛 "incorrect header check"，导致和风路径每次失败、静默降级回 Open-Meteo。
+  // 只能按实际字节判断——真有 gzip 魔数才解，否则当纯文本。
   let text;
-  if (enc.includes('gzip') || enc.includes('deflate') || (buf[0] === 0x1f && buf[1] === 0x8b)) {
-    text = zlib.gunzipSync(buf).toString('utf8'); // 头没透出时按魔数兜底
+  if (buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+    try {
+      text = zlib.gunzipSync(buf).toString('utf8');
+    } catch (e) {
+      text = buf.toString('utf8');
+    }
   } else {
     text = buf.toString('utf8');
   }
