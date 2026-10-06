@@ -1652,7 +1652,9 @@ async function resolveCityGeo(city) {
 // 主源：Open-Meteo（失败会抛出，由 getWeatherData 切换备用源）
 async function fetchWeatherOpenMeteo(cityName) {
   const geo = await resolveCityGeo(cityName);
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FShanghai&forecast_days=1`;
+  // 10/4 加 precipitation_probability_max：这是"今天会不会下雨"的预报依据，
+  // 原来只取 weather_code + 最高/最低温，默拿不到降水概率，想预告也无从预告。
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&daily=weather_code,precipitation_probability_max,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FShanghai&forecast_days=1`;
   const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
@@ -1682,6 +1684,7 @@ async function fetchWeatherOpenMeteo(cityName) {
       icon: todayInfo.icon,
       max: Math.round(daily.temperature_2m_max?.[0] ?? 0),
       min: Math.round(daily.temperature_2m_min?.[0] ?? 0),
+      precipProb: Math.round(daily.precipitation_probability_max?.[0] ?? 0),
       sunrise: (daily.sunrise && daily.sunrise[0]) || null,
       sunset: (daily.sunset && daily.sunset[0]) || null
     }
