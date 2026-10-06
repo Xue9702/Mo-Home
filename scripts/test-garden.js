@@ -3,8 +3,8 @@ const assert = require('assert');
 const G = require('../garden-core');
 
 const CROPS = {
-  daisy: { name: '雏菊', days: 2, water_per_day: 1, stages: ['种子', '嫩叶', '开花'] },
-  rose: { name: '玫瑰', days: 5, water_per_day: 2, stages: ['种子', '嫩叶', '花苞', '盛开'] }
+  daisy: { name: '雏菊', kind: 'flower', days: 2, water_per_day: 1, stages: ['种子', '嫩叶', '开花'] },
+  rose: { name: '玫瑰', kind: 'flower', days: 5, water_per_day: 2, stages: ['种子', '嫩叶', '花苞', '盛开'] }
 };
 const TEXTS = {
   water_state: { dry: '土地干干的，今天还没浇水', half: '浇过一次了（1/2）', done: '今天的水够（2/2）', rain: '土是湿的，雨水够了' },
@@ -49,17 +49,17 @@ t('同一天多次唤醒只结算一次', () => {
 t('播种消耗种子并记下种植日', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_daisy = [{ at: '2026-10-06' }];
-  const r = G.plant(s, { plot: 1, crop: 'daisy', crops: CROPS });
+  const r = G.plant(s, { site: 'flower', plot: 1, crop: 'daisy', crops: CROPS });
   assert.ok(r.ok, r.msg);
   assert.strictEqual(r.state.bag.seed_daisy, undefined, '种子应被消耗掉');
-  assert.strictEqual(r.state.plots[0].crop, 'daisy');
-  assert.strictEqual(r.state.plots[0].plantedDay, '2026-10-06');
+  assert.strictEqual(r.state.plots.find((p) => p.site === 'flower' && p.i === 1).crop, 'daisy');
+  assert.strictEqual(r.state.plots.find((p) => p.site === 'flower' && p.i === 1).plantedDay, '2026-10-06');
 });
 
 t('浇水：雨天不消耗、晴天按次数封顶', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_rose = [{ at: '2026-10-06' }];
-  s = G.plant(s, { plot: 1, crop: 'rose', crops: CROPS }).state;
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'rose', crops: CROPS }).state;
   assert.strictEqual(G.water(s, { raining: true, crops: CROPS }).ok, false, '雨天不该浇');
   const w1 = G.water(s, { crops: CROPS });
   assert.ok(w1.ok);
@@ -72,49 +72,49 @@ t('浇水：雨天不消耗、晴天按次数封顶', () => {
 t('成熟后可收获，未成熟不行', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_daisy = [{ at: '2026-10-06' }];
-  s = G.plant(s, { plot: 1, crop: 'daisy', crops: CROPS }).state;
-  assert.strictEqual(G.harvest(s, { plot: 1, crops: CROPS }).ok, false, '刚种下不能收');
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'daisy', crops: CROPS }).state;
+  assert.strictEqual(G.harvest(s, { site: 'flower', plot: 1, crops: CROPS }).ok, false, '刚种下不能收');
   const day2 = settle(s, '2026-10-08', { rng: NO_LUCK }).state; // 第2天 = 成熟
-  const h = G.harvest(day2, { plot: 1, crops: CROPS });
+  const h = G.harvest(day2, { site: 'flower', plot: 1, crops: CROPS });
   assert.ok(h.ok, h.msg);
   assert.ok(h.state.bag.daisy && h.state.bag.daisy.length === 1, '收成应进背包');
-  assert.strictEqual(h.state.plots[0].crop, null, '收完田应空');
+  assert.strictEqual(h.state.plots.find((p) => p.site === 'flower' && p.i === 1).crop, null, '收完田应空');
 });
 
 t('生虫：连续两天没除就枯萎', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_rose = [{ at: '2026-10-06' }];
-  s = G.plant(s, { plot: 1, crop: 'rose', crops: CROPS }).state;
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'rose', crops: CROPS }).state;
   // rng 恒为 0 → 每次结算必生虫
   const d1 = settle(s, '2026-10-07', { rng: () => 0, weedRate: 0 });
-  assert.strictEqual(d1.state.plots[0].pest, 1, '第1天应生虫');
-  assert.ok(!d1.state.plots[0].dead, '第1天不该死');
+  assert.strictEqual(d1.state.plots.find((p) => p.site === 'flower' && p.i === 1).pest, 1, '第1天应生虫');
+  assert.ok(!d1.state.plots.find((p) => p.site === 'flower' && p.i === 1).dead, '第1天不该死');
   const d2 = settle(d1.state, '2026-10-08', { rng: () => 0, weedRate: 0 });
-  assert.strictEqual(d2.state.plots[0].pestDays, 1, '第2天：虫已连续 1 天没除');
-  assert.ok(!d2.state.plots[0].dead, '连续 1 天还不该死');
+  assert.strictEqual(d2.state.plots.find((p) => p.site === 'flower' && p.i === 1).pestDays, 1, '第2天：虫已连续 1 天没除');
+  assert.ok(!d2.state.plots.find((p) => p.site === 'flower' && p.i === 1).dead, '连续 1 天还不该死');
   const d3 = settle(d2.state, '2026-10-09', { rng: () => 0, weedRate: 0 });
-  assert.strictEqual(d3.state.plots[0].dead, true, '连续 2 天没除虫 → 枯萎');
+  assert.strictEqual(d3.state.plots.find((p) => p.site === 'flower' && p.i === 1).dead, true, '连续 2 天没除虫 → 枯萎');
 });
 
 t('生虫后及时除虫就不会枯', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_rose = [{ at: '2026-10-06' }];
-  s = G.plant(s, { plot: 1, crop: 'rose', crops: CROPS }).state;
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'rose', crops: CROPS }).state;
   s = settle(s, '2026-10-07', { rng: () => 0, weedRate: 0 }).state;
-  s = G.clearHazard(s, { plot: 1, kind: 'pest' }).state;   // 当天除掉
+  s = G.clearHazard(s, { site: 'flower', plot: 1, kind: 'pest' }).state;   // 当天除掉
   const d2 = settle(s, '2026-10-08', { rng: NO_LUCK, weedRate: 0 });
-  assert.strictEqual(d2.state.plots[0].pestDays, 0, '除掉了就该归零');
-  assert.ok(!d2.state.plots[0].dead, '不该枯');
+  assert.strictEqual(d2.state.plots.find((p) => p.site === 'flower' && p.i === 1).pestDays, 0, '除掉了就该归零');
+  assert.ok(!d2.state.plots.find((p) => p.site === 'flower' && p.i === 1).dead, '不该枯');
 });
 
 t('除虫清掉虫害', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_rose = [{ at: '2026-10-06' }];
-  s = G.plant(s, { plot: 1, crop: 'rose', crops: CROPS }).state;
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'rose', crops: CROPS }).state;
   s = settle(s, '2026-10-07', { rng: () => 0, weedRate: 0 }).state;
-  const c = G.clearHazard(s, { plot: 1, kind: 'pest' });
+  const c = G.clearHazard(s, { site: 'flower', plot: 1, kind: 'pest' });
   assert.ok(c.ok);
-  assert.strictEqual(c.state.plots[0].pest, 0);
+  assert.strictEqual(c.state.plots.find((p) => p.site === 'flower' && p.i === 1).pest, 0);
 });
 
 t('无人机订单：下单后下一次跨天到货', () => {
@@ -129,14 +129,14 @@ t('无人机订单：下单后下一次跨天到货', () => {
 t('查看：三维度齐全（生长/浇水/意外）', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_rose = [{ at: '2026-10-06' }];
-  s = G.plant(s, { plot: 1, crop: 'rose', crops: CROPS }).state;
-  const v1 = G.viewPlot(s, 1, { texts: TEXTS, crops: CROPS });
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'rose', crops: CROPS }).state;
+  const v1 = G.viewPlot(s, 1, { site: 'flower', texts: TEXTS, crops: CROPS });
   assert.ok(v1.grow.includes('种子'), '应显示第1段（刚种下）');
   assert.strictEqual(v1.water, TEXTS.water_state.dry, '维度2：没浇水');
   const s2 = settle(s, '2026-10-07', { rng: () => 0, weedRate: 0 }).state;
-  const v2 = G.viewPlot(s2, 1, { texts: TEXTS, crops: CROPS });
+  const v2 = G.viewPlot(s2, 1, { site: 'flower', texts: TEXTS, crops: CROPS });
   assert.ok(v2.lines.some((l) => l.includes('生了虫')), '维度3：应报告虫害');
-  const v3 = G.viewPlot(s2, 1, { texts: TEXTS, crops: CROPS, raining: true });
+  const v3 = G.viewPlot(s2, 1, { site: 'flower', texts: TEXTS, crops: CROPS, raining: true });
   assert.strictEqual(v3.water, TEXTS.water_state.rain, '维度2：雨天特殊文案');
 });
 
@@ -281,12 +281,12 @@ t('初始状态：背包里有 5 颗种子、30 金币（原来 INIT_SEEDS 定�
 t('没发芽不会生虫', () => {
   let s = G.newState('2026-10-06');
   s.bag.seed_rose = [{ at: '2026-10-06' }];
-  s = G.plant(s, { plot: 1, crop: 'rose', crops: CROPS }).state;
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'rose', crops: CROPS }).state;
   // 让 before 停在 0：不跨天就结算，settle 会提前返回；这里直接连掷 20 天看有没有虫在阶段1出现
   let cur = s;
   for (let d = 7; d <= 20; d++) {
     cur = settle(cur, `2026-10-${String(d).padStart(2, '0')}`, { rng: () => 0, weedRate: 0 }).state;
-    const p = cur.plots[0];
+    const p = cur.plots.find((p) => p.site === 'flower' && p.i === 1);
     if (p.pest) {
       const idx = G.stageIndex(G.progressOf(p, cur.day), CROPS.rose.days);
       assert.ok(idx >= 1, `生虫时必须已发芽（实际阶段 ${idx}）`);
@@ -476,6 +476,74 @@ t('食谱：雪指定的那几道都在，且材料对得上', () => {
   assert.ok(!find('cucumber_pepper'), '黄瓜拌青椒应已删掉');
   assert.ok(!find('tofu_pork'), '豆腐烧肉应已改成豆腐鱼汤');
   assert.ok(!find('mixed_rice'), '什锦炒饭应已删掉');
+});
+t('场地：菜田 4 / 花田 3 / 菌床 3，共 10 块', () => {
+  const s = G.newState('2026-10-06');
+  assert.strictEqual(s.plots.length, 10);
+  assert.strictEqual(G.plotsOf(s, 'field').length, 4);
+  assert.strictEqual(G.plotsOf(s, 'flower').length, 3);
+  assert.strictEqual(G.plotsOf(s, 'mushroom').length, 3);
+});
+
+t('场地校验：花只能种花田、菌菇只能种菌床、菜和水果种菜田', () => {
+  assert.strictEqual(G.siteAccepts('flower', 'rose', REAL_CROPS), true);
+  assert.strictEqual(G.siteAccepts('flower', 'tomato', REAL_CROPS), false);
+  assert.strictEqual(G.siteAccepts('mushroom', 'enoki', REAL_CROPS), true);
+  assert.strictEqual(G.siteAccepts('mushroom', 'rose', REAL_CROPS), false);
+  assert.strictEqual(G.siteAccepts('field', 'tomato', REAL_CROPS), true);
+  assert.strictEqual(G.siteAccepts('field', 'strawberry', REAL_CROPS), true, '水果种菜田');
+  assert.strictEqual(G.siteAccepts('field', 'rose', REAL_CROPS), false);
+});
+
+t('场地校验：种错地方会被拒，且不消耗种子', () => {
+  const s = G.newState('2026-10-06');
+  s.bag.seed_tomato = [{ at: 'x' }];
+  const r = G.plant(s, { site: 'flower', plot: 1, crop: 'tomato', crops: REAL_CROPS });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('花田'), '应说明该种哪：' + r.msg);
+  assert.strictEqual(s.bag.seed_tomato.length, 1, '失败不该消耗种子');
+  assert.ok(!G.findPlot(r.state, 'flower', 1).crop, '不该种下去');
+});
+
+t('场地：查看与浇水互不串场', () => {
+  let s = G.newState('2026-10-06');
+  s.bag.seed_rose = [{ at: 'x' }];
+  s.bag.seed_tomato = [{ at: 'x' }];
+  s = G.plant(s, { site: 'flower', plot: 1, crop: 'rose', crops: REAL_CROPS }).state;
+  s = G.plant(s, { site: 'field', plot: 1, crop: 'tomato', crops: REAL_CROPS }).state;
+  assert.strictEqual(G.viewGarden(s, { site: 'flower', texts: GTEXTS, crops: REAL_CROPS }).length, 3);
+  assert.strictEqual(G.viewGarden(s, { site: 'field', texts: GTEXTS, crops: REAL_CROPS }).length, 4);
+  const w = G.water(s, { site: 'flower', crops: REAL_CROPS });
+  assert.ok(w.ok);
+  assert.strictEqual(G.findPlot(w.state, 'flower', 1).wateredToday, 1, '花田浇到了');
+  assert.strictEqual(G.findPlot(w.state, 'field', 1).wateredToday, 0, '菜田没被浇到');
+});
+
+t('老存档迁移：没有 site 的田归菜田、缺的场地补齐、种着的东西不丢', () => {
+  const old = { plots: [{ i: 1, crop: 'tomato', plantedDay: '2026-10-01', wateredToday: 0, pest: 0, weed: 0, dead: false }] };
+  const s = G.ensureSites(old);
+  assert.strictEqual(s.plots.length, 10, '应补齐到 10 块');
+  const keep = s.plots.find((p) => p.crop === 'tomato');
+  assert.ok(keep, '种着的番茄不能丢');
+  assert.strictEqual(keep.site, 'field', '老田归菜田');
+  assert.strictEqual(G.plotsOf(s, 'flower').length, 3, '花田补齐');
+  assert.strictEqual(G.plotsOf(s, 'mushroom').length, 3, '菌床补齐');
+});
+
+t('田块叫法：菜田叫 1 号田，温室叫 花田 1 号 / 菌床 2 号', () => {
+  assert.strictEqual(G.plotLabel('field', 1), '1 号田');
+  assert.strictEqual(G.plotLabel('flower', 1), '花田 1 号');
+  assert.strictEqual(G.plotLabel('mushroom', 2), '菌床 2 号');
+});
+
+t('温室里种的也跟着跨天生长（结算覆盖所有场地）', () => {
+  let s = G.newState('2026-10-06');
+  s.bag.seed_enoki = [{ at: 'x' }];
+  s = G.plant(s, { site: 'mushroom', plot: 1, crop: 'enoki', crops: REAL_CROPS }).state;
+  const r = settle(s, '2026-10-08', { rng: NO_LUCK });
+  assert.ok(r.advanced, '应推进');
+  const p = G.findPlot(r.state, 'mushroom', 1);
+  assert.strictEqual(G.progressOf(p, '2026-10-08'), 2, '菌床的菇也该长了 2 天');
 });
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

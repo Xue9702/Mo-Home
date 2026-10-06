@@ -564,6 +564,9 @@ const WAKE_SCENE_TITLES = {
   fountain: '喷泉池边',
   swing: '秋千上',
   mailbox: '大门口的信箱前',
+  greenhouse: '玻璃温室里',
+  gh_flower: '花田前',
+  gh_mushroom: '菌床前',
   yard: '院子里',
   tree: '垂枝梅底下',
   cat_house: '猫窝前'
@@ -709,16 +712,17 @@ async function doGardenAction(action, params = {}) {
     raining = Number(w && w.current && w.current.precipitation) > 0;
   } catch (e) { /* 当作没下雨 */ }
 
+  const site = params.site || 'field';
   if (action === 'view') {
-    const views = gardenCore.viewGarden(st, { texts, crops, raining });
+    const views = gardenCore.viewGarden(st, { site, texts, crops, raining });
     return { ok: true, views, coins: st.coins, bag: st.bag, raining };
   }
   let r;
-  if (action === 'water') r = gardenCore.water(st, { all: true, raining, crops });
-  else if (action === 'plant') r = gardenCore.plant(st, { plot: params.plot, crop: params.crop, crops });
-  else if (action === 'harvest') r = gardenCore.harvest(st, { plot: params.plot, crops });
-  else if (action === 'pest') r = gardenCore.clearHazard(st, { plot: params.plot, kind: 'pest' });
-  else if (action === 'weed') r = gardenCore.clearHazard(st, { plot: params.plot, kind: 'weed' });
+  if (action === 'water') r = gardenCore.water(st, { all: true, site, raining, crops });
+  else if (action === 'plant') r = gardenCore.plant(st, { site, plot: params.plot, crop: params.crop, crops });
+  else if (action === 'harvest') r = gardenCore.harvest(st, { site, plot: params.plot, crops });
+  else if (action === 'pest') r = gardenCore.clearHazard(st, { site, plot: params.plot, kind: 'pest' });
+  else if (action === 'weed') r = gardenCore.clearHazard(st, { site, plot: params.plot, kind: 'weed' });
   else return { ok: false, msg: `不认识的花园动作：${action}` };
   if (r && r.ok) await saveGardenState(r.state);
   return r || { ok: false, msg: '动作失败' };
@@ -4448,7 +4452,8 @@ const WAKE_MENU = {
       { id: 'garden_harvest', label: '收获', cost: 0, tag: '熟了就摘下来吧～' },
       { id: 'garden_pest', label: '除虫', cost: 1, tag: '叶子上是不是有虫…' },
       { id: 'garden_weed', label: '拔草', cost: 1, tag: '草快把苗盖住了' },
-        { id: 'woods', label: '再往后走，去小树林', cost: 0, tag: '树影一层压一层' },
+        { id: 'greenhouse', label: '去东边的玻璃温室', cost: 0, tag: '里面种花和菌菇' },
+      { id: 'woods', label: '再往后走，去小树林', cost: 0, tag: '树影一层压一层' },
         { id: 'back_yard', label: '绕回院子', cost: 0, tag: '栅栏边上那棵垂枝梅' },
       { id: 'back_root', label: '回屋', cost: 0, tag: '' }
     ]
@@ -4525,6 +4530,34 @@ const WAKE_MENU = {
       { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
     ]
   },
+  // 温室（后花园东侧）—— 种花 + 菌床，和菜田分开（雪 10/4）
+  greenhouse: {
+    options: [
+      { id: 'gh_flower', label: '看看左边的花田', cost: 0, tag: '三畦，只种花' },
+      { id: 'gh_mushroom', label: '看看右边的菌床', cost: 0, tag: '三排，要暗要湿' },
+      { id: 'back_garden', label: '回后花园', cost: 0, tag: '' }
+    ]
+  },
+  gh_flower: {
+    options: [
+      { id: 'garden_water', label: '浇水', cost: 1, tag: '花田的水' },
+      { id: 'garden_plant', label: '播种', cost: 1, tag: '这里只能种花' },
+      { id: 'garden_harvest', label: '收获', cost: 0, tag: '开好了就剪' },
+      { id: 'garden_pest', label: '除虫', cost: 1, tag: '' },
+      { id: 'garden_weed', label: '拔草', cost: 1, tag: '' },
+      { id: 'back_greenhouse', label: '回温室中间', cost: 0, tag: '' }
+    ]
+  },
+  gh_mushroom: {
+    options: [
+      { id: 'garden_water', label: '浇水', cost: 1, tag: '菌床要湿' },
+      { id: 'garden_plant', label: '播菌种', cost: 1, tag: '这里只长菌菇' },
+      { id: 'garden_harvest', label: '采收', cost: 0, tag: '' },
+      { id: 'garden_pest', label: '除虫', cost: 1, tag: '' },
+      { id: 'garden_weed', label: '拔草', cost: 1, tag: '' },
+      { id: 'back_greenhouse', label: '回温室中间', cost: 0, tag: '' }
+    ]
+  },
   shop: {
     options: [
       { id: 'shop_buy', label: '下单（可以一次买好几样）', cost: 1, tag: '挑东西也要花力气' },
@@ -4598,7 +4631,8 @@ const MENU_BACK = {
   back_my_house: 'room',
   back_her_house: 'her_house',
   back_garden: 'garden',
-  back_yard: 'yard'
+  back_yard: 'yard',
+  back_greenhouse: 'greenhouse'
 };
 const MENU_NEXT = {
   room: 'room',
@@ -4663,6 +4697,13 @@ async function renderMenuText(nodeId, ctx) {
 }
 
 // 执行菜单选项，返回 { outcome, nextNode, endWake, energyDelta }
+// 当前在哪个场地（菜田/花田/菌床）——由所在节点决定，所以花园那批 case 不用写两遍
+function siteOfNode(node) {
+  if (node === 'gh_flower') return 'flower';
+  if (node === 'gh_mushroom') return 'mushroom';
+  return 'field';
+}
+
 // 唤醒菜单参数读取：宽容一点。
 // 雪 10/4 的真实日志里默连续三次「没种成：没有这块田」——因为 choose_action 原来根本没有
 // plot/crop 参数，他把田号塞进了别的字段。现在工具参数已补，这里再兜一层，别让他白跑一趟。
@@ -4806,7 +4847,7 @@ function parseShopItems(args) {
     }
     case 'woods': {
       const ty9 = await getGardenText();
-      return { outcome: ((ty9 && ty9.yard) || {}).woods || '小树林暂时进不去。', energyDelta: 0, nextNode: 'garden' };
+      return { outcome: ((ty9 && ty9.yard) || {}).woods || '小树林暂时进不去。', energyDelta: 0, nextNode: ctx.node };
     }
     // ---- 商店（电脑网购 → 无人机配送）----
     // ---- 喷泉许愿（院子）· 金币的一个出口；许愿内容会进当天行动日志 ----
@@ -4914,6 +4955,22 @@ function parseShopItems(args) {
       if (!rD.ok) return { outcome: rD.msg, energyDelta: 0, nextNode: 'cat_house' };
       await saveGardenState(rD.state);
       return { outcome: rD.msg + '。屋顶是斜的，木板还带着新锯开的味道。', energyDelta: 0, nextNode: 'cat_house' };
+    }
+    // ---- 温室（后花园东侧）----
+    case 'greenhouse': {
+      const tg = await getGardenText();
+      const gh = (tg && tg.greenhouse) || {};
+      return { outcome: gh.scene || '玻璃温室里比外头暖，空气潮潮的。', energyDelta: 0, nextNode: 'greenhouse' };
+    }
+    case 'gh_flower':
+    case 'gh_mushroom': {
+      const site = (optionId === 'gh_flower') ? 'flower' : 'mushroom';
+      const resGH = await doGardenAction('view', { site });
+      if (!resGH.ok) return { outcome: '这里看不清楚：' + (resGH.msg || '未知原因'), energyDelta: 0, nextNode: optionId };
+      const tg2 = await getGardenText();
+      const ghn = (tg2 && tg2.greenhouse) || {};
+      const note = (site === 'flower') ? (ghn.flower_note || '') : (ghn.mush_note || '');
+      return { outcome: (note ? note + '\n' : '') + gardenViewText(resGH.views), energyDelta: 0, nextNode: optionId };
     }
     case 'shop': {
       const texts = await getGardenText();
@@ -5047,7 +5104,7 @@ function parseShopItems(args) {
     async function withGardenStatus(r) {
       if (!r) return r;
       try {
-        const v = await doGardenAction('view', {});
+        const v = await doGardenAction('view', { site: siteOfNode(ctx.node) });
         if (v.ok) r.outcome = String(r.outcome || '') + '\n' + gardenViewText(v.views);
       } catch (e) { /* 拿不到就不附 */ }
       return r;
@@ -5055,35 +5112,35 @@ function parseShopItems(args) {
     // 进后花园直接给四块田的现状（省掉"看看"那一步）
     case 'garden': {
       const res = await doGardenAction('view', {});
-      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
-      return await withGardenStatus({ outcome: '你走进后花园。', energyDelta: 0, nextNode: 'garden' });
+      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: ctx.node });
+      return await withGardenStatus({ outcome: '你走进后花园。', energyDelta: 0, nextNode: ctx.node });
     }
     case 'garden_view': {
       const res = await doGardenAction('view', {});
-      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
+      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: ctx.node });
       const txt = gardenViewText(res.views);
       const brief = gardenBriefForPrompt({ coins: res.coins, bag: res.bag }, await getGardenText());
-      return await withGardenStatus({ outcome: `你在后花园转了一圈：\n${txt}\n${brief}`, energyDelta: 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: `你在后花园转了一圈：\n${txt}\n${brief}`, energyDelta: 0, nextNode: ctx.node });
     }
     case 'garden_water': {
       const res = await doGardenAction('water', {});
-      return await withGardenStatus({ outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_plant': {
       const res = await doGardenAction('plant', { plot: menuArgPlot(args), crop: menuArgCrop(args) });
-      return await withGardenStatus({ outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_harvest': {
       const res = await doGardenAction('harvest', { plot: menuArgPlot(args) });
-      return await withGardenStatus({ outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: ctx.node });
     }
     case 'garden_pest': {
       const res = await doGardenAction('pest', { plot: menuArgPlot(args) });
-      return await withGardenStatus({ outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_weed': {
       const res = await doGardenAction('weed', { plot: menuArgPlot(args) });
-      return await withGardenStatus({ outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'adjust_mood': {
       const delta = Math.max(-10, Math.min(10, Math.round(Number(args.mood_delta) || 0)));

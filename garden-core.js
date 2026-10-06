@@ -12,14 +12,60 @@ const DEFAULT_PLOTS = 4;
 const INIT_COINS = 30;
 const INIT_SEEDS = { daisy: 2, bokchoy: 2, carrot: 1 };
 
+// 场地（雪 10/4：温室专门种花和菌菇，和后花园的菜田分开，更干净）
+const SITES = [
+  { key: 'field',    name: '菜田', count: 4, accepts: ['veg', 'fruit'] },
+  { key: 'flower',   name: '花田', count: 3, accepts: ['flower'] },
+  { key: 'mushroom', name: '菌床', count: 3, accepts: ['mushroom'] }
+];
+const SITE_NAME = { field: '菜田', flower: '花田', mushroom: '菌床' };
+
+function newPlots() {
+  const out = [];
+  for (const s of SITES) {
+    for (let k = 1; k <= s.count; k++) {
+      out.push({ site: s.key, i: k, crop: null, plantedDay: null, wateredToday: 0, pest: 0, weed: 0, dead: false });
+    }
+  }
+  return out;
+}
+// 田块叫法：菜田沿用 1 号田，温室里叫 花田 1 号 / 菌床 2 号
+function plotLabel(site, i) {
+  return (site && site !== 'field') ? (SITE_NAME[site] + ' ' + i + ' 号') : (i + ' 号田');
+}
+function plotsOf(state, site) {
+  return (state.plots || []).filter((p) => (p.site || 'field') === (site || 'field'));
+}
+function findPlot(state, site, i) {
+  return (state.plots || []).find((p) => (p.site || 'field') === (site || 'field') && p.i === Number(i));
+}
+// 兼容老存档：没有 site 的当作菜田；缺的场地自动补上（不丢已种的东西）
+function ensureSites(state) {
+  const s = JSON.parse(JSON.stringify(state));
+  s.plots = s.plots || [];
+  for (const p of s.plots) if (!p.site) p.site = 'field';
+  for (const def of SITES) {
+    const have = s.plots.filter((p) => p.site === def.key).map((p) => p.i);
+    for (let k = 1; k <= def.count; k++) {
+      if (!have.includes(k)) s.plots.push({ site: def.key, i: k, crop: null, plantedDay: null, wateredToday: 0, pest: 0, weed: 0, dead: false });
+    }
+  }
+  return s;
+}
+function siteAccepts(siteKey, cropKey, crops) {
+  const def = SITES.find((x) => x.key === (siteKey || 'field'));
+  if (!def) return false;
+  const crop = (crops || {})[cropKey];
+  if (!crop) return false;
+  const kind = crop.cat === 'veg' && crop.kind === 'fruit' ? 'fruit' : (crop.kind || crop.cat);
+  return def.accepts.includes(kind);
+}
 function newState(day) {
   return {
     schema: 1,
     coins: INIT_COINS,
     day: day || null,          // 上次结算的自然日（YYYY-MM-DD，北京时间）
-    plots: Array.from({ length: DEFAULT_PLOTS }, (_, k) => ({
-      i: k + 1, crop: null, plantedDay: null, wateredToday: 0, pest: 0, weed: 0, dead: false
-    })),
+      plots: newPlots(),          // 菜田 4 + 花田 3 + 菌床 3（按场地分，雪 10/4）
     // 初始种子：INIT_SEEDS 原来只定义了常量却没塞进背包（雪 10/4 在真实唤醒日志里抓到）
     bag: Object.keys(INIT_SEEDS).reduce((acc, k) => {
       acc['seed_' + k] = Array.from({ length: INIT_SEEDS[k] }, () => ({ at: day || null }));
@@ -89,7 +135,7 @@ function settle(state, day, { rng = Math.random, raining = false, crops = {}, ev
     if (p.pest) p.pestDays = (p.pestDays || 0) + 1; else p.pestDays = 0;
     if (p.pestDays >= 2) {
       p.dead = true;
-      log.push({ type: 'dead', plot: p.i, crop: p.crop, reason: 'pest' });
+      log.push({ type: 'dead', site: p.site, plot: p.i, crop: p.crop, reason: 'pest' });
       continue;
     }
 
@@ -98,12 +144,12 @@ function settle(state, day, { rng = Math.random, raining = false, crops = {}, ev
     p.pest = 0; p.weed = 0;
     const sprouted = stageIndex(before, total) >= 1;
     if (before < total && sprouted) {
-      if (rng() < pestRate) { p.pest = 1; log.push({ type: 'pest', plot: p.i, crop: p.crop }); }
-      if (rng() < weedRate) { p.weed = 1; log.push({ type: 'weed', plot: p.i, crop: p.crop }); }
+      if (rng() < pestRate) { p.pest = 1; log.push({ type: 'pest', site: p.site, plot: p.i, crop: p.crop }); }
+      if (rng() < weedRate) { p.weed = 1; log.push({ type: 'weed', site: p.site, plot: p.i, crop: p.crop }); }
     }
 
     // 成熟
-    if (before >= total) log.push({ type: 'ready', plot: p.i, crop: p.crop });
+    if (before >= total) log.push({ type: 'ready', site: p.site, plot: p.i, crop: p.crop });
   }
 
   // 3. 无人机到货（下单后的下一次唤醒到货——雪 10/4 定）
@@ -160,11 +206,12 @@ function purgeExpired(store, day, shelfDays) {
 }
 
 // ---------- 操作（返回 { state, ok, msg } ；体力消耗由 server 层扣） ----------
-function water(state, { all = true, plot = null, raining = false, crops = {} } = {}) {
+function water(state, { all = true, site = null, plot = null, raining = false, crops = {} } = {}) {
   const s = JSON.parse(JSON.stringify(state));
   if (raining) return { state: s, ok: false, msg: '下雨天不用浇水' };
   let n = 0;
   for (const p of s.plots) {
+    if (site && p.site !== site) continue;
     if (!p.crop || p.dead) continue;
     if (!all && p.i !== plot) continue;
     const need = Number((crops[p.crop] || {}).water_per_day || 1);
@@ -173,23 +220,24 @@ function water(state, { all = true, plot = null, raining = false, crops = {} } =
   return { state: s, ok: n > 0, msg: n > 0 ? `浇了 ${n} 块田` : '没有需要浇水的田' };
 }
 
-function plant(state, { plot, crop, crops = {}, seedItem = null } = {}) {
+function plant(state, { site = 'field', plot, crop, crops = {}, seedItem = null } = {}) {
   const s = JSON.parse(JSON.stringify(state));
-  const p = s.plots.find((x) => x.i === plot);
+  const p = findPlot(s, site, plot);
   if (!p) return { state: s, ok: false, msg: '没有这块田' };
   if (p.crop && !p.dead) return { state: s, ok: false, msg: '这块田已经种着东西了' };
   if (!crops[crop]) return { state: s, ok: false, msg: '没有这种种子' };
+  if (!siteAccepts(site, crop, crops)) return { state: s, ok: false, msg: (SITE_NAME[site] || site) + ' 种不了 ' + crops[crop].name + '，它得种在 ' + ((SITES.find((x) => x.accepts.includes(crops[crop].kind)) || {}).name || '（现在没有能种它的地方）') };
   const item = seedItem || ('seed_' + crop);
   if (!s.bag[item] || !s.bag[item].length) return { state: s, ok: false, msg: '背包里没有这种种子' };
   s.bag[item].pop();
   if (!s.bag[item].length) delete s.bag[item];
   p.crop = crop; p.plantedDay = s.day; p.wateredToday = 0; p.pest = 0; p.weed = 0; p.dead = false;
-  return { state: s, ok: true, msg: `在 ${plot} 号田种下了${crops[crop].name}` };
+  return { state: s, ok: true, msg: `在${plotLabel(site, plot)}种下了${crops[crop].name}` };
 }
 
-function harvest(state, { plot, crops = {} } = {}) {
+function harvest(state, { site = 'field', plot, crops = {} } = {}) {
   const s = JSON.parse(JSON.stringify(state));
-  const p = s.plots.find((x) => x.i === plot);
+  const p = findPlot(s, site, plot);
   if (!p || !p.crop) return { state: s, ok: false, msg: '这块田是空的' };
   if (p.dead) { p.crop = null; p.dead = false; return { state: s, ok: true, msg: '清理了枯萎的苗' }; }
   const crop = crops[p.crop] || {};
@@ -202,26 +250,26 @@ function harvest(state, { plot, crops = {} } = {}) {
 }
 
 // 除虫 / 拔草（各 -1 体力，由 server 层扣）
-function clearHazard(state, { plot, kind } = {}) {
+function clearHazard(state, { site = 'field', plot, kind } = {}) {
   const s = JSON.parse(JSON.stringify(state));
-  const p = s.plots.find((x) => x.i === plot);
+  const p = findPlot(s, site, plot);
   if (!p) return { state: s, ok: false, msg: '没有这块田' };
   if (kind === 'pest') {
     if (!p.pest) return { state: s, ok: false, msg: '这块田没有虫' };
     p.pest = 0;
-    return { state: s, ok: true, msg: `${plot} 号田的虫除掉了` };
+    return { state: s, ok: true, msg: plotLabel(site, plot) + '的虫除掉了' };
   }
   if (!p.weed) return { state: s, ok: false, msg: '这块田没有杂草' };
   p.weed = 0;
-  return { state: s, ok: true, msg: `${plot} 号田的草拔掉了` };
+  return { state: s, ok: true, msg: plotLabel(site, plot) + '的草拔掉了' };
 }
 
 // ---------- 查看：三维度 ----------
 // 维度1 生长阶段 / 维度2 浇水状态（下雨天特殊）/ 维度3 意外事件
-function viewPlot(state, plot, { texts = {}, crops = {}, raining = false } = {}) {
-  const p = state.plots.find((x) => x.i === plot);
+function viewPlot(state, plot, { site = 'field', texts = {}, crops = {}, raining = false } = {}) {
+  const p = findPlot(state, site, plot);
   if (!p) return null;
-  const label = `${plot} 号田`;
+  const label = plotLabel(site, plot);
   if (!p.crop) return { plot, lines: [`${label}：空着，土是松的`], empty: true };
   const crop = crops[p.crop] || {};
   const ev = texts.events || {};
@@ -250,8 +298,8 @@ function viewPlot(state, plot, { texts = {}, crops = {}, raining = false } = {})
   return { plot, crop: p.crop, name: cname, days, total, stage: idx, ready: days >= total, grow, water, lines };
 }
 
-function viewGarden(state, { texts = {}, crops = {}, raining = false } = {}) {
-  return state.plots.map((p) => viewPlot(state, p.i, { texts, crops, raining }));
+function viewGarden(state, { site = 'field', texts = {}, crops = {}, raining = false } = {}) {
+  return plotsOf(state, site).map((p) => viewPlot(state, p.i, { site, texts, crops, raining }));
 }
 
 // ---------- 鸡棚（后花园） ----------
@@ -578,6 +626,7 @@ module.exports = {
   buyChick, feedChickens, nameChick, collectEggs, viewCoop,
   shopList, order, tickWake, wish,
   BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung, orderMany,
+  SITES, SITE_NAME, newPlots, plotsOf, findPlot, ensureSites, siteAccepts, plotLabel,
   BUCKET_NAME, TIER_NAME, itemCat, fineCat, valueOf, itemName, tierOfRecipe, cook,
   viewPlot, viewGarden
 };
