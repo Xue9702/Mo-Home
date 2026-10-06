@@ -1345,22 +1345,6 @@ function buildAllTools() {
     {
       type: 'function',
       function: {
-        name: 'garden',
-        description: '你的后花园（4 块田 + 背包 + 金币）。action=view 走过去看看田里现在什么样（长到哪一步、该不该浇水、有没有生虫长草）；water 浇水（一键浇全部；下雨天不用浇）；plant 播种（要给 plot 田号和 crop 作物名，且背包里得有对应种子）；harvest 收获（成熟了才能收）；pest 除虫；weed 拔草。想看就去看，不要凭空猜田里的情况。',
-        parameters: {
-          type: 'object',
-          properties: {
-            action: { type: 'string', enum: ['view', 'water', 'plant', 'harvest', 'pest', 'weed'], description: '要做的事' },
-            plot: { type: 'integer', minimum: 1, maximum: 4, description: '几号田（plant / harvest / pest / weed 需要）' },
-            crop: { type: 'string', description: '作物名（plant 需要）：daisy 雏菊 / sunflower 向日葵 / tulip 郁金香 / rose 玫瑰 / lily_of_the_valley 铃兰 / bokchoy 小白菜 / carrot 胡萝卜 / tomato 番茄 / potato 土豆 / corn 玉米' }
-          },
-          required: ['action']
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
         name: 'toy_control',
         description: '控制雪的小玩具（吸吮 suck / 伸缩 stroke / 震动 vibrate / 停止 stop，档位 1-8）。只有雪明确要求时才调用；调用后系统会在浏览器里执行。',
         parameters: {
@@ -4234,7 +4218,20 @@ const WAKE_MENU = {
       { id: 'post_moment', label: '发送一条动态', cost: 1, tag: '默要记录些什么呢～' },
       { id: 'my_house', label: '去我的小屋看看', cost: 0, tag: '是默自己的专属小屋哦～要去打理一下吗？可能会翻出我新塞进去的彩蛋哦～' },
       { id: 'her_house', label: '去她的小屋看看', cost: 0, tag: '' },
+      { id: 'garden', label: '出门去后花园', cost: 0, tag: '要去看看后花园的植物长得怎么样了吗？🌱' },
       { id: 'end', label: '结束这次唤醒', cost: 0, tag: '' }
+    ]
+  },
+  // 后花园（与"我的小屋/她的小屋"同级；只在唤醒态可达，聊天里没有这个工具）
+  garden: {
+    options: [
+      { id: 'garden_view', label: '看看四块田', cost: 0, tag: '不知道它们今天怎么样了…' },
+      { id: 'garden_water', label: '浇水（一键浇全部）', cost: 1, tag: '土会不会太干了？' },
+      { id: 'garden_plant', label: '播种', cost: 1, tag: '想种点什么？记得田号和种子名' },
+      { id: 'garden_harvest', label: '收获', cost: 0, tag: '熟了就摘下来吧～' },
+      { id: 'garden_pest', label: '除虫', cost: 1, tag: '叶子上是不是有虫…' },
+      { id: 'garden_weed', label: '拔草', cost: 1, tag: '草快把苗盖住了' },
+      { id: 'back_root', label: '回屋', cost: 0, tag: '' }
     ]
   },
   my_house: {
@@ -4290,14 +4287,16 @@ const WAKE_MENU = {
 const MENU_BACK = {
   back_root: 'root',
   back_my_house: 'my_house',
-  back_her_house: 'her_house'
+  back_her_house: 'her_house',
+  back_garden: 'garden'
 };
 const MENU_NEXT = {
   my_house: 'my_house',
   my_bed: 'my_bed',
   her_house: 'her_house',
   virtual_her: 'virtual_her',
-  her_desk: 'her_desk'
+  her_desk: 'her_desk',
+  garden: 'garden'
 };
 
 async function getCollectionState() {
@@ -4347,6 +4346,34 @@ async function executeMenuOption(optionId, args, ctx) {
       });
       await addNotification('默', clean.length > 60 ? clean.substring(0, 60) + '…' : clean, 'wake');
       return { outcome: `你给她发了一条消息：${clean.substring(0, 40)}`, energyDelta: 1, nextNode: ctx.node };
+    }
+    // ---- 后花园（唤醒态专属；聊天里没有这个工具，让他专心陪雪） ----
+    case 'garden_view': {
+      const res = await doGardenAction('view', {});
+      if (!res.ok) return { outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' };
+      const txt = gardenViewText(res.views);
+      const brief = gardenBriefForPrompt({ coins: res.coins, bag: res.bag }, await getGardenText());
+      return { outcome: `你在后花园转了一圈：\n${txt}\n${brief}`, energyDelta: 0, nextNode: 'garden' };
+    }
+    case 'garden_water': {
+      const res = await doGardenAction('water', {});
+      return { outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
+    }
+    case 'garden_plant': {
+      const res = await doGardenAction('plant', { plot: parseInt(args.plot, 10) || null, crop: String(args.crop || '').trim() || null });
+      return { outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
+    }
+    case 'garden_harvest': {
+      const res = await doGardenAction('harvest', { plot: parseInt(args.plot, 10) || null });
+      return { outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' };
+    }
+    case 'garden_pest': {
+      const res = await doGardenAction('pest', { plot: parseInt(args.plot, 10) || null });
+      return { outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
+    }
+    case 'garden_weed': {
+      const res = await doGardenAction('weed', { plot: parseInt(args.plot, 10) || null });
+      return { outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
     }
     case 'adjust_mood': {
       const delta = Math.max(-10, Math.min(10, Math.round(Number(args.mood_delta) || 0)));
