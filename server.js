@@ -1865,13 +1865,36 @@ async function getWeatherData(city, force = false) {
   }
 }
 
-// 生成注入默提示词的天气段落（带时段引导，让默在早晚安时主动聊天气）
+// 生成注入默提示词的天气段落。
+// 10/4 重写为「预报 + 实况」两层。原来把"此刻的快照"和"今日概览"揉成一句：
+//   【当前天气】晋江：晴 ☀️…最高32°C/最低26°C…
+// 一个当下的快照被写成了整天的结论 —— 傍晚下起雨时，那句"晴"就显得是假话。
+// 现在明确分成两行，并说明"两者不一致很正常"。另加冬季映射（晋江不下雪，但小屋想有雪）。
+const WINTER_SNOW_MONTHS = [11, 0, 1]; // 12月 / 1月 / 2月（getMonth 从 0 起算）
+function applyWinterSnow(w, month) {
+  if (!WINTER_SNOW_MONTHS.includes(month)) return w;
+  const wet = /雨|阴|雪/.test(String((w.current && w.current.desc) || '')) || Number(w.current && w.current.precipitation) > 0;
+  if (!wet) return w;
+  return { ...w, current: { ...w.current, desc: '雪', snowMapped: true } };
+}
 async function getWeatherContext(city) {
-  const w = await getWeatherData(city);
-  if (!w) return '';
+  const raw = await getWeatherData(city);
+  if (!raw) return '';
+  const w = applyWinterSnow(raw, new Date().getMonth());
   const hour = getTimeInfo().hour;
   const dayPhase = hour < 6 ? '凌晨' : hour < 9 ? '早晨' : hour < 12 ? '上午' : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 22 ? '晚上' : '深夜';
-  return `【当前天气】${w.cityDisplay}：${w.current.desc} ${w.current.icon}，气温${w.current.temp}°C（体感${w.current.feelsLike}°C），最高${w.daily.max}°C / 最低${w.daily.min}°C，湿度${w.current.humidity}%，风速${w.current.windSpeed}km/h。现在是${dayPhase}；当雪醒来、或与你问候早晚安、或问起天气时，请自然地告诉她今天的天气，并给出贴心的穿衣/出行建议。`;
+
+  // 第一层：今日预报（当天不变）
+  const bits = [`今天${w.daily.desc || '—'}`];
+  if (w.daily.rainWindow) bits.push(w.daily.rainWindow);
+  else if (w.daily.precipProb !== undefined) bits.push(`降水概率 ${w.daily.precipProb}%`);
+  const forecast = `预报说${bits.join('，')}；气温 ${w.daily.min}~${w.daily.max}°C`;
+
+  // 第二层：当前实况（随唤醒刷新）
+  const snowNote = w.current.snowMapped ? '（看着像雪——晋江冬天的湿冷，雨和雪在体感上是同一件事）' : '';
+  const nowLine = `现在外面${w.current.desc}${snowNote}，${w.current.temp}°C（体感 ${w.current.feelsLike}°C），湿度 ${w.current.humidity}%，风速 ${w.current.windSpeed}km/h`;
+
+  return `【天气 · ${w.cityDisplay}】\n${forecast}。\n${nowLine}。现在是${dayPhase}。\n（上面第一行是"今天整体"，第二行是"此刻"。两者不一致很正常——比如预报有雨但此刻还没下。当雪醒来、或与你问候早晚安、或问起天气时自然地提起，但不要把预报当成此刻的实况。）`;
 }
 
 console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
