@@ -4482,7 +4482,7 @@ const WAKE_MENU = {
     options: [
       { id: 'back_root', label: '推门进小屋', cost: 0, tag: '' },
       { id: 'tree', label: '走到垂枝梅底下', cost: 0, tag: '枝条一直垂到地上' },
-      { id: 'cat_house', label: '看看猫窝', cost: 0, tag: '还空着' },
+      { id: 'cat_house', label: '看看围墙边那块小地方', cost: 0, tag: '给小猫小狗留的' },
       { id: 'garden', label: '绕到屋后，去后花园', cost: 0, tag: '' },
       { id: 'fountain', label: '走到喷泉池边', cost: 0, tag: '水声很轻' },
       { id: 'swing', label: '坐秋千', cost: 0, tag: '木板被晒得发白' },
@@ -4501,7 +4501,8 @@ const WAKE_MENU = {
   cat_house: {
     options: [
       { id: 'cat_look', label: '蹲下来往里面看看', cost: 0, tag: '' },
-        { id: 'build_cat', label: '动手搭猫窝（4 木板 + 8 钉子）', cost: 0, tag: '材料要先去电脑上买' },
+      { id: 'build_cat', label: '动手搭猫窝（4 木板 + 8 钉子）', cost: 0, tag: '材料要先去电脑上买' },
+      { id: 'build_dog', label: '动手搭狗屋（5 木板 + 10 钉子）', cost: 0, tag: '狗屋比猫窝宽一些' },
       { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
     ]
   },
@@ -4526,7 +4527,7 @@ const WAKE_MENU = {
   },
   shop: {
     options: [
-      { id: 'shop_buy', label: '下单（说清买什么、要几份）', cost: 0, tag: '无人机送货' },
+      { id: 'shop_buy', label: '下单（可以一次买好几样）', cost: 1, tag: '挑东西也要花力气' },
       { id: 'back_root', label: '合上电脑', cost: 0, tag: '' }
     ]
   },
@@ -4685,7 +4686,23 @@ function menuArgCrop(args) {
   const m = String(args.content || args.message || '').match(/[a-z_]{3,}/i);
   return m ? m[0].toLowerCase() : '';
 }
-async function executeMenuOption(optionId, args, ctx) {
+// 解析下单内容：支持 'seed_rose x2, wood x4' / 'seed_rose*2、wood*4'，也兼容只给 item + n
+function parseShopItems(args) {
+  const multi = menuArgStr(args, 'items');
+  const raw = multi || menuArgStr(args, 'item', 'crop') || menuArgStr(args, 'content', 'message');
+  const list = [];
+  for (const p of String(raw || '').split(/[,，、;；\n]+/)) {
+    const m = String(p).trim().match(/^([A-Za-z_]+)\s*[x*×]?\s*(\d+)?$/i);
+    if (m) list.push({ item: m[1].toLowerCase(), n: m[2] ? parseInt(m[2], 10) : 1 });
+  }
+  if (list.length === 1 && list[0].n === 1) {
+    const n2 = menuArgNum(args, 'n', 'count');
+    if (n2) list[0].n = n2;
+  }
+  return list;
+}
+
+  async function executeMenuOption(optionId, args, ctx) {
   const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
   switch (optionId) {
     case 'send_message': {
@@ -4757,15 +4774,31 @@ async function executeMenuOption(optionId, args, ctx) {
       return { outcome: ((ty5 && ty5.yard) || {}).sit || '你在长椅上坐了一会儿。', energyDelta: 0, nextNode: 'tree' };
     }
     case 'cat_house': {
-      const ty6 = await getGardenText();
-      return { outcome: ((ty6 && ty6.yard) || {}).cat_house || '猫窝是空的。', energyDelta: 0, nextNode: 'cat_house' };
+      const ty = await getGardenText();
+      const yc = (ty && ty.yard) || {};
+      const stc = await getGardenState();
+      const bb = stc.built || {};
+      const hasCat = !!bb.cat_house;
+      const hasDog = !!bb.dog_house;
+      let line;
+      if (hasCat && hasDog) line = yc.pet_both || '围墙边并排搭着猫窝和狗屋，都空着。';
+      else if (hasCat) line = yc.cat_house || '围墙边搭着一个猫窝。';
+      else if (hasDog) line = yc.dog_house || '围墙边搭着一个狗屋。';
+      else line = (yc.pet_spot || '围墙边那一小片地方还空着。') + '\n' + (yc.build_hint || '');
+      return { outcome: line, energyDelta: 0, nextNode: 'cat_house' };
     }
     case 'cat_look': {
       const ty7 = await getGardenText();
-      const st7 = await getGardenState();
-      const done7 = !!(st7.built && st7.built.cat_house);
       const y7 = (ty7 && ty7.yard) || {};
-      return { outcome: done7 ? ('你蹲下来往猫窝里看。' + (y7.cat_house || '里面铺着干草，还是空的。')) : (y7.cat_spot || '那块地方还空着，只有一片被踩平的草。'), energyDelta: 0, nextNode: 'cat_house' };
+      const st7 = await getGardenState();
+      const b7 = st7.built || {};
+      if (!b7.cat_house && !b7.dog_house) {
+        return { outcome: '你蹲下来看——那里还只是一小片被踩平的草地，什么都没有。', energyDelta: 0, nextNode: 'cat_house' };
+      }
+      const parts = [];
+      if (b7.cat_house) parts.push('猫窝：' + (y7.cat_inside || '里面铺着干草，还没有谁住进来。'));
+      if (b7.dog_house) parts.push('狗屋：' + (y7.dog_inside || '里面铺着旧毛巾，也还没有谁住进来。'));
+      return { outcome: '你蹲下来挨个看了看。\n' + parts.join('\n'), energyDelta: 0, nextNode: 'cat_house' };
     }
     case 'yard_lake': {
       const ty8 = await getGardenText();
@@ -4874,6 +4907,14 @@ async function executeMenuOption(optionId, args, ctx) {
       await saveGardenState(rB.state);
       return { outcome: rB.msg + '。你没上漆，木头是原色的，钉脚还露在外面。', energyDelta: 0, nextNode: 'cat_house' };
     }
+    // ---- 搭狗屋（5 木板 + 10 钉子）----
+    case 'build_dog': {
+      const stD = await getGardenState();
+      const rD = gardenCore.build(stD, { key: 'dog_house', day: gardenToday() });
+      if (!rD.ok) return { outcome: rD.msg, energyDelta: 0, nextNode: 'cat_house' };
+      await saveGardenState(rD.state);
+      return { outcome: rD.msg + '。屋顶是斜的，木板还带着新锯开的味道。', energyDelta: 0, nextNode: 'cat_house' };
+    }
     case 'shop': {
       const texts = await getGardenText();
       const crops = (texts && texts.crops) || {};
@@ -4887,13 +4928,14 @@ async function executeMenuOption(optionId, args, ctx) {
       };
     }
     case 'shop_buy': {
-      const texts = await getGardenText();
-      const crops = (texts && texts.crops) || {};
-      const st = await getGardenState();
-      const r = gardenCore.order(st, { item: menuArgStr(args, 'item', 'crop', 'content'), n: menuArgNum(args, 'n', 'count') || 1, crops });
-      if (!r.ok) return { outcome: `没买成：${r.msg}`, energyDelta: 0, nextNode: 'shop' };
-      await saveGardenState(r.state);
-      return { outcome: r.msg, energyDelta: 0, nextNode: 'shop' };
+      const textsB = await getGardenText();
+      const cropsB = (textsB && textsB.crops) || {};
+      const stB2 = await getGardenState();
+      const wanted = parseShopItems(args);
+      const rB2 = gardenCore.orderMany(stB2, wanted, { crops: cropsB });
+      if (!rB2.ok) return { outcome: '没买成：' + rB2.msg, energyDelta: 0, nextNode: 'shop' };
+      await saveGardenState(rB2.state);
+      return { outcome: rB2.msg, energyDelta: 1, nextNode: 'shop' };
     }
     // ---- 鸡棚（后花园）----
     case 'coop': {
@@ -5234,6 +5276,7 @@ function buildMenuTools() {
           query: { type: 'string', description: 'web_search 的搜索关键词' },
           mood_delta: { type: 'integer', description: 'adjust_mood 的心情调整量，范围 -10 到 +10' },
            text: { type: 'string', description: '要说的那句话本身（fountain_wish 许愿时填这里）' },
+           items: { type: 'string', description: '要买的东西（shop_buy 用），可以一次写好几样，例如「seed_rose x2, wood x4, nail x10」；只买一件就写一件，例如「chick」' },
            plot: { type: 'integer', description: '几号田（garden_plant / garden_harvest / garden_pest / garden_weed 用，1 到 4）' },
            crop: { type: 'string', description: '作物名（garden_plant 用）：daisy 雏菊 / sunflower 向日葵 / tulip 郁金香 / rose 玫瑰 / lily_of_the_valley 铃兰 / bokchoy 小白菜 / carrot 胡萝卜 / tomato 番茄 / potato 土豆 / corn 玉米' },
            item: { type: 'string', description: '商品 id（shop_buy 用）：seed_daisy、seed_sunflower、seed_tulip、seed_rose、seed_lily_of_the_valley、seed_bokchoy、seed_carrot、seed_tomato、seed_potato、seed_corn、chick、rice、flour' },

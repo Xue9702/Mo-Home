@@ -323,5 +323,35 @@ t('秋千：同一次唤醒只能荡一次，跨次唤醒恢复', () => {
   s2.wakeSeq = 6;                                  // 下一次唤醒
   assert.strictEqual(G.canSwing(s2), true, '新的一次唤醒又可以荡了');
 });
+t('一次买多样：一张单子买三样，只占一次操作', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 300;
+  const r = G.orderMany(s, [{ item: 'wood', n: 5 }, { item: 'nail', n: 10 }, { item: 'seed_rose', n: 2 }], { crops: REAL_CROPS });
+  assert.ok(r.ok, r.msg);
+  assert.strictEqual(r.state.orders.length, 3, '应有 3 条待送');
+  assert.strictEqual(s.coins - r.state.coins, 5 * 12 + 10 * 3 + 2 * 25, '总价应正确');
+  const w = G.tickWake(r.state);
+  assert.strictEqual(w.n, 3, '一次唤醒全部送到');
+  assert.strictEqual(w.state.bag.nail.length, 10, '数量不该被卡在 9（狗屋要 10 颗钉子）');
+});
+
+t('买多样的钱不够时，一张单子整体失败且不扣钱', () => {
+  const s = G.newState('2026-10-06');   // 初始 30 金币
+  const r = G.orderMany(s, [{ item: 'wood', n: 5 }, { item: 'nail', n: 10 }], { crops: REAL_CROPS });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(s.coins, 30, '失败不该扣钱');
+  assert.strictEqual(s.orders.length, 0, '不该留下半张单子');
+});
+
+t('狗屋：配方 5 木板 + 10 钉子，与猫窝互不影响', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 400;
+  s = G.tickWake(G.orderMany(s, [{ item: 'wood', n: 5 }, { item: 'nail', n: 10 }], { crops: REAL_CROPS }).state).state;
+  const d = G.build(s, { key: 'dog_house', day: '2026-10-06' });
+  assert.ok(d.ok, d.msg);
+  assert.ok(d.state.built.dog_house, '狗屋应记下搭好');
+  assert.ok(!d.state.built.cat_house, '猫窝仍是空的（两者独立）');
+  assert.ok(!d.state.bag.wood && !d.state.bag.nail, '材料应被消耗');
+});
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

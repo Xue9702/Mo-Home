@@ -335,7 +335,8 @@ const SHOP_FOOD = {
 
 // 能搭的东西（图纸）——材料齐了才能搭
 const BUILD_RECIPES = {
-  cat_house: { name: '猫窝', need: { wood: 4, nail: 8 } }
+  cat_house: { name: '猫窝', need: { wood: 4, nail: 8 } },
+  dog_house: { name: '狗屋', need: { wood: 5, nail: 10 } },
 };
 
 function shopList(crops) {
@@ -431,6 +432,34 @@ function markSwung(state) {
   return s;
 }
 
+// 一次买多样（雪 10/4：下单 -1 体力，但一次可以买两三种，不用重复操作）
+function orderMany(state, list, { crops = {} } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  const shop = shopList(crops);
+  const pending = [];
+  const names = [];
+  let total = 0;
+  for (const raw of (Array.isArray(list) ? list : [])) {
+    const found = shop.find((x) => x.id === raw.item);
+    if (!found) return { state: s, ok: false, msg: `没有「${raw.item}」这件商品` };
+    const qty = Math.max(1, Math.min(99, Number(raw.n) || 1));
+    if (found.kind === 'chick' && (s.chickens || []).length + qty > CHICK_MAX) {
+      return { state: s, ok: false, msg: `鸡棚最多养 ${CHICK_MAX} 只，放不下了` };
+    }
+    total += found.price * qty;
+    pending.push({ item: raw.item, n: qty, name: found.name, kind: found.kind });
+    names.push(`${found.name}×${qty}`);
+  }
+  if (!pending.length) return { state: s, ok: false, msg: '要买什么？把商品名说清楚' };
+  if ((s.coins || 0) < total) {
+    return { state: s, ok: false, msg: `金币不够：一共要 ${total}，现在只有 ${s.coins || 0}` };
+  }
+  s.coins -= total;
+  s.orders = s.orders || [];
+  for (const p of pending) s.orders.push({ item: p.item, n: p.n, name: p.name, kind: p.kind, placedDay: s.day, placedSeq: s.wakeSeq || 0 });
+  return { state: s, ok: true, msg: `下单：${names.join('、')}（-${total}💰），等无人机送来`, total, count: pending.length };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
@@ -438,6 +467,6 @@ module.exports = {
   CHICK_PRICE, CHICK_MAX, CHICK_GROW_FEEDS,
   buyChick, feedChickens, nameChick, collectEggs, viewCoop,
   shopList, order, tickWake, wish,
-  BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung,
+  BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung, orderMany,
   viewPlot, viewGarden
 };
