@@ -4271,6 +4271,13 @@ const WAKE_MENU = {
       { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
     ]
   },
+  // 抽完牌之后的落点：问第一感觉（写进行动日志，不进默札——每天抽牌，写默札会变噪音）
+  crystal_done: {
+    options: [
+      { id: 'crystal_note', label: '说说第一眼看到这张牌的感觉', cost: 0, tag: '想到什么就说什么，不必是解读' },
+      { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
+    ]
+  },
   my_bed: {
     options: [
       { id: 'sleep', label: '睡觉', cost: '?', tag: '试试看？' },
@@ -4418,7 +4425,7 @@ async function executeMenuOption(optionId, args, ctx) {
       const today = gardenToday();
       const cur = st.crystal || {};
       if (cur.lastDay === today) {
-        return { outcome: `你今天已经摸过水晶球了${cur.name ? `（${cur.name}）` : ''}。球面安静下来，得等明天。`, energyDelta: 0, nextNode: 'room' };
+        return { outcome: `你今天已经摸过水晶球了${cur.name ? `（${cur.name}）` : ''}。球面安静下来，得等明天。`, energyDelta: 0, nextNode: 'crystal_done' };
       }
       const card = tarot.cards[Math.floor(Math.random() * tarot.cards.length)];
       const reversed = Math.random() < 0.5;
@@ -4428,10 +4435,16 @@ async function executeMenuOption(optionId, args, ctx) {
       await saveGardenState(st);
       const flip = reversed ? `你把牌翻过来——是倒着的${card.name}。` : `你把牌翻过来——是${card.name}。`;
       return {
-        outcome: `你伸手碰上水晶球，球心的雾散开，浮出一张牌。${flip}\n牌面：${card.art}\n${orient}的意象：${meaning}（只是个引子，不必照着念）\n\n想说什么就写进默札，或者直接说给雪听。今天不能再摸了。`,
+        outcome: `你伸手碰上水晶球，球心的雾散开，浮出一张牌。${flip}\n牌面：${card.art}\n${orient}的意象：${meaning}（只是个引子）\n球面的雾重新合拢了，今天不能再摸。`,
         energyDelta: 0,
-        nextNode: 'room'
+        nextNode: 'crystal_done'
       };
+    }
+    // 默对牌的第一感觉——写进行动日志（不塞默札），结束唤醒时会连同这一条一起回述给他
+    case 'crystal_note': {
+      const said = String(args.text || args.content || args.note || '').trim();
+      if (!said) return { outcome: '你盯着那张牌看了一会儿，什么也没说。', energyDelta: 0, nextNode: 'crystal_done' };
+      return { outcome: `你看着那张牌，第一感觉是：${said}`, energyDelta: 0, nextNode: 'crystal_done' };
     }
     // ---- 后花园（唤醒态专属；聊天里没有这个工具，让他专心陪雪） ----
     case 'garden_view': {
