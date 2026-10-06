@@ -1,0 +1,173 @@
+{
+  "_comment": "默的后花园 / 小屋文案与配置。文案归文案、逻辑归逻辑：改这里不需要动代码。存 Supabase garden_text(id=1) 时优先读库，本文件作兜底（与 arousal-lexicon 同套路）。",
+  "version": 1,
+
+  "water_state": {
+    "dry": "土地干干的，今天还没浇水",
+    "half": "土地湿湿的，浇过一次了（1/2），还可以再浇",
+    "done": "土地湿湿的，今天的水够（2/2）",
+    "rain": "土是湿的，雨水够了，今天不用浇"
+  },
+
+  "rain_water": {
+    "light": "昨夜下过雨，土还湿着，今天不用浇水了。",
+    "heavy": "田里积着浅浅的水洼，今天不用浇水了。"
+  },
+
+  "events": {
+    "bug": "{n}号田的{c}上生了虫，叶子被啃掉一小块",
+    "weed": "{n}号田里冒出几根杂草，跟苗抢水",
+    "bird": "有鸟在田边转悠，{c}上被啄了一口",
+    "wind": "夜里风大，{c}的苗被吹歪了一点",
+    "ladybug": "一只瓢虫停在{c}的叶子上，红壳黑点"
+  },
+
+  "weather_wake": {
+    "sunny": "今天是晴的，光从窗户照进来",
+    "cloudy": "今天天阴着，光很淡",
+    "rain_light": "外面下着小雨",
+    "rain_heavy": "外面雨下得挺大",
+    "snow": "下雪了，外面一片白",
+    "fog": "起雾了，窗外看不清"
+  },
+
+  "weather_window": {
+    "sunny": {
+      "dawn": "天刚亮，光很淡，远处屋顶上浮着一层薄薄的晨雾",
+      "day": "日头正好，光把院子里的影子拉得很短",
+      "dusk": "天边烧成橘红色，云被染得一层一层的",
+      "night": "天是深蓝的，星星很清楚，远处几盏灯亮着"
+    },
+    "cloudy": {
+      "dawn": "天色灰白，光软软的，没有影子",
+      "day": "云压得低，光从云缝里漏下来一块一块的",
+      "dusk": "云边上透出一点暗金，很快又合上了",
+      "night": "看不见星，天和远处楼影糊成一片"
+    },
+    "rain_light": {
+      "dawn": "雨丝很细，落在窗玻璃上是一层密密的雾",
+      "day": "雨点斜斜地打下来，院子里一片湿亮",
+      "dusk": "雨没停，天色暗得早，路灯下水汽蒙蒙的",
+      "night": "雨声很轻，窗上挂着几道水痕"
+    },
+    "rain_heavy": {
+      "dawn": "雨砸得窗户响，外面白茫茫一片",
+      "day": "雨帘挡住了远处的景，只看得见近处的树在晃",
+      "dusk": "雨势小了些，地面全是水洼，映着灰天",
+      "night": "雨一直在下，窗玻璃上水流成股"
+    },
+    "snow": {
+      "dawn": "外面全白了，雪还在落，一点声音都没有",
+      "day": "雪停了，屋顶和树梢上压着厚厚一层",
+      "dusk": "雪地泛着淡淡的蓝，天暗得比平时快",
+      "night": "雪把光都吸走了，夜里反而显得亮一些"
+    },
+    "fog": {
+      "dawn": "雾很厚，对面楼都看不真切",
+      "day": "雾散了些，远处的轮廓还是毛的",
+      "dusk": "雾又起来了，灯晕开成一团一团的",
+      "night": "什么都看不远，只有近处一小圈亮"
+    }
+  },
+
+  "crops": {
+    "daisy": {
+      "name": "雏菊", "emoji": "🌼", "kind": "flower", "days": 2,
+      "seed_price": 8, "sell_price": 18, "bag_days": 3, "water_per_day": 1,
+      "stages": [
+        "刚撒下的雏菊种子埋在土里，还看不出动静",
+        "冒出两片圆圆的嫩叶，贴着地面",
+        "开了几朵小白花，黄蕊，可以摘了"
+      ]
+    },
+    "sunflower": {
+      "name": "向日葵", "emoji": "🌻", "kind": "flower", "days": 3,
+      "seed_price": 12, "sell_price": 30, "bag_days": 4, "water_per_day": 1,
+      "stages": [
+        "种子刚埋下去",
+        "顶开土，冒出两片厚实的小叶",
+        "茎秆窜高了一截，顶端鼓出一个青色的花盘",
+        "金黄色的大花盘转过来冲着光，可以摘了"
+      ]
+    },
+    "tulip": {
+      "name": "郁金香", "emoji": "🌷", "kind": "flower", "days": 4,
+      "seed_price": 15, "sell_price": 40, "bag_days": 4, "water_per_day": 1,
+      "stages": [
+        "球茎刚下土",
+        "一支笔直的绿芽钻出来，像个小尖锥",
+        "花苞裹得紧紧的，透出一点橘红",
+        "花瓣张开了，杯形立着，可以摘了"
+      ]
+    },
+    "rose": {
+      "name": "玫瑰", "emoji": "🌹", "kind": "flower", "days": 5,
+      "seed_price": 25, "sell_price": 70, "bag_days": 5, "water_per_day": 2,
+      "stages": [
+        "种子刚埋好",
+        "抽出一小簇带锯齿的嫩叶",
+        "枝头结了几个青花苞，尖端泛着淡淡的粉",
+        "层层花瓣舒展开，香气很淡，可以剪了"
+      ]
+    },
+    "lily_of_the_valley": {
+      "name": "铃兰", "emoji": "🪻", "kind": "flower", "days": 6, "rare": true,
+      "seed_price": 40, "sell_price": 120, "bag_days": 3, "water_per_day": 1,
+      "stages": [
+        "根刚埋进土里",
+        "冒出两片宽宽的叶子，把土面遮住一小块",
+        "叶间抽出一串米粒大的花苞，垂着头",
+        "一串白色小铃铛垂着，可以剪了"
+      ]
+    },
+    "bokchoy": {
+      "name": "小白菜", "emoji": "🥬", "kind": "veg", "days": 2,
+      "seed_price": 6, "sell_price": 15, "bag_days": 2, "fridge_days": 5, "water_per_day": 1,
+      "stages": [
+        "种子刚撒下去",
+        "冒出两片心形的小叶",
+        "叶子层叠着抱成一棵，可以拔了"
+      ]
+    },
+    "carrot": {
+      "name": "胡萝卜", "emoji": "🥕", "kind": "veg", "days": 3,
+      "seed_price": 10, "sell_price": 25, "bag_days": 5, "fridge_days": 12, "water_per_day": 1,
+      "stages": [
+        "种子刚下土",
+        "长出几根细羽一样的叶子",
+        "叶子密了，土面微微鼓起一小块",
+        "缨子很茂盛，扒开土能看见橙色的顶，可以拔了"
+      ]
+    },
+    "tomato": {
+      "name": "番茄", "emoji": "🍅", "kind": "veg", "days": 4,
+      "seed_price": 15, "sell_price": 40, "bag_days": 3, "fridge_days": 8, "water_per_day": 2,
+      "stages": [
+        "种子刚埋好",
+        "长出毛茸茸的叶片，凑近有股青味",
+        "开了几朵小黄花，谢掉的地方结出青豆大的小果",
+        "红透了，沉甸甸挂在枝上，可以摘了"
+      ]
+    },
+    "potato": {
+      "name": "土豆", "emoji": "🥔", "kind": "veg", "days": 4,
+      "seed_price": 12, "sell_price": 35, "bag_days": 7, "fridge_days": 20, "water_per_day": 1,
+      "stages": [
+        "种薯刚埋下去",
+        "冒出几片深绿的叶子",
+        "叶子铺开了，土面被顶出细细的裂纹",
+        "秧子开始发黄，扒开土能看到圆滚滚的土豆，可以挖了"
+      ]
+    },
+    "corn": {
+      "name": "玉米", "emoji": "🌽", "kind": "veg", "days": 5,
+      "seed_price": 20, "sell_price": 55, "bag_days": 3, "fridge_days": 8, "water_per_day": 2,
+      "stages": [
+        "种子刚下土",
+        "顶出一片卷着的细长叶子",
+        "长成一株高高的秆子，腰间鼓出一个苞",
+        "苞叶裂开，露出金黄的玉米粒，可以掰了"
+      ]
+    }
+  }
+}

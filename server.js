@@ -813,6 +813,70 @@ app.post('/api/messages/select', async (req, res) => {
   }
 });
 
+// ================== 后花园 / 小屋文案（DB 优先，本地文件兜底） ==================
+// 与 arousal_lexicon 同套路：Supabase garden_text(id=1) 有数据就优先读库，否则用仓库里的
+// garden-text.json。文案归文案、逻辑归逻辑——改措辞/加作物/调价格都不用动代码。
+// 表未建时静默回退，不影响任何现有功能。
+let gardenTextCache = null;
+let gardenTextAt = 0;
+const GARDEN_TEXT_FALLBACK = (() => {
+  try {
+    const fsMod = require('fs');
+    const pathMod = require('path');
+    return JSON.parse(fsMod.readFileSync(pathMod.join(__dirname, 'garden-text.json'), 'utf8'));
+  } catch (e) {
+    console.error('⚠️ [garden] 读取 garden-text.json 失败:', e.message);
+    return null;
+  }
+})();
+let gardenTextSource = GARDEN_TEXT_FALLBACK ? 'file' : 'none';
+async function getGardenText(force = false) {
+  const now = Date.now();
+  if (!force && gardenTextCache && now - gardenTextAt < 300000) return gardenTextCache;
+  try {
+    const { data, error } = await supabase.from('garden_text').select('data').eq('id', 1).maybeSingle();
+    if (!error && data && data.data && typeof data.data === 'object' && Object.keys(data.data).length > 1) {
+      gardenTextCache = data.data;
+      gardenTextAt = now;
+      gardenTextSource = 'db';
+      return gardenTextCache;
+    }
+  } catch (e) { /* 表未建 → 用本地文件 */ }
+  gardenTextCache = GARDEN_TEXT_FALLBACK;
+  gardenTextAt = now;
+  gardenTextSource = 'file';
+  return gardenTextCache;
+}
+
+// 读取当前文案（前端编辑页用）
+app.get('/api/garden/text', async (req, res) => {
+  try {
+    const data = await getGardenText(true);
+    res.json({ ok: true, source: gardenTextSource, data: data || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 保存文案（整体覆盖；前端编辑页用）
+app.post('/api/garden/text', async (req, res) => {
+  try {
+    const data = req.body && req.body.data;
+    if (!data || typeof data !== 'object' || !data.crops || typeof data.crops !== 'object') {
+      return res.status(400).json({ error: 'data 必须是包含 crops 的对象' });
+    }
+    const { error } = await supabase
+      .from('garden_text')
+      .upsert({ id: 1, data, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (error) throw new Error(error.message);
+    await getGardenText(true); // 立刻刷新缓存，保存即生效
+    res.json({ ok: true, source: gardenTextSource });
+  } catch (e) {
+    console.error('小屋文案保存失败（若提示 garden_text 不存在，请先执行 setup_garden_text.sql）:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/model-config', async (req, res) => {
   try {
     const cfg = await refreshModelConfig();
