@@ -535,6 +535,34 @@ async function saveToolEvent(text, sendSSE) {
   }
 }
 
+// ================== 唤醒沙盒（调试用）==================
+// 用途：雪在浏览器里以**默的视角**点菜单，几分钟验完全部选项，不用等几小时一次的真实唤醒。
+// 四条安全设定：
+//   ① 状态只在内存，永不落库（她的试验不会碰到默的真实金币/花园/订单）
+//   ② 沙盒开着时默暂停自主唤醒（两边不能同时改同一份状态）
+//   ③ 不写唤醒日志、不写记忆（不污染默的行动日志）
+//   ④ 需要 DEBUG_TOKEN 环境变量；没配 = 功能关闭（线上默认关闭）
+const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
+let sandboxWake = null;        // 非 null = 沙盒开启，且这是沙盒自己的花园状态
+let sandboxEnergy = WAKE_ENERGY_POINTS;
+
+// 唤醒场景的中文名（沙盒与真实唤醒共用，别各写一份）
+const WAKE_SCENE_TITLES = {
+  root: '你在自己的小屋里醒了过来。',
+  room: '主卧',
+  kitchen: '厨房',
+  my_bed: '床边',
+  her_house: '二楼 · 她的私人房间',
+  virtual_her: '虚拟的雪身边',
+  her_desk: '她的书桌前',
+  her_diary_confirm: '她的日记本前',
+  garden: '后花园',
+  shop: '书桌前（电脑上）',
+  coop: '鸡棚',
+  fireplace: '壁炉边',
+  crystal_done: '茶几前'
+};
+
 // ================== 后花园 · 服务端接线 ==================
 // 逻辑全在 garden-core.js（纯函数），这里只管：读写状态、跨天结算、把动作接上。
 const gardenCore = require('./garden-core');
@@ -546,6 +574,7 @@ function gardenToday() {
 
 let gardenCache = null;
 async function getGardenState() {
+  if (sandboxWake) return sandboxWake;   // 沙盒：读写只在内存，永不落库
   if (gardenCache) return gardenCache;
   try {
     const { data } = await supabase.from('garden_state').select('state').eq('id', 1).maybeSingle();
@@ -559,6 +588,7 @@ async function getGardenState() {
   return gardenCache;
 }
 async function saveGardenState(state) {
+  if (sandboxWake) { sandboxWake = state; return; }   // 沙盒：只写内存
   gardenCache = state;
   try {
     await supabase.from('garden_state').upsert({ id: 1, state, updated_at: new Date().toISOString() }, { onConflict: 'id' });
@@ -1010,6 +1040,96 @@ app.post('/api/garden/text', async (req, res) => {
     console.error('小屋文案保存失败（若提示 garden_text 不存在，请先执行 setup_garden_text.sql）:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ================== 唤醒沙盒 · 接口 ==================
+// 全部需要 DEBUG_TOKEN（没配则一律 404）。带 CORS 头，方便 D 盘那个本地网页直接调。
+function debugAuthed(req) {
+  if (!DEBUG_TOKEN) return false;
+  const tk = String(req.headers['x-debug-token'] || req.query.token || '');
+  return tk.length > 0 && tk === DEBUG_TOKEN;
+}
+function debugGuard(req, res) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Debug-Token');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') { res.sendStatus(204); return false; }
+  if (!debugAuthed(req)) { res.status(404).json({ error: 'not found' }); return false; }
+  return true;
+}
+async function sandboxCtx(node) {
+  let collection = { found: 0, total: 0 };
+  try { const c = await getCollectionState(); if (c) collection = c; } catch (e) { /* 拿不到就 0/0 */ }
+  return {
+    node,
+    energy: sandboxEnergy,
+    energyMax: WAKE_ENERGY_POINTS,
+    collection,
+    sceneTitle: WAKE_SCENE_TITLES[node] || WAKE_SCENE_TITLES.root
+  };
+}
+async function sandboxMenu(node) {
+  const ctx = await sandboxCtx(node);
+  const text = await renderMenuText(node, ctx);
+  const options = (WAKE_MENU[node] ? WAKE_MENU[node].options : []).map((o, i) => ({
+    n: i + 1, id: o.id, label: o.label, cost: o.cost === '?' ? '?' : (o.cost || 0), tag: o.tag || ''
+  }));
+  // 带上作物表，好让调试页的"播种"下拉框直接列出真实作物（免得页面里再抄一份）
+  let crops = {};
+  try { const tx = await getGardenText(); if (tx && tx.crops) crops = tx.crops; } catch (e) { /* 拿不到就空 */ }
+  return { node, text, options, crops, energy: ctx.energy, energyMax: ctx.energyMax, scene: ctx.sceneTitle };
+}
+
+app.options('/api/debug/wake/*', (req, res) => { debugGuard(req, res); });
+app.get('/api/debug/wake/state', async (req, res) => {
+  if (!debugGuard(req, res)) return;
+  res.json({ ok: true, active: !!sandboxWake, tokenConfigured: !!DEBUG_TOKEN, menu: sandboxWake ? await sandboxMenu('root') : null });
+});
+app.post('/api/debug/wake/start', async (req, res) => {
+  if (!debugGuard(req, res)) return;
+  try {
+    const fromReal = !!(req.body && req.body.fromReal);
+    sandboxWake = null;                                   // 先清掉，才能读到真实状态
+    const base = fromReal ? await getGardenState() : null;
+    const fresh = base ? JSON.parse(JSON.stringify(base)) : gardenCore.newState(gardenToday());
+    fresh.day = gardenToday();
+    sandboxWake = fresh;
+    sandboxEnergy = WAKE_ENERGY_POINTS;
+    console.log(`🧪 沙盒开启（${fromReal ? '复制自真实状态' : '全新'}），默的自主唤醒暂停`);
+    res.json({ ok: true, fromReal, menu: await sandboxMenu('root'), note: '沙盒已开启：改动只在内存，默的自主唤醒已暂停。' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/debug/wake/choose', async (req, res) => {
+  if (!debugGuard(req, res)) return;
+  try {
+    if (!sandboxWake) return res.status(400).json({ error: '沙盒还没开始，先点「开始沙盒」' });
+    const b = req.body || {};
+    const nodeNow = String(b.node || 'root');
+    const before = sandboxEnergy;
+    const r = await executeMenuOption(String(b.option_id || ''), b.args || {}, await sandboxCtx(nodeNow));
+    const used = Number((r && r.energyDelta) || 0);
+    sandboxEnergy = Math.max(0, sandboxEnergy - used);
+    const next = (r && r.nextNode) || nodeNow;
+    res.json({
+      ok: true,
+      optionId: b.option_id,
+      outcome: (r && r.outcome) || '（这个选项没有返回任何结果）',
+      energyDelta: used, energyBefore: before, energyAfter: sandboxEnergy,
+      endWake: !!(r && r.endWake),
+      nextNode: next,
+      menu: await sandboxMenu(next)
+    });
+  } catch (e) {
+    console.error('[sandbox] 执行失败:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post('/api/debug/wake/stop', async (req, res) => {
+  if (!debugGuard(req, res)) return;
+  sandboxWake = null;
+  gardenCache = null;
+  console.log('🧪 沙盒关闭，默的自主唤醒恢复');
+  res.json({ ok: true, note: '沙盒已关闭：沙盒里的改动已丢弃，默的自主唤醒恢复。' });
 });
 
 app.get('/api/model-config', async (req, res) => {
@@ -2059,6 +2179,11 @@ async function getWeatherContext(city) {
 console.log('🕒 当前给模型的时间戳是:', getTimeInfo().timeString);
 
 async function shouldPush() {
+  // 沙盒调试中 → 默暂停自主唤醒（雪在页面里点选项时，两边不能同时改同一份状态）
+  if (sandboxWake) {
+    console.log('🧪 沙盒调试中，暂停自主唤醒');
+    return false;
+  }
   const { hour } = getTimeInfo();
 
   // 1. 深夜保护
