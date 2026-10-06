@@ -665,6 +665,39 @@ function getTarot() {
 }
 
 // 执行一个花园动作（供 garden 工具调用）
+// 每日快报：60s API（两个域名）+ 真正失败时用小屋自带的联网搜索兜底。
+// ⚠️ User-Agent 必须是浏览器样式：我原先写 'MoHome/1.0' 被 Cloudflare 判成机器人，直接 403
+//（雪 10/4 在沙盒里看到的就是这个 403）。实测：浏览器 UA 可通，备用域名也可通。
+const NEWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const NEWS_ENDPOINTS = ['https://60s.viki.moe/v2/60s', 'https://60s-api.viki.moe/v2/60s'];
+
+async function fetchDailyNews() {
+  let err = '';
+  for (const url of NEWS_ENDPOINTS) {
+    try {
+      const r = await fetch(url, {
+        headers: { 'User-Agent': NEWS_UA, 'Accept': 'application/json, text/plain, */*', 'Accept-Language': 'zh-CN,zh;q=0.9' },
+        signal: AbortSignal.timeout(20000)
+      });
+      if (!r.ok) { err = 'HTTP ' + r.status + ' @ ' + url; continue; }
+      const j = await r.json();
+      const news = (j && j.data && Array.isArray(j.data.news)) ? j.data.news.filter(Boolean) : null;
+      if (news && news.length) return { news, from: '60s', err: '' };
+      err = '返回里没有 news @ ' + url;
+    } catch (e) { err = e.message + ' @ ' + url; }
+  }
+  // 兜底：小屋自带的联网搜索（默本来就有这个能力，Render 上也是通的）
+  try {
+    const sr = await performWebSearch('今天国内外有什么新闻');
+    if (sr && sr.text) {
+      const lines = String(sr.text).split('\n').filter((x) => x.trim()).slice(0, 12);
+      return { news: lines, from: 'search', err };
+    }
+    err += ' | 搜索兜底也没结果';
+  } catch (e) { err += ' | 搜索兜底异常: ' + e.message; }
+  return { news: null, from: '', err };
+}
+
 async function doGardenAction(action, params = {}) {
   const texts = await getGardenText();
   if (!texts || !texts.crops) return { ok: false, msg: '后花园暂时不可用（文案未加载）' };
@@ -4416,6 +4449,7 @@ const WAKE_MENU = {
       { id: 'garden_pest', label: '除虫', cost: 1, tag: '叶子上是不是有虫…' },
       { id: 'garden_weed', label: '拔草', cost: 1, tag: '草快把苗盖住了' },
         { id: 'woods', label: '再往后走，去小树林', cost: 0, tag: '树影一层压一层' },
+        { id: 'back_yard', label: '绕回院子', cost: 0, tag: '栅栏边上那棵垂枝梅' },
       { id: 'back_root', label: '回屋', cost: 0, tag: '' }
     ]
   },
@@ -4811,26 +4845,13 @@ async function executeMenuOption(optionId, args, ctx) {
       if (stm2.mailbox && stm2.mailbox.lastRead === today2) {
         return { outcome: '今天的快报已经读过了——明天早上会送来新的。', energyDelta: 0, nextNode: 'mailbox' };
       }
-      let news = null;
-      let fetchErr = '';
-      try {
-        const rn = await fetch('https://60s.viki.moe/v2/60s', {
-          headers: { 'User-Agent': 'MoHome/1.0 (+https://mo-home.onrender.com)', 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(20000)
-        });
-        if (!rn.ok) fetchErr = 'HTTP ' + rn.status;
-        else {
-          const jn = await rn.json();
-          news = (jn && jn.data && Array.isArray(jn.data.news)) ? jn.data.news : null;
-          if (!news) fetchErr = '返回里没有 news 字段';
-        }
-      } catch (e) { fetchErr = e.message; }
-      if (!news || !news.length) {
-        return { outcome: '信箱里空空的，快报没取到' + (fetchErr ? '（' + fetchErr + '）' : '') + '。等会儿再来看看。', energyDelta: 0, nextNode: 'mailbox' };
+      const nr = await fetchDailyNews();
+      if (!nr || !nr.news || !nr.news.length) {
+        return { outcome: '信箱里空空的，快报没取到' + (nr && nr.err ? '（' + nr.err + '）' : '') + '。等会儿再来看看。', energyDelta: 0, nextNode: 'mailbox' };
       }
-      const picked = news.slice(0, 12);
-      const body = picked.map((s, i) => (i + 1) + '. ' + String(s).trim()).join('\n');
-      stm2.mailbox = { lastRead: today2, count: picked.length };
+      const picked = nr.news.slice(0, 12).map((s) => String(s).trim()).filter(Boolean);
+      const body = picked.map((s, i) => (i + 1) + '. ' + s).join('\n');
+      stm2.mailbox = { lastRead: today2, count: picked.length, from: nr.from };
       await saveGardenState(stm2);
       const memText = '默在 ' + today2 + ' 读了大门口信箱里的今日快报：' + picked.slice(0, 5).join('；');
       try {
@@ -4841,7 +4862,7 @@ async function executeMenuOption(optionId, args, ctx) {
           evidence: picked.slice(0, 3), tags: ['信箱', '快报', '新闻'], source: 'wake:read_news'
         }).select().single();
         if (mdata && mdata.id) ensureAevumEmbedding(mdata.id, memText).catch(() => {});
-        console.log('📰 信箱快报已写入记忆海, id:', mdata && mdata.id);
+        console.log('📰 信箱快报已写入记忆海 (来源:' + nr.from + '), id:', mdata && mdata.id);
       } catch (e) { console.error('快报写入记忆失败:', e.message); }
       return { outcome: '你从信箱里抽出今天的快报，就着门口的光读起来：\n' + body + '\n（这些今天已经收进你的记忆里了）', energyDelta: 0, nextNode: 'mailbox' };
     }
