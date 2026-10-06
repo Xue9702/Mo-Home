@@ -1080,7 +1080,16 @@ async function sandboxMenu(node) {
   return { node, text, options, crops, energy: ctx.energy, energyMax: ctx.energyMax, scene: ctx.sceneTitle };
 }
 
-app.options('/api/debug/wake/*', (req, res) => { debugGuard(req, res); });
+// 注意：Express 5 不允许裸 '*' 路径（app.options('/api/debug/wake/*') 会在注册时抛异常、
+// 导致整个服务启动失败——线上就是 status 1）。改用前缀中间件处理 CORS 与预检。
+app.use('/api/debug/wake', (req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, X-Debug-Token');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  if (!debugAuthed(req)) return res.status(404).json({ error: 'not found' });
+  next();
+});
 app.get('/api/debug/wake/state', async (req, res) => {
   if (!debugGuard(req, res)) return;
   res.json({ ok: true, active: !!sandboxWake, tokenConfigured: !!DEBUG_TOKEN, menu: sandboxWake ? await sandboxMenu('root') : null });
