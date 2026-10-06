@@ -460,6 +460,88 @@ function orderMany(state, list, { crops = {} } = {}) {
   return { state: s, ok: true, msg: `下单：${names.join('、')}（-${total}💰），等无人机送来`, total, count: pending.length };
 }
 
+// ---------- 做菜 ----------
+// 档次规则（雪 10/4 定）：按涉及的种类数——1 初级 / 2 中级 / 3 高级 / 4 顶级。
+// 蔬菜、家禽、肉、蛋、豆制品算同一类（雪：肉好买，和蔬菜算一类）；主食与调料不计入。
+const BUCKET_NAME = { veg: '蔬菜/肉蛋', seafood: '海鲜', fruit: '水果', mushroom: '菌菇', flower: '花' };
+const TIER_NAME = { 1: '初级', 2: '中级', 3: '高级', 4: '顶级' };
+
+function itemCat(id, texts) {
+  const t = texts || {};
+  if (t.cat_of && t.cat_of[id]) return t.cat_of[id];
+  if (t.crops && t.crops[id]) return t.crops[id].cat || t.crops[id].kind;
+  if (t.goods && t.goods[id]) return t.goods[id].cat;
+  return '?';
+}
+function itemName(id, texts) {
+  const t = texts || {};
+  if (t.crops && t.crops[id]) return t.crops[id].name;
+  if (t.goods && t.goods[id]) return t.goods[id].name;
+  if (id === 'egg') return '鸡蛋';
+  if (id === 'rice') return '大米';
+  if (id === 'flour') return '面粉';
+  if (id.startsWith('dish_')) {
+    const d = ((t.recipes && t.recipes.list) || []).find((r) => 'dish_' + r.id === id);
+    return d ? d.name : id;
+  }
+  return id;
+}
+function tierOfRecipe(rec, texts) {
+  const set = new Set();
+  for (const k of Object.keys(rec.need || {})) {
+    const b = itemCat(k, texts);
+    if (BUCKET_NAME[b]) set.add(b);
+  }
+  for (const k of Object.keys(rec.pick || {})) {
+    if (BUCKET_NAME[k]) set.add(k);
+  }
+  return set.size;
+}
+
+// 做菜：need 是固定材料；pick 是"从某类里任选 N 种"（use 里挑，不重复）
+function cook(state, { recipeId = '', use = [], texts = {} } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  const list = (texts.recipes && texts.recipes.list) || [];
+  const rec = list.find((r) => r.id === recipeId);
+  if (!rec) return { state: s, ok: false, msg: '没有这道菜的做法' };
+  const need = Object.assign({}, rec.need || {});
+  const picked = new Set();
+  for (const bucket of Object.keys(rec.pick || {})) {
+    const want = rec.pick[bucket];
+    const chosen = [];
+    for (const id of use) {
+      if (chosen.length >= want) break;
+      if (picked.has(id)) continue;
+      if (itemCat(id, texts) !== bucket) continue;
+      if (!((s.bag[id] || []).length)) continue;
+      chosen.push(id); picked.add(id);
+    }
+    if (chosen.length < want) {
+      return { state: s, ok: false, msg: `这道菜还要 ${want} 种${BUCKET_NAME[bucket] || bucket}（现在只凑出 ${chosen.length} 种）` };
+    }
+    for (const id of chosen) need[id] = (need[id] || 0) + 1;
+  }
+  const lack = [];
+  for (const id of Object.keys(need)) {
+    const have = (s.bag[id] || []).length;
+    if (have < need[id]) lack.push(`${itemName(id, texts)} 要 ${need[id]} 份、现在 ${have}`);
+  }
+  if (lack.length) return { state: s, ok: false, msg: '材料不够——' + lack.join('；') };
+  for (const id of Object.keys(need)) {
+    s.bag[id] = s.bag[id].slice(need[id]);
+    if (!s.bag[id].length) delete s.bag[id];
+  }
+  const tier = tierOfRecipe(rec, texts);
+  const dishId = 'dish_' + rec.id;
+  addItem(s.bag, dishId, 1, s.day);
+  s.dishes = s.dishes || {};
+  s.dishes[dishId] = { name: rec.name, emoji: rec.emoji || '🍽', tier, at: s.day };
+  return {
+    state: s, ok: true, dishId, tier, tierName: TIER_NAME[tier] || '？',
+    msg: `你做了一份${rec.emoji || ''}${rec.name}（${TIER_NAME[tier] || '？'}）`
+  };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
@@ -468,5 +550,6 @@ module.exports = {
   buyChick, feedChickens, nameChick, collectEggs, viewCoop,
   shopList, order, tickWake, wish,
   BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung, orderMany,
+  BUCKET_NAME, TIER_NAME, itemCat, itemName, tierOfRecipe, cook,
   viewPlot, viewGarden
 };

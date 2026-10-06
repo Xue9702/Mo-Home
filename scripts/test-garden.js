@@ -228,9 +228,9 @@ t('鸡棚查看：每只的状态 + 鸡窝里的蛋', () => {
   assert.ok(v.lines.some((l) => l.includes('2 颗蛋')), '应报告鸡窝里的蛋');
   assert.strictEqual(v.eggs, 2);
 });
-t('商店：商品表含 10 种子 + 小鸡 + 米面 + 建材，价格对得上', () => {
+t('商店：商品表含全部种子 + 小鸡 + 米面 + 建材，价格对得上', () => {
   const list = G.shopList(REAL_CROPS);
-  assert.strictEqual(list.length, 15, '应为 15 件商品（10 种子 + 小鸡 + 米 + 面 + 木板 + 钉子）');
+  assert.strictEqual(list.length, Object.keys(REAL_CROPS).length + 5, '应为「作物数 + 5」（种子 + 小鸡 + 米 + 面 + 木板 + 钉子）');
   const rose = list.find((x) => x.id === 'seed_rose');
   assert.strictEqual(rose.price, 25, '玫瑰种子 25 金币');
   assert.strictEqual(rose.name, '玫瑰种子');
@@ -352,6 +352,59 @@ t('狗屋：配方 5 木板 + 10 钉子，与猫窝互不影响', () => {
   assert.ok(d.state.built.dog_house, '狗屋应记下搭好');
   assert.ok(!d.state.built.cat_house, '猫窝仍是空的（两者独立）');
   assert.ok(!d.state.bag.wood && !d.state.bag.nail, '材料应被消耗');
+});
+const GTEXTS = require('../garden-text.json');   // 真实文案（与上面给花园逻辑用的假 TEXTS 区分开）
+
+t('菜品档次：按涉及的种类数算（1初级/2中级/3高级/4顶级）', () => {
+  const by = (id) => G.tierOfRecipe(GTEXTS.recipes.list.find((r) => r.id === id), GTEXTS);
+  assert.strictEqual(by('fried_egg'), 1, '煎蛋只有蛋一类 → 初级');
+  assert.strictEqual(by('fried_rice'), 1, '蛋炒饭：米不算、蛋与胡萝卜同类 → 初级');
+  assert.strictEqual(by('mushroom_chicken'), 2, '菌菇鸡汤：菌菇 + 肉 → 中级');
+  assert.strictEqual(by('corn_mushroom_soup'), 3, '奶油玉米蘑菇汤：蔬菜+菌菇+海鲜 → 高级');
+  assert.strictEqual(by('mango_shrimp'), 4, '芒果虾仁沙拉：海鲜+水果+蔬菜+菌菇 → 顶级');
+});
+
+t('主食与调料不计入档次（米/面不算一类）', () => {
+  assert.strictEqual(G.itemCat('rice', GTEXTS), 'staple');
+  assert.strictEqual(G.itemCat('flour', GTEXTS), 'staple');
+  assert.ok(!G.BUCKET_NAME['staple'], 'staple 不该出现在计入档次的桶里');
+});
+
+t('做菜：材料齐了就出锅，材料被消耗、菜品进背包', () => {
+  let s = G.newState('2026-10-06');
+  s.bag.egg = [{ at: '2026-10-06' }, { at: '2026-10-06' }];
+  const r = G.cook(s, { recipeId: 'fried_egg', texts: GTEXTS });
+  assert.ok(r.ok, r.msg);
+  assert.strictEqual(r.tier, 1);
+  assert.strictEqual(r.state.bag.egg.length, 1, '只用掉一颗蛋');
+  assert.strictEqual(r.state.bag.dish_fried_egg.length, 1, '菜品应进背包');
+  assert.strictEqual(r.state.dishes.dish_fried_egg.name, '煎蛋');
+});
+
+t('做菜：任选类凑不够就拒绝，且一点材料都不消耗', () => {
+  const s = G.newState('2026-10-06');
+  s.bag.tomato = [{ at: '2026-10-06' }];
+  s.bag.carrot = [{ at: '2026-10-06' }];
+  const r = G.cook(s, { recipeId: 'salad', use: ['tomato', 'carrot'], texts: GTEXTS });
+  assert.strictEqual(r.ok, false, '只给 2 种，凑不出 3 种菜');
+  assert.ok(r.msg.includes('3 种'), '提示要说清还差几种：' + r.msg);
+  assert.strictEqual(s.bag.tomato.length, 1, '失败不该消耗材料');
+  assert.strictEqual(s.bag.carrot.length, 1);
+});
+
+t('做菜：任选类凑够了，三种各扣一份', () => {
+  const s = G.newState('2026-10-06');
+  ['tomato', 'carrot', 'bokchoy'].forEach((k) => { s.bag[k] = [{ at: '2026-10-06' }]; });
+  const r = G.cook(s, { recipeId: 'salad', use: ['tomato', 'carrot', 'bokchoy'], texts: GTEXTS });
+  assert.ok(r.ok, r.msg);
+  assert.ok(!r.state.bag.tomato && !r.state.bag.carrot && !r.state.bag.bokchoy, '三种都被消耗');
+  assert.strictEqual(r.state.bag.dish_salad.length, 1);
+});
+
+t('做菜：没这道菜的做法时明确拒绝', () => {
+  const r = G.cook(G.newState('2026-10-06'), { recipeId: 'nonexistent', texts: GTEXTS });
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.msg.includes('没有这道菜'), r.msg);
 });
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);
