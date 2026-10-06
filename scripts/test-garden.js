@@ -228,9 +228,9 @@ t('鸡棚查看：每只的状态 + 鸡窝里的蛋', () => {
   assert.ok(v.lines.some((l) => l.includes('2 颗蛋')), '应报告鸡窝里的蛋');
   assert.strictEqual(v.eggs, 2);
 });
-t('商店：商品表含全部种子 + 小鸡 + 米面 + 建材，价格对得上', () => {
+t('商店：商品表含全部种子 + 小鸡 + 米面 + 建材 + 鱼竿，价格对得上', () => {
   const list = G.shopList(REAL_CROPS);
-  assert.strictEqual(list.length, Object.keys(REAL_CROPS).length + 5, '应为「作物数 + 5」（种子 + 小鸡 + 米 + 面 + 木板 + 钉子）');
+  assert.strictEqual(list.length, Object.keys(REAL_CROPS).length + 6, '应为「作物数 + 6」（种子 + 小鸡 + 米 + 面 + 木板 + 钉子 + 鱼竿）');
   const rose = list.find((x) => x.id === 'seed_rose');
   assert.strictEqual(rose.price, 25, '玫瑰种子 25 金币');
   assert.strictEqual(rose.name, '玫瑰种子');

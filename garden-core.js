@@ -378,7 +378,8 @@ const SHOP_FOOD = {
   rice: { name: '大米', price: 5 },
   flour: { name: '面粉', price: 5 },
   wood: { name: '木板', price: 12 },
-  nail: { name: '钉子', price: 3 }
+  nail: { name: '钉子', price: 3 },
+  rod: { name: '鱼竿', price: 80 }
 };
 
 // 能搭的东西（图纸）——材料齐了才能搭

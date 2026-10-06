@@ -568,6 +568,9 @@ const WAKE_SCENE_TITLES = {
   gh_flower: '花田前',
   gh_mushroom: '菌床前',
   cook: '灶台前',
+  lake: '湖边',
+  trash: '垃圾桶前',
+  sell: '电脑前（卖东西）',
   yard: '院子里',
   tree: '垂枝梅底下',
   cat_house: '猫窝前'
@@ -4495,7 +4498,8 @@ const WAKE_MENU = {
       { id: 'fountain', label: '走到喷泉池边', cost: 0, tag: '水声很轻' },
       { id: 'swing', label: '坐秋千', cost: 0, tag: '木板被晒得发白' },
       { id: 'mailbox', label: '看看大门口的信箱', cost: 0, tag: '今天的快报到了吗' },
-      { id: 'yard_lake', label: '往湖边走走', cost: 0, tag: '那条路好像还没修好…' }
+      { id: 'lake', label: '往西走，到湖边去', cost: 0, tag: '水面很静' },
+      { id: 'trash', label: '院子角落的垃圾桶', cost: 0, tag: '用不着的东西可以扔' },
     ]
   },
   tree: {
@@ -4570,9 +4574,31 @@ const WAKE_MENU = {
       { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
     ]
   },
+  // 湖边（院子往西）—— 钓鱼
+  lake: {
+    options: [
+      { id: 'lake_cast', label: '甩竿钓一会儿', cost: 1, tag: '要花 1 点体力' },
+      { id: 'back_yard', label: '空手回院子', cost: 0, tag: '' }
+    ]
+  },
+  // 垃圾桶（院子角落）
+  trash: {
+    options: [
+      { id: 'trash_throw', label: '扔掉一样东西', cost: 0, tag: '说清扔什么' },
+      { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
+    ]
+  },
+  // 卖东西（电脑上）
+  sell: {
+    options: [
+      { id: 'sell_item', label: '卖东西（说卖哪样）', cost: 0, tag: '菜、蛋、鱼都能卖' },
+      { id: 'back_root', label: '合上电脑', cost: 0, tag: '' }
+    ]
+  },
   shop: {
     options: [
       { id: 'shop_buy', label: '下单（可以一次买好几样）', cost: 1, tag: '挑东西也要花力气' },
+      { id: 'sell', label: '卖点东西', cost: 0, tag: '菜、蛋、鱼都能换钱' },
       { id: 'back_root', label: '合上电脑', cost: 0, tag: '' }
     ]
   },
@@ -4853,10 +4879,6 @@ function parseShopItems(args) {
       if (b7.dog_house) parts.push('狗屋：' + (y7.dog_inside || '里面铺着旧毛巾，也还没有谁住进来。'));
       return { outcome: '你蹲下来挨个看了看。\n' + parts.join('\n'), energyDelta: 0, nextNode: 'cat_house' };
     }
-    case 'yard_lake': {
-      const ty8 = await getGardenText();
-      return { outcome: ((ty8 && ty8.yard) || {}).lake || '往湖边的路还没修好。', energyDelta: 0, nextNode: 'yard' };
-    }
     case 'woods': {
       const ty9 = await getGardenText();
       return { outcome: ((ty9 && ty9.yard) || {}).woods || '小树林暂时进不去。', energyDelta: 0, nextNode: ctx.node };
@@ -5035,6 +5057,70 @@ function parseShopItems(args) {
       await saveGardenState(st5);
       const gain5 = (Number(info5.tier) >= 3) ? 2 : 1;
       return { outcome: '你把' + (info5.name || '那道菜') + '热了热吃掉。' + (gain5 > 1 ? '肚子里暖起来，撑得住一阵。' : '垫了垫肚子。'), energyDelta: -gain5, nextNode: ctx.node };
+    }
+    // ---- 湖边（院子往西）· 钓鱼 ----
+    case 'lake': {
+      const tl = await getGardenText();
+      const lk = (tl && tl.lake) || {};
+      const stL = await getGardenState();
+      const rodLine = gardenCore.hasRod(stL) ? '' : ('\n' + (lk.no_rod || '你手上什么都没有。'));
+      return { outcome: (lk.scene || '湖边风从水面上过来。') + rodLine, energyDelta: 0, nextNode: 'lake' };
+    }
+    case 'lake_cast': {
+      const tl2 = await getGardenText();
+      const lk2 = (tl2 && tl2.lake) || {};
+      const stL2 = await getGardenState();
+      if (!gardenCore.hasRod(stL2)) return { outcome: (lk2.no_rod || '你没有鱼竿，钓不了。'), energyDelta: 0, nextNode: 'lake' };
+      const rL = gardenCore.fishOnce(stL2, { texts: tl2, day: gardenToday() });
+      if (!rL.ok) return { outcome: rL.msg, energyDelta: 0, nextNode: 'lake' };
+      await saveGardenState(rL.state);
+      return { outcome: (lk2.cast || '你把线甩出去。') + '\n' + rL.text, energyDelta: 1, nextNode: 'lake' };
+    }
+    // ---- 垃圾桶（院子角落）----
+    case 'trash': {
+      const tt = await getGardenText();
+      const tr = (tt && tt.trash) || {};
+      return { outcome: (tr.scene || '院子角落摆着一个垃圾桶。') + '\n' + (tr.throw_hint || ''), energyDelta: 0, nextNode: 'trash' };
+    }
+    case 'trash_throw': {
+      const tt2 = await getGardenText();
+      const stT = await getGardenState();
+      const itemT = menuArgStr(args, 'item', 'content', 'message', 'text').toLowerCase();
+      if (!itemT) return { outcome: '要扔什么？说清楚点。', energyDelta: 0, nextNode: 'trash' };
+      const rT = gardenCore.trashItem(stT, { item: itemT, texts: tt2 });
+      if (!rT.ok) return { outcome: rT.msg, energyDelta: 0, nextNode: 'trash' };
+      await saveGardenState(rT.state);
+      return { outcome: rT.msg, energyDelta: 0, nextNode: 'trash' };
+    }
+    // ---- 卖东西（电脑上）----
+    case 'sell': {
+      const ts = await getGardenText();
+      const stS = await getGardenState();
+      const sellable = Object.keys(stS.bag || {}).map((k) => ({ id: k, n: (stS.bag[k] || []).length, price: gardenCore.sellPriceOf(k, ts) })).filter((x) => x.price > 0);
+      if (!sellable.length) return { outcome: '背包里没有能卖的东西。', energyDelta: 0, nextNode: 'sell' };
+      const linesS = sellable.map((x) => '· ' + gardenCore.itemName(x.id, ts) + ' ×' + x.n + '（' + x.price + '💰/份）');
+      return { outcome: '能卖的：\n' + linesS.join('\n') + '\n（说卖哪样、卖几份）', energyDelta: 0, nextNode: 'sell' };
+    }
+    case 'sell_item': {
+      const ts2 = await getGardenText();
+      let stS2 = await getGardenState();
+      const itemS = menuArgStr(args, 'item', 'goods', 'content', 'message').toLowerCase();
+      const nS = Math.max(1, Math.min(20, menuArgNum(args, 'n', 'count') || 1));
+      if (!itemS) return { outcome: '要卖什么？', energyDelta: 0, nextNode: 'sell' };
+      let idS = itemS;
+      if (!stS2.bag[idS]) {
+        const foundS = Object.keys(stS2.bag || {}).find((k) => gardenCore.itemName(k, ts2) === itemS || gardenCore.itemName(k, ts2).includes(itemS));
+        if (foundS) idS = foundS;
+      }
+      let soldS = 0;
+      let gainS = 0;
+      for (let i = 0; i < nS; i++) {
+        const rS = gardenCore.sellItem(stS2, { item: idS, texts: ts2 });
+        if (!rS.ok) { if (i === 0) return { outcome: rS.msg, energyDelta: 0, nextNode: 'sell' }; break; }
+        stS2 = rS.state; soldS++; gainS += rS.price;
+      }
+      await saveGardenState(stS2);
+      return { outcome: '你卖了 ' + soldS + ' 份' + gardenCore.itemName(idS, ts2) + '，到手 ' + gainS + ' 金币（现在 ' + stS2.coins + '💰）', energyDelta: 0, nextNode: 'sell' };
     }
     case 'shop': {
       const texts = await getGardenText();
