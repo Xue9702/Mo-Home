@@ -514,9 +514,9 @@ const LONGING_PHASES = [
 function computeLonging(affection, lastActivity) {
   const now = Date.now();
   const tHours = lastActivity ? Math.max(0, (now - new Date(lastActivity).getTime()) / 3600000) : 0;
-  const aff = Math.max(0, Math.min(100, Number(affection) || 0));
-  const tau = 30 * (1 - aff / 150);                          // 亲密缩短特征时间
-  const lmax = Math.min(1.0, Math.max(0.45, aff / 60));      // 想念上限，保底 0.45
+  const aff = Math.max(0, Math.min(10000, Number(affection) || 0));   // 好感上限 10000（雪 10/4）
+  const tau = 30 * (1 - aff / 15000);   // 同比例放大：10000 等价于原来的 100                          // 亲密缩短特征时间
+  const lmax = Math.min(1.0, Math.max(0.45, aff / 6000));      // 想念上限，保底 0.45
   const alpha = 0.8;
   const longing = lmax * (1 - Math.pow(1 + tHours / Math.max(1, tau), -alpha));
   const isDetachment = tHours >= 504 && longing >= 0.9;

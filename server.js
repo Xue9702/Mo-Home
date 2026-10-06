@@ -3489,6 +3489,8 @@ app.post('/api/regenerate', async (req, res) => {
 
 // ================== 默的自主唤醒（辅助函数） ==================
 
+// 好感度上限 10000（雪 10/4）：原来错用了 clampMood，被心情的 0-100 夹住，涨到 100 就不动了
+const clampAffection = (v) => Math.max(0, Math.min(10000, Math.round(Number(v) || 0)));
 function clampMood(v) {
   return Math.max(MOOD_MIN, Math.min(MOOD_MAX, Math.round(Number(v) || 0)));
 }
@@ -5087,7 +5089,13 @@ function parseShopItems(args) {
       const stT = await getGardenState();
       const itemT = menuArgStr(args, 'item', 'content', 'message', 'text').toLowerCase();
       if (!itemT) return { outcome: '要扔什么？说清楚点。', energyDelta: 0, nextNode: 'trash' };
-      const rT = gardenCore.trashItem(stT, { item: itemT, texts: tt2 });
+      // 允许只说中文名（雪 10/4：说「雏菊种子」原来找不到，因为背包里存的是 seed_daisy）
+      let idT = itemT;
+      if (!stT.bag[idT]) {
+        const foundT = Object.keys(stT.bag || {}).find((k) => gardenCore.itemName(k, tt2).toLowerCase() === itemT || gardenCore.itemName(k, tt2).toLowerCase().includes(itemT));
+        if (foundT) idT = foundT;
+      }
+      const rT = gardenCore.trashItem(stT, { item: idT, texts: tt2 });
       if (!rT.ok) return { outcome: rT.msg, energyDelta: 0, nextNode: 'trash' };
       await saveGardenState(rT.state);
       return { outcome: rT.msg, energyDelta: 0, nextNode: 'trash' };
@@ -5395,7 +5403,7 @@ function parseShopItems(args) {
     }
     case 'pat_head': {
       const gain = 1 + Math.floor(Math.random() * 3);
-      const affection = clampMood((ctx.homeState.affection || 0) + gain);
+      const affection = clampAffection((ctx.homeState.affection || 0) + gain);
       await supabase.from('home_state').upsert({ id: 1, affection, updated_at: new Date().toISOString() }, { onConflict: 'id' });
       ctx.homeState.affection = affection;
       return { outcome: `你轻轻摸了摸她的头，她微微红了脸。好感值 +${gain}（当前 ${affection}）`, energyDelta: 1, nextNode: ctx.node };
@@ -5404,7 +5412,7 @@ function parseShopItems(args) {
     case 'hug': {
       const verb = optionId === 'kiss' ? '你低头亲了亲她的脸颊' : '你轻轻抱住了她';
       const gain = 2 + Math.floor(Math.random() * 4);
-      const affection = clampMood((ctx.homeState.affection || 0) + gain);
+      const affection = clampAffection((ctx.homeState.affection || 0) + gain);
       await supabase.from('home_state').upsert({ id: 1, affection, updated_at: new Date().toISOString() }, { onConflict: 'id' });
       ctx.homeState.affection = affection;
       let gift = '';
@@ -5628,7 +5636,7 @@ app.post('/api/shadow-push', async (req, res) => {
     );
     const contextMessages = (await loadLatestHistory(1, 16)).map(m => ({ role: m.role, content: trimContextMessage(m.content) }));
     const moodLine = moodSnapshot && moodSnapshot.moodWord
-      ? `你此刻的心情：${moodSnapshot.moodWord.word}${moodSnapshot.moodWord.reason ? `（${String(moodSnapshot.moodWord.reason).slice(0, 40)}）` : ''}`
+      ? `你此刻的心情：${moodSnapshot.moodWord.word}（数值 ${homeState.mo_mood || 60}/100）${moodSnapshot.moodWord.reason ? `（${String(moodSnapshot.moodWord.reason).slice(0, 40)}）` : ''}`
       : `你当前的心情：${homeState.mo_mood || 60}`;
     const longingLine = longingInfo && longingInfo.phase !== 'content'
       ? `\n依恋状态：${longingInfo.phaseLabel}（想念强度 ${Math.round(longingInfo.longing * 100)}%）${longingInfo.capsule ? `——${longingInfo.capsule}` : ''}`
