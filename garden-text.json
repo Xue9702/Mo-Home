@@ -367,6 +367,46 @@
         "藤蔓铺开，叶腋里藏着小黄花",
         "瓜皮上起了细密的网纹，闻着很香，可以摘了"
       ]
+    },
+    "eggplant": {
+      "name": "茄子", "emoji": "🍆", "kind": "veg", "cat": "veg", "days": 4,
+      "seed_price": 14, "sell_price": 36, "bag_days": 4, "fridge_days": 9, "water_per_day": 1,
+      "stages": [
+        "茄子的种子刚下土",
+        "长出几片带绒毛的宽叶",
+        "枝叶间开了一朵紫色的小花，花瓣外翻",
+        "花下坠着一根紫得发亮的茄子，表皮绷得很紧，可以摘了"
+      ]
+    },
+    "lemon": {
+      "name": "柠檬", "emoji": "🍋", "kind": "fruit", "cat": "fruit", "days": 5,
+      "seed_price": 20, "sell_price": 55, "bag_days": 6, "fridge_days": 14, "water_per_day": 1,
+      "stages": [
+        "柠檬的小苗刚栽稳",
+        "枝上冒出油亮的椭圆叶子",
+        "开了几朵白花，凑近有股清味",
+        "结出一颗黄澄澄的果子，皮上全是细孔，可以摘了"
+      ]
+    },
+    "apple": {
+      "name": "苹果", "emoji": "🍎", "kind": "fruit", "cat": "fruit", "days": 6,
+      "seed_price": 26, "sell_price": 75, "bag_days": 7, "fridge_days": 16, "water_per_day": 1,
+      "stages": [
+        "苹果的小树苗刚下土",
+        "抽出一批叶背发白的叶子",
+        "开了一树粉白的花，落下来铺了一地",
+        "枝头挂着的果子从青转红，沉得把枝条压弯了，可以摘了"
+      ]
+    },
+    "pineapple": {
+      "name": "菠萝", "emoji": "🍍", "kind": "fruit", "cat": "fruit", "days": 6,
+      "seed_price": 28, "sell_price": 80, "bag_days": 5, "fridge_days": 10, "water_per_day": 1,
+      "stages": [
+        "菠萝的苗刚栽下，叶子像一丛硬剑",
+        "中心抽出一簇新叶，边上有细齿",
+        "叶子中间鼓起一个青色的果，顶着一撮小叶",
+        "果皮转成金黄，凑近能闻到甜味，可以割了"
+      ]
     }
   },
 
@@ -395,26 +435,41 @@
   "recipes": {
     "_comment": "need=固定材料；pick=从某类里任选 N 种（不重复）。档次由涉及的种类数自动算：1 初级 / 2 中级 / 3 高级 / 4 顶级。菜品背包 1 天、冰箱 2 天。",
     "list": [
-      { "id": "fried_egg",     "name": "煎蛋",             "emoji": "🍳", "need": { "egg": 1 } },
-      { "id": "tomato_egg",    "name": "番茄炒蛋",         "emoji": "🍅", "need": { "tomato": 1, "egg": 1 } },
-      { "id": "bokchoy_soup",  "name": "白菜蛋花汤",       "emoji": "🥣", "need": { "bokchoy": 1, "egg": 1 } },
-      { "id": "fried_rice",    "name": "蛋炒饭",           "emoji": "🍚", "need": { "rice": 1, "egg": 1, "carrot": 1 } },
-      { "id": "hash_brown",    "name": "薯饼（配番茄酱）", "emoji": "🥔", "need": { "potato": 1, "tomato": 1 } },
-      { "id": "salad",         "name": "蔬菜沙拉",         "emoji": "🥗", "need": {}, "pick": { "veg": 3 } },
-      { "id": "fruit_salad",   "name": "水果拼盘",         "emoji": "🍧", "need": {}, "pick": { "fruit": 3 } },
-      { "id": "flower_tea",    "name": "花茶",             "emoji": "🍵", "need": {}, "pick": { "flower": 1 } },
-      { "id": "mushroom_soup", "name": "菌菇汤",           "emoji": "🍲", "need": {}, "pick": { "mushroom": 3 } },
-      { "id": "cucumber_pepper","name": "黄瓜拌青椒",      "emoji": "🥗", "need": { "cucumber": 1, "green_pepper": 1 } },
-      { "id": "beef_pepper",   "name": "青椒牛肉",         "emoji": "🥘", "need": { "beef": 1, "green_pepper": 1 } },
-      { "id": "pork_vermicelli","name": "猪肉炖粉条",      "emoji": "🍲", "need": { "pork": 1, "vermicelli": 1 } },
-      { "id": "tofu_pork",     "name": "豆腐烧肉",         "emoji": "🍲", "need": { "tofu": 1, "pork": 1 } },
-      { "id": "mushroom_chicken","name": "菌菇鸡汤",       "emoji": "🍲", "need": { "chicken": 1 }, "pick": { "mushroom": 2 } },
-      { "id": "bamboo_chicken","name": "竹荪鸡汤",         "emoji": "🍲", "need": { "chicken": 1, "bamboo_fungus": 1 } },
-      { "id": "shrimp_egg",    "name": "虾仁蒸蛋",         "emoji": "🍮", "need": { "egg": 2, "shrimp": 1 } },
-      { "id": "mixed_rice",    "name": "什锦炒饭",         "emoji": "🍛", "need": { "rice": 1, "egg": 1 }, "pick": { "mushroom": 1, "veg": 1 } },
+      { "id": "fried_egg", "name": "煎蛋", "emoji": "🍳", "need": { "egg": 1 } },
+      { "id": "tomato_egg", "name": "番茄炒蛋", "emoji": "🍅", "need": { "tomato": 1, "egg": 1 } },
+      { "id": "bokchoy_soup", "name": "白菜蛋花汤", "emoji": "🥣", "need": { "bokchoy": 1, "egg": 1 } },
+      { "id": "fried_rice", "name": "蛋炒饭", "emoji": "🍚", "need": { "rice": 1, "egg": 1, "carrot": 1 } },
+      { "id": "hash_brown", "name": "薯饼（配番茄酱）", "emoji": "🥔", "need": { "potato": 1, "tomato": 1 } },
+      { "id": "salad", "name": "蔬菜沙拉", "emoji": "🥗", "need": {}, "pick": { "veg": 3 } },
+      { "id": "fruit_platter", "name": "水果拼盘", "emoji": "🍧", "need": {}, "pick": { "fruit": 3 } },
+      { "id": "flower_tea", "name": "花茶", "emoji": "🍵", "need": {}, "pick": { "flower": 1 } },
+      { "id": "birthday_cake", "name": "生日蛋糕", "emoji": "🎂", "need": { "egg": 3, "flour": 1 }, "pick": { "fruit": 2, "flower": 1 } },
       { "id": "corn_mushroom_soup", "name": "奶油玉米蘑菇汤", "emoji": "🥣", "need": { "corn": 1, "button_mushroom": 1, "carrot": 1, "shrimp": 1 } },
-      { "id": "mango_shrimp",  "name": "芒果虾仁沙拉",     "emoji": "🥗", "need": { "shrimp": 1 }, "pick": { "fruit": 1, "veg": 1, "mushroom": 1 } },
-      { "id": "birthday_cake", "name": "生日蛋糕",         "emoji": "🎂", "need": { "egg": 3, "flour": 1 }, "pick": { "fruit": 2, "flower": 1 } }
+      { "id": "mushroom_rib_soup", "name": "菌菇排骨汤", "emoji": "🍲", "need": { "pork": 1 }, "pick": { "mushroom": 2 } },
+      { "id": "bamboo_chicken_soup", "name": "竹荪鸡汤", "emoji": "🍲", "need": { "bamboo_fungus": 1, "chicken": 1 } },
+      { "id": "beef_pepper", "name": "青椒牛肉", "emoji": "🥘", "need": { "beef": 1, "green_pepper": 1 } },
+      { "id": "pork_vermicelli", "name": "猪肉炖粉条", "emoji": "🍲", "need": { "pork": 1, "vermicelli": 1 } },
+      { "id": "tofu_fish_soup", "name": "豆腐鱼汤", "emoji": "🐟", "need": { "tofu": 1, "bokchoy": 1, "sea_bass": 1 } },
+      { "id": "cold_cucumber", "name": "凉拌黄瓜", "emoji": "🥒", "need": { "cucumber": 1, "lemon": 1 } },
+      { "id": "tomato_potato_beef", "name": "番茄土豆牛腩", "emoji": "🍲", "need": { "tomato": 1, "potato": 1, "beef": 1 } },
+      { "id": "salmon_sashimi", "name": "三文鱼鱼片", "emoji": "🍣", "need": { "salmon": 1 } },
+      { "id": "seafood_cured", "name": "生腌拼盘", "emoji": "🦐", "need": { "lemon": 1, "salmon": 1, "crab": 1, "shrimp": 1 } },
+      { "id": "broccoli_mushroom", "name": "西蓝花炒口蘑", "emoji": "🥦", "need": { "broccoli": 1, "button_mushroom": 1 } },
+      { "id": "garlic_spinach", "name": "蒜炒空心菜", "emoji": "🥬", "need": { "water_spinach": 1 } },
+      { "id": "baby_cabbage_soup", "name": "上汤娃娃菜", "emoji": "🥣", "need": { "baby_cabbage": 1, "egg": 1 } },
+      { "id": "lettuce_wrap", "name": "生菜包肉", "emoji": "🥬", "need": { "lettuce": 1, "pork": 1 } },
+      { "id": "fish_fragrant_eggplant", "name": "鱼香茄子", "emoji": "🍆", "need": { "eggplant": 1, "pork": 1, "green_pepper": 1 } },
+      { "id": "enoki_beef_roll", "name": "金针菇肥牛卷", "emoji": "🥩", "need": { "enoki": 1, "beef": 1 } },
+      { "id": "red_mushroom_chicken", "name": "红菇炖鸡", "emoji": "🍗", "need": { "red_mushroom": 1, "chicken": 1 } },
+      { "id": "apple_pie", "name": "苹果派", "emoji": "🥧", "need": { "apple": 1, "flour": 1 } },
+      { "id": "pineapple_pork", "name": "菠萝咕咾肉", "emoji": "🍍", "need": { "pineapple": 1, "pork": 1 } },
+      { "id": "lemon_steamed_fish", "name": "柠檬蒸鱼", "emoji": "🐟", "need": { "lemon": 1, "sea_bass": 1 } },
+      { "id": "blueberry_jam", "name": "蓝莓果酱", "emoji": "🫐", "need": { "blueberry": 1, "lemon": 1 } },
+      { "id": "strawberry_daifuku", "name": "草莓大福", "emoji": "🍓", "need": { "strawberry": 1, "flour": 1 } },
+      { "id": "mango_lemon_drink", "name": "芒果柠檬饮", "emoji": "🥤", "need": { "mango": 1, "lemon": 1 } },
+      { "id": "watermelon_juice", "name": "西瓜汁", "emoji": "🍉", "need": { "watermelon": 1 } },
+      { "id": "cantaloupe_smoothie", "name": "哈密瓜冰沙", "emoji": "🍈", "need": { "cantaloupe": 1 } },
+      { "id": "veggie_wrap", "name": "卷饼", "emoji": "🌯", "need": { "flatbread": 1, "egg": 1 }, "pick": { "veg": 1 } }
     ]
   }
 }

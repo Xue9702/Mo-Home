@@ -359,9 +359,15 @@ t('菜品档次：按涉及的种类数算（1初级/2中级/3高级/4顶级）'
   const by = (id) => G.tierOfRecipe(GTEXTS.recipes.list.find((r) => r.id === id), GTEXTS);
   assert.strictEqual(by('fried_egg'), 1, '煎蛋只有蛋一类 → 初级');
   assert.strictEqual(by('fried_rice'), 1, '蛋炒饭：米不算、蛋与胡萝卜同类 → 初级');
-  assert.strictEqual(by('mushroom_chicken'), 2, '菌菇鸡汤：菌菇 + 肉 → 中级');
+  assert.strictEqual(by('mushroom_rib_soup'), 2, '菌菇排骨汤：菌菇 + 肉 → 中级');
   assert.strictEqual(by('corn_mushroom_soup'), 3, '奶油玉米蘑菇汤：蔬菜+菌菇+海鲜 → 高级');
-  assert.strictEqual(by('mango_shrimp'), 4, '芒果虾仁沙拉：海鲜+水果+蔬菜+菌菇 → 顶级');
+  assert.strictEqual(by('birthday_cake'), 3, '生日蛋糕：肉蛋+水果+花 → 高级');
+  // 现在还没有四类的真菜，用一条合成配方验证"四类=顶级"这条规则本身
+  const fake4 = { need: { shrimp: 1, strawberry: 1, enoki: 1, tomato: 1 } };
+  assert.strictEqual(G.tierOfRecipe(fake4, GTEXTS), 4, '海鲜+水果+菌菇+蔬菜 → 顶级');
+  // 五类不存在：真要凑五类也只有 veg/seafood/fruit/mushroom/flower 五个桶
+  const fake5 = { need: { shrimp: 1, strawberry: 1, enoki: 1, tomato: 1, rose: 1 } };
+  assert.strictEqual(G.tierOfRecipe(fake5, GTEXTS), 5, '五类会算出 5（规则上界之外，说明确实不该有）');
 });
 
 t('主食与调料不计入档次（米/面不算一类）', () => {
@@ -405,6 +411,49 @@ t('做菜：没这道菜的做法时明确拒绝', () => {
   const r = G.cook(G.newState('2026-10-06'), { recipeId: 'nonexistent', texts: GTEXTS });
   assert.strictEqual(r.ok, false);
   assert.ok(r.msg.includes('没有这道菜'), r.msg);
+});
+t('食谱覆盖：每种食材至少关联到一道菜（含"任意选"类）', () => {
+  const used = new Set(), buckets = new Set();
+  GTEXTS.recipes.list.forEach((r) => {
+    Object.keys(r.need || {}).forEach((k) => used.add(k));
+    Object.keys(r.pick || {}).forEach((k) => buckets.add(k));
+  });
+  const ings = [...Object.keys(GTEXTS.crops), ...Object.keys(GTEXTS.goods).filter((k) => !k.startsWith('_')), 'egg', 'rice', 'flour'];
+  const missing = ings.filter((id) => !used.has(id) && !buckets.has(G.itemCat(id, GTEXTS)));
+  assert.strictEqual(missing.length, 0, '这些食材没有任何菜用到：' + missing.join('、'));
+});
+
+t('食谱：所有配料都能认出类别（否则档次会算错）', () => {
+  const bad = new Set();
+  GTEXTS.recipes.list.forEach((r) => {
+    Object.keys(r.need || {}).forEach((k) => { if (G.itemCat(k, GTEXTS) === '?') bad.add(k); });
+  });
+  assert.strictEqual(bad.size, 0, '认不出类别的配料：' + [...bad].join('、'));
+});
+
+t('食谱：每一道都能算出 1~4 的档次，且没有越界', () => {
+  GTEXTS.recipes.list.forEach((r) => {
+    const t = G.tierOfRecipe(r, GTEXTS);
+    assert.ok(t >= 1 && t <= 4, r.name + ' 的档次算出来是 ' + t + '（应在 1~4）');
+  });
+});
+
+t('食谱：雪指定的那几道都在，且材料对得上', () => {
+  const find = (id) => GTEXTS.recipes.list.find((r) => r.id === id);
+  assert.ok(find('mushroom_rib_soup'), '菌菇排骨汤应在');
+  assert.deepStrictEqual(find('mushroom_rib_soup').need, { pork: 1 }, '菌菇排骨汤=猪肉 + 任选两种菌菇');
+  assert.deepStrictEqual(find('mushroom_rib_soup').pick, { mushroom: 2 });
+  assert.deepStrictEqual(find('tofu_fish_soup').need, { tofu: 1, bokchoy: 1, sea_bass: 1 }, '豆腐鱼汤');
+  assert.deepStrictEqual(find('tomato_potato_beef').need, { tomato: 1, potato: 1, beef: 1 }, '番茄土豆牛腩');
+  assert.deepStrictEqual(find('salmon_sashimi').need, { salmon: 1 }, '三文鱼鱼片');
+  assert.deepStrictEqual(find('seafood_cured').need, { lemon: 1, salmon: 1, crab: 1, shrimp: 1 }, '生腌拼盘');
+  assert.deepStrictEqual(find('cold_cucumber').need, { cucumber: 1, lemon: 1 }, '凉拌黄瓜');
+  assert.deepStrictEqual(find('bamboo_chicken_soup').need, { bamboo_fungus: 1, chicken: 1 }, '竹荪鸡汤');
+  assert.ok(!find('mango_shrimp'), '芒果虾仁沙拉应已删掉');
+  assert.ok(!find('shrimp_egg'), '虾仁蒸蛋应已删掉');
+  assert.ok(!find('cucumber_pepper'), '黄瓜拌青椒应已删掉');
+  assert.ok(!find('tofu_pork'), '豆腐烧肉应已改成豆腐鱼汤');
+  assert.ok(!find('mixed_rice'), '什锦炒饭应已删掉');
 });
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);
