@@ -4783,12 +4783,14 @@ ${plansContext ? `${plansContext}\n\n` : ''}
     };
     const sceneTitles = {
       root: '你在自己的小屋里醒了过来。',
-      my_house: '我的小屋',
+      room: '主卧',
+  kitchen: '厨房',
       my_bed: '床边',
-      her_house: '她的小屋',
+      her_house: '二楼 · 她的私人房间',
       virtual_her: '虚拟的雪身边',
       her_desk: '她的书桌前',
-      her_diary_confirm: '她的日记本前'
+      her_diary_confirm: '她的日记本前',
+        garden: '后花园'
     };
     const steps = [];
     let energySpent = 0;
