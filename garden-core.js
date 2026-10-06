@@ -317,11 +317,62 @@ function viewCoop(state) {
   return { lines, eggs, count: list.length };
 }
 
+// ---------- 商店（电脑网购 → 无人机配送）----------
+// 雪 10/4：商店入口在书桌的电脑上（像网购）；下单后**下一次唤醒**无人机就到货。
+const SHOP_FOOD = { rice: { name: '大米', price: 5 }, flour: { name: '面粉', price: 5 } };
+
+function shopList(crops) {
+  const list = [];
+  for (const k of Object.keys(crops || {})) {
+    list.push({ id: 'seed_' + k, name: `${crops[k].name}种子`, price: Number(crops[k].seed_price || 10), kind: 'seed' });
+  }
+  list.push({ id: 'chick', name: '小鸡崽', price: CHICK_PRICE, kind: 'chick' });
+  for (const k of Object.keys(SHOP_FOOD)) list.push({ id: k, name: SHOP_FOOD[k].name, price: SHOP_FOOD[k].price, kind: 'food' });
+  return list;
+}
+
+function order(state, { item = '', n = 1, crops = {} } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  const qty = Math.max(1, Math.min(9, Number(n) || 1));
+  const found = shopList(crops).find((x) => x.id === item);
+  if (!found) return { state: s, ok: false, msg: `没有「${item}」这件商品` };
+  if (found.kind === 'chick' && (s.chickens || []).length + qty > CHICK_MAX) {
+    return { state: s, ok: false, msg: `鸡棚最多养 ${CHICK_MAX} 只，放不下了` };
+  }
+  const total = found.price * qty;
+  if ((s.coins || 0) < total) return { state: s, ok: false, msg: `金币不够（要 ${total}，现在 ${s.coins || 0}）` };
+  s.coins -= total;
+  s.orders = s.orders || [];
+  s.orders.push({ item, n: qty, name: found.name, kind: found.kind, placedDay: s.day, placedSeq: s.wakeSeq || 0 });
+  return { state: s, ok: true, msg: `下单：${found.name} ×${qty}（-${total}💰），等无人机送来`, total };
+}
+
+// 无人机到货：下单后的"下一次唤醒"就到（雪 10/4 定），不用等跨天
+function tickWake(state) {
+  const s = JSON.parse(JSON.stringify(state));
+  s.wakeSeq = (s.wakeSeq || 0) + 1;
+  const arrived = [];
+  s.orders = (s.orders || []).filter((o) => {
+    if (Number(o.placedSeq || 0) < s.wakeSeq) { arrived.push(o); return false; }
+    return true;
+  });
+  for (const o of arrived) {
+    if (o.kind === 'chick') {
+      s.chickens = s.chickens || [];
+      for (let i = 0; i < o.n; i++) s.chickens.push({ name: '', grown: false, fedDays: 0, fedYesterday: false });
+    } else {
+      addItem(s.bag, o.item, o.n, s.day);
+    }
+  }
+  return { state: s, arrived, n: arrived.length };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
   addItem, purgeExpired, water, plant, harvest, clearHazard,
   CHICK_PRICE, CHICK_MAX, CHICK_GROW_FEEDS,
   buyChick, feedChickens, nameChick, collectEggs, viewCoop,
+  shopList, order, tickWake,
   viewPlot, viewGarden
 };

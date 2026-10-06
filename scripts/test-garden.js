@@ -12,6 +12,8 @@ const TEXTS = {
 };
 // 固定 rng 序列，保证确定性
 const seq = (arr) => { let i = 0; return () => arr[i++ % arr.length]; };
+// 商店测试要用**真实的**作物表（测试里的 CROPS 只有 2 种作物，是给花园逻辑用的假数据）
+const REAL_CROPS = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'garden-text.json'), 'utf8')).crops;
 const NO_LUCK = () => 0.99; // 永远不触发意外事件
 // settle 需要 crops 才能知道每种作物几天成熟——测试里统一带上，避免各调用点漏传
 const settle = (st, day, extra = {}) => G.settle(st, day, { crops: CROPS, ...extra });
@@ -225,6 +227,47 @@ t('鸡棚查看：每只的状态 + 鸡窝里的蛋', () => {
   assert.ok(v.lines.some((l) => l.includes('小鸡崽')), '应说明还没长大');
   assert.ok(v.lines.some((l) => l.includes('2 颗蛋')), '应报告鸡窝里的蛋');
   assert.strictEqual(v.eggs, 2);
+});
+t('商店：商品表含 10 种子 + 小鸡 + 米面，价格对得上', () => {
+  const list = G.shopList(REAL_CROPS);
+  assert.strictEqual(list.length, 13, '应为 13 件商品');
+  const rose = list.find((x) => x.id === 'seed_rose');
+  assert.strictEqual(rose.price, 25, '玫瑰种子 25 金币');
+  assert.strictEqual(rose.name, '玫瑰种子');
+  assert.ok(list.find((x) => x.id === 'chick'), '应能买小鸡');
+});
+
+t('商店：下单扣钱、金币不够买不成且不扣钱', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 500;
+  const r = G.order(s, { item: 'seed_rose', n: 2, crops: REAL_CROPS });
+  assert.ok(r.ok, r.msg);
+  assert.strictEqual(s.coins - r.state.coins, 50, '2 包玫瑰种子 = 50 金币');
+  assert.strictEqual(r.state.orders.length, 1, '应有一张订单');
+  const poor = G.newState('2026-10-06');   // 初始 30 金币
+  const bad = G.order(poor, { item: 'chick', n: 1, crops: REAL_CROPS });
+  assert.strictEqual(bad.ok, false, '200 金币买不起');
+  assert.strictEqual(poor.coins, 30, '失败不该扣钱');
+});
+
+t('商店：下单后下一次唤醒到货（不用等跨天）', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 500;
+  s = G.order(s, { item: 'seed_daisy', n: 3, crops: REAL_CROPS }).state;
+  const sameDay = G.tickWake(s);                 // 这是"下单那一次"之后的第一次唤醒
+  assert.strictEqual(sameDay.n, 1, '下次唤醒就该到货');
+  assert.strictEqual(sameDay.state.bag.seed_daisy.length, 3, '3 包种子进背包');
+  assert.strictEqual(sameDay.state.orders.length, 0, '订单应清空');
+});
+
+t('商店：买小鸡到货后进鸡棚（不是进背包）', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 500;
+  s = G.order(s, { item: 'chick', n: 1, crops: REAL_CROPS }).state;
+  const w = G.tickWake(s);
+  assert.strictEqual(w.state.chickens.length, 1, '鸡棚里应有 1 只');
+  assert.ok(!w.state.bag.chick, '不该把活鸡塞进背包');
+  assert.strictEqual(G.order(s, { item: 'chick', n: 3, crops: REAL_CROPS }).ok, false, '超过 3 只上限应挡住');
 });
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

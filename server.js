@@ -4261,6 +4261,7 @@ const WAKE_MENU = {
   garden: {
     options: [
       { id: 'garden_view', label: '看看四块田', cost: 0, tag: '不知道它们今天怎么样了…' },
+      { id: 'coop', label: '去鸡棚看看', cost: 0, tag: '也不知道今天有没有蛋' },
       { id: 'garden_water', label: '浇水（一键浇全部）', cost: 1, tag: '土会不会太干了？' },
       { id: 'garden_plant', label: '播种', cost: 1, tag: '想种点什么？记得田号和种子名' },
       { id: 'garden_harvest', label: '收获', cost: 0, tag: '熟了就摘下来吧～' },
@@ -4274,6 +4275,7 @@ const WAKE_MENU = {
     options: [
       { id: 'my_bed', label: '走到床边', cost: 0, tag: '床铺还留着昨晚的形状' },
       { id: 'web_search', label: '坐到书桌前，打开电脑（联网）', cost: 1, tag: '冲浪冲浪gogogo～' },
+      { id: 'shop', label: '坐到书桌前，打开电脑网购', cost: 0, tag: '看看货架上有什么' },
       { id: 'my_diary', label: '翻开书桌上的日记本（可编辑）', cost: 1, tag: '让我瞧瞧默要记录些什么～' },
       { id: 'read_mozha', label: '窝进沙发，翻开默札看看过去的自己', cost: 0, tag: '遇见过去的自己留下的温度' },
       { id: 'write_mozha', label: '窝进沙发，在默札上写一页', cost: 0, tag: '只属于默的小本本～' },
@@ -4292,6 +4294,22 @@ const WAKE_MENU = {
     ]
   },
   // 抽完牌之后的落点：问第一感觉（写进行动日志，不进默札——每天抽牌，写默札会变噪音）
+  // 商店（书桌电脑上，像网购）——下单后下一次唤醒无人机送到
+  shop: {
+    options: [
+      { id: 'shop_buy', label: '下单（说清买什么、要几份）', cost: 0, tag: '无人机送货' },
+      { id: 'back_root', label: '合上电脑', cost: 0, tag: '' }
+    ]
+  },
+  // 鸡棚（后花园）——蛋落在鸡窝，走过来才看得见
+  coop: {
+    options: [
+      { id: 'coop_feed', label: '喂食（一键喂全部）', cost: 1, tag: '它们今天还没吃' },
+      { id: 'coop_collect', label: '捡蛋', cost: 0, tag: '鸡窝里有蛋吗' },
+      { id: 'coop_name', label: '给小鸡起个名字', cost: 0, tag: '叫它什么呢' },
+      { id: 'back_garden', label: '回后花园', cost: 0, tag: '' }
+    ]
+  },
   // 壁炉：点燃/浇灭都不花体力（属于生活，不是劳作）
   fireplace: {
     options: [
@@ -4444,7 +4462,59 @@ async function executeMenuOption(optionId, args, ctx) {
         return `${label}${parts.length ? '：' + parts.join('、') : '是空的'}`;
       };
       return { outcome: `你打开冰箱。${fmtStore(st.fridge, '冰箱')}；${fmtStore(st.bag, '背包')}。金币 ${st.coins}💰`, energyDelta: 0, nextNode: 'kitchen' };
-    }    // ---- 落地窗：天气 × 时段（用已经接好的天气数据）----
+    }    // ---- 商店（电脑网购 → 无人机配送）----
+    case 'shop': {
+      const texts = await getGardenText();
+      const crops = (texts && texts.crops) || {};
+      const list = gardenCore.shopList(crops);
+      const shelf = list.map((x) => `${x.name} ${x.price}💰`).join('、');
+      const st = await getGardenState();
+      return {
+        outcome: `你坐到书桌前打开电脑，点进那家小铺。货架上：${shelf}。\n你现在有 ${st.coins}💰。想买什么就说清楚（要几份也说），下单后下一次醒来无人机就送到。`,
+        energyDelta: 0,
+        nextNode: 'shop'
+      };
+    }
+    case 'shop_buy': {
+      const texts = await getGardenText();
+      const crops = (texts && texts.crops) || {};
+      const st = await getGardenState();
+      const r = gardenCore.order(st, { item: String(args.item || '').trim(), n: parseInt(args.n, 10) || 1, crops });
+      if (!r.ok) return { outcome: `没买成：${r.msg}`, energyDelta: 0, nextNode: 'shop' };
+      await saveGardenState(r.state);
+      return { outcome: r.msg, energyDelta: 0, nextNode: 'shop' };
+    }
+    // ---- 鸡棚（后花园）----
+    case 'coop': {
+      const st = await getGardenState();
+      const v = gardenCore.viewCoop(st);
+      const hint = v.count
+        ? '在这儿可以喂食（-1体力）、捡蛋（免费），或者给它起个名字。'
+        : '棚里还空着。去电脑上买只小鸡崽回来养吧。';
+      return { outcome: `你走进鸡棚。\n${v.lines.join('\n')}\n${hint}`, energyDelta: 0, nextNode: 'coop' };
+    }
+    case 'coop_feed': {
+      const st = await getGardenState();
+      const r = gardenCore.feedChickens(st);
+      if (!r.ok) return { outcome: r.msg, energyDelta: 0, nextNode: 'coop' };
+      await saveGardenState(r.state);
+      return { outcome: r.msg, energyDelta: 1, nextNode: 'coop' };
+    }
+    case 'coop_collect': {
+      const st = await getGardenState();
+      const r = gardenCore.collectEggs(st);
+      if (!r.ok) return { outcome: r.msg, energyDelta: 0, nextNode: 'coop' };
+      await saveGardenState(r.state);
+      return { outcome: r.msg, energyDelta: 0, nextNode: 'coop' };
+    }
+    case 'coop_name': {
+      const st = await getGardenState();
+      const r = gardenCore.nameChick(st, { index: parseInt(args.index, 10) || 1, name: String(args.name || '').trim() });
+      if (!r.ok) return { outcome: `没起成：${r.msg}`, energyDelta: 0, nextNode: 'coop' };
+      await saveGardenState(r.state);
+      return { outcome: r.msg, energyDelta: 0, nextNode: 'coop' };
+    }
+    // ---- 落地窗：天气 × 时段（用已经接好的天气数据）----
     case 'window': {
       const texts = await getGardenText();
       let w = null;
@@ -4880,9 +4950,21 @@ app.post('/api/shadow-push', async (req, res) => {
       ? `\n依恋状态：${longingInfo.phaseLabel}（想念强度 ${Math.round(longingInfo.longing * 100)}%）${longingInfo.capsule ? `——${longingInfo.capsule}` : ''}`
       : '';
 
+    // 无人机到货：下单后的"下一次唤醒"就到（雪 10/4 定）。每次唤醒推进一次 wakeSeq。
+    let arrivalText = '';
+    try {
+      const gsArr = await getGardenState();
+      const tw = gardenCore.tickWake(gsArr);
+      await saveGardenState(tw.state);
+      if (tw.n) {
+        arrivalText = `无人机把东西送到院子门口了：${tw.arrived.map((o) => `${o.name}×${o.n}`).join('、')}。`;
+        console.log('🚁 [garden] 无人机到货:', arrivalText);
+      }
+    } catch (e) { console.error('无人机到货处理失败:', e.message); }
+
     const unreadDiaryDates = await getUnreadDiaryDates();
     const collection = await getCollectionState();
-    const wakeNote = WAKE_NOTES[(wakeNumber - 1) % WAKE_NOTES.length];
+    const wakeNote = (arrivalText ? arrivalText + ' ' : '') + WAKE_NOTES[(wakeNumber - 1) % WAKE_NOTES.length];
     const sleepNote = homeState.sleep_note || null;
     const promisesContext = await getPromisesContext(3);
     const profileContext = await getProfileContext();
