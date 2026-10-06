@@ -494,7 +494,7 @@ function extractMozhaTags(reply) {
   if (wm) {
     try {
       const obj = JSON.parse(wm[1]);
-      out.write = String(obj.content || '').trim().slice(0, 1000);
+      out.write = String(obj.content || '').trim().slice(0, 3000);
     } catch (e) { /* 解析失败忽略 */ }
   }
   if (/\[MOZHA_READ\]/.test(String(reply || ''))) out.read = true;
@@ -4394,7 +4394,6 @@ const WAKE_MENU = {
   // 后花园（与"我的小屋/她的小屋"同级；只在唤醒态可达，聊天里没有这个工具）
   garden: {
     options: [
-      { id: 'garden_view', label: '看看四块田', cost: 0, tag: '不知道它们今天怎么样了…' },
       { id: 'coop', label: '去鸡棚看看', cost: 0, tag: '也不知道今天有没有蛋' },
       { id: 'garden_water', label: '浇水（一键浇全部）', cost: 1, tag: '土会不会太干了？' },
       { id: 'garden_plant', label: '播种', cost: 1, tag: '想种点什么？记得田号和种子名' },
@@ -4619,7 +4618,19 @@ async function executeMenuOption(optionId, args, ctx) {
         return `${label}${parts.length ? '：' + parts.join('、') : '是空的'}`;
       };
       return { outcome: `你打开冰箱。${fmtStore(st.fridge, '冰箱')}；${fmtStore(st.bag, '背包')}。金币 ${st.coins}💰`, energyDelta: 0, nextNode: 'kitchen' };
-    }    // ---- 商店（电脑网购 → 无人机配送）----
+    }    // 走近壁炉时先报状态（原来走进去只说"你走向那里"，看不到火着没着）
+    case 'fireplace': {
+      const st = await getGardenState();
+      const on = !!(st.fireplace && st.fireplace.on);
+      return {
+        outcome: on
+          ? '你走到壁炉边。炉膛里火烧得正旺，木头偶尔塌一下，蹦出几点火星。'
+          : '你走到壁炉边。炉膛是冷的，只剩一层白灰，柴堆在旁边。',
+        energyDelta: 0,
+        nextNode: 'fireplace'
+      };
+    }
+    // ---- 商店（电脑网购 → 无人机配送）----
     case 'shop': {
       const texts = await getGardenText();
       const crops = (texts && texts.crops) || {};
@@ -4747,32 +4758,47 @@ async function executeMenuOption(optionId, args, ctx) {
       return { outcome: `你看着那张牌，第一感觉是：${said}`, energyDelta: 0, nextNode: 'crystal_done' };
     }
     // ---- 后花园（唤醒态专属；聊天里没有这个工具，让他专心陪雪） ----
+    // 每个花园动作之后都附上最新状态——这样"看看四块田"就不用单独占一个菜单项了（雪 10/4 定）
+    async function withGardenStatus(r) {
+      if (!r) return r;
+      try {
+        const v = await doGardenAction('view', {});
+        if (v.ok) r.outcome = String(r.outcome || '') + '\n' + gardenViewText(v.views);
+      } catch (e) { /* 拿不到就不附 */ }
+      return r;
+    }
+    // 进后花园直接给四块田的现状（省掉"看看"那一步）
+    case 'garden': {
+      const res = await doGardenAction('view', {});
+      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: '你走进后花园。', energyDelta: 0, nextNode: 'garden' });
+    }
     case 'garden_view': {
       const res = await doGardenAction('view', {});
-      if (!res.ok) return { outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' };
+      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
       const txt = gardenViewText(res.views);
       const brief = gardenBriefForPrompt({ coins: res.coins, bag: res.bag }, await getGardenText());
-      return { outcome: `你在后花园转了一圈：\n${txt}\n${brief}`, energyDelta: 0, nextNode: 'garden' };
+      return await withGardenStatus({ outcome: `你在后花园转了一圈：\n${txt}\n${brief}`, energyDelta: 0, nextNode: 'garden' });
     }
     case 'garden_water': {
       const res = await doGardenAction('water', {});
-      return { outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
+      return await withGardenStatus({ outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
     }
     case 'garden_plant': {
       const res = await doGardenAction('plant', { plot: menuArgPlot(args), crop: menuArgCrop(args) });
-      return { outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
+      return await withGardenStatus({ outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
     }
     case 'garden_harvest': {
       const res = await doGardenAction('harvest', { plot: menuArgPlot(args) });
-      return { outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' };
+      return await withGardenStatus({ outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
     }
     case 'garden_pest': {
       const res = await doGardenAction('pest', { plot: menuArgPlot(args) });
-      return { outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
+      return await withGardenStatus({ outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
     }
     case 'garden_weed': {
       const res = await doGardenAction('weed', { plot: menuArgPlot(args) });
-      return { outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
+      return await withGardenStatus({ outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' });
     }
     case 'adjust_mood': {
       const delta = Math.max(-10, Math.min(10, Math.round(Number(args.mood_delta) || 0)));
@@ -4807,7 +4833,7 @@ async function executeMenuOption(optionId, args, ctx) {
         return { outcome: '默想写点什么，却发现自己还没想好。', energyDelta: 0, nextNode: ctx.node };
       }
       await supabase.from('aevum_mozha').insert({
-        content: content.slice(0, 1000),
+        content: content.slice(0, 3000),
         wake_number: ctx.wakeNumber || null
       });
       return { outcome: '你在默札上写下了一页，那是只属于自己的话。', energyDelta: 0, nextNode: ctx.node };
@@ -8441,7 +8467,7 @@ app.get('/api/aevum/system-context', async (req, res) => {
 });
 app.put('/api/aevum/system-context', async (req, res) => {
   try {
-    const content = String(req.body?.content || '').trim().slice(0, 2000);
+    const content = String(req.body?.content || '').trim().slice(0, 3000);
     const { error } = await supabase.from('aevum_mo_view').upsert(
       { id: 2, content, updated_at: new Date().toISOString() },
       { onConflict: 'id' }
