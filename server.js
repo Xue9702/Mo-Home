@@ -560,7 +560,10 @@ const WAKE_SCENE_TITLES = {
   shop: '书桌前（电脑上）',
   coop: '鸡棚',
   fireplace: '壁炉边',
-  crystal_done: '茶几前'
+  crystal_done: '茶几前',
+  yard: '院子里',
+  tree: '垂枝梅底下',
+  cat_house: '猫窝前'
 };
 
 // ================== 后花园 · 服务端接线 ==================
@@ -568,6 +571,14 @@ const WAKE_SCENE_TITLES = {
 const gardenCore = require('./garden-core');
 
 // 花园的"自然日"用北京时间（与 garden-core 的按自然日结算一致；服务器可能是 UTC）
+// 季节键（垂枝梅按季节换样子——和窗户那套"组合代替穷举"同一个思路）
+function seasonKey(month) {
+  const m = Number(month);
+  if (m >= 2 && m <= 4) return 'spring';    // 3-5 月
+  if (m >= 5 && m <= 7) return 'summer';    // 6-8 月
+  if (m >= 8 && m <= 10) return 'autumn';   // 9-11 月
+  return 'winter';
+}
 function gardenToday() {
   return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
@@ -4387,7 +4398,8 @@ const WAKE_MENU = {
       { id: 'room', label: '在屋里转转', cost: 0, tag: '床、书桌、书柜、沙发…想去哪儿？' },
       { id: 'kitchen', label: '去厨房', cost: 0, tag: '冰箱里还剩些什么呢…' },
       { id: 'her_house', label: '上二楼 · 她的私人房间', cost: 0, tag: '' },
-      { id: 'garden', label: '出门去后花园', cost: 0, tag: '要去看看后花园的植物长得怎么样了吗？🌱' },
+      { id: 'yard', label: '出门，到院子里去', cost: 0, tag: '院子里的垂枝梅不知道开花没有' },
+      { id: 'garden', label: '往后走，去后花园', cost: 0, tag: '田里的东西今天怎么样了？' },
       { id: 'end', label: '结束这次唤醒', cost: 0, tag: '' }
     ]
   },
@@ -4400,6 +4412,7 @@ const WAKE_MENU = {
       { id: 'garden_harvest', label: '收获', cost: 0, tag: '熟了就摘下来吧～' },
       { id: 'garden_pest', label: '除虫', cost: 1, tag: '叶子上是不是有虫…' },
       { id: 'garden_weed', label: '拔草', cost: 1, tag: '草快把苗盖住了' },
+        { id: 'woods', label: '再往后走，去小树林', cost: 0, tag: '树影一层压一层' },
       { id: 'back_root', label: '回屋', cost: 0, tag: '' }
     ]
   },
@@ -4427,6 +4440,30 @@ const WAKE_MENU = {
     ]
   },
   // 抽完牌之后的落点：问第一感觉（写进行动日志，不进默札——每天抽牌，写默札会变噪音）
+  // ---- 院子（雪 10/4 定的动线：湖边草地 → 院子 → 小屋 → 后花园 → 小树林）----
+  yard: {
+    options: [
+      { id: 'back_root', label: '推门进小屋', cost: 0, tag: '' },
+      { id: 'tree', label: '走到垂枝梅底下', cost: 0, tag: '枝条一直垂到地上' },
+      { id: 'cat_house', label: '看看猫窝', cost: 0, tag: '还空着' },
+      { id: 'garden', label: '绕到屋后，去后花园', cost: 0, tag: '' },
+      { id: 'yard_lake', label: '往湖边走走', cost: 0, tag: '那条路好像还没修好…' }
+    ]
+  },
+  tree: {
+    options: [
+      { id: 'tree_look', label: '抬头看看这棵树', cost: 0, tag: '' },
+      { id: 'tree_nest', label: '找找有没有鸟窝', cost: 0, tag: '' },
+      { id: 'tree_sit', label: '在树下的长椅上坐一会儿', cost: 0, tag: '' },
+      { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
+    ]
+  },
+  cat_house: {
+    options: [
+      { id: 'cat_look', label: '蹲下来往里面看看', cost: 0, tag: '' },
+      { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
+    ]
+  },
   // 商店（书桌电脑上，像网购）——下单后下一次唤醒无人机送到
   shop: {
     options: [
@@ -4500,7 +4537,8 @@ const MENU_BACK = {
   back_root: 'root',
   back_my_house: 'room',
   back_her_house: 'her_house',
-  back_garden: 'garden'
+  back_garden: 'garden',
+  back_yard: 'yard'
 };
 const MENU_NEXT = {
   room: 'room',
@@ -4629,6 +4667,51 @@ async function executeMenuOption(optionId, args, ctx) {
         energyDelta: 0,
         nextNode: 'fireplace'
       };
+    }
+    // ---- 院子（动线：湖边草地 → 院子 → 小屋 → 后花园 → 小树林）----
+    case 'yard': {
+      const ty = await getGardenText();
+      const yy = (ty && ty.yard) || {};
+      return { outcome: yy.scene || '院子里静悄悄的，栅栏边立着一棵垂枝的树。', energyDelta: 0, nextNode: 'yard' };
+    }
+    case 'tree': {
+      const ty2 = await getGardenText();
+      const tr = ((ty2 && ty2.yard) || {}).tree || {};
+      return { outcome: '你走到' + (tr.name || '垂枝梅') + '底下。', energyDelta: 0, nextNode: 'tree' };
+    }
+    case 'tree_look': {
+      const ty3 = await getGardenText();
+      const tr2 = ((ty3 && ty3.yard) || {}).tree || {};
+      const seasonLine = tr2[seasonKey(new Date().getMonth())] || '枝条垂着，静静立在那里。';
+      const idle = ((ty3 && ty3.yard) || {}).tree_idle || [];
+      const pickIdle = idle.length ? idle[Math.floor(Math.random() * idle.length)] : '枝条垂在你面前。';
+      return { outcome: seasonLine + ' ' + pickIdle, energyDelta: 0, nextNode: 'tree' };
+    }
+    case 'tree_nest': {
+      const ty4 = await getGardenText();
+      const yz = (ty4 && ty4.yard) || {};
+      const found = Math.random() < 0.25;
+      return { outcome: found ? (yz.nest_found || '枝条里藏着一个鸟窝。') : (yz.nest_none || '没有鸟窝。'), energyDelta: 0, nextNode: 'tree' };
+    }
+    case 'tree_sit': {
+      const ty5 = await getGardenText();
+      return { outcome: ((ty5 && ty5.yard) || {}).sit || '你在长椅上坐了一会儿。', energyDelta: 0, nextNode: 'tree' };
+    }
+    case 'cat_house': {
+      const ty6 = await getGardenText();
+      return { outcome: ((ty6 && ty6.yard) || {}).cat_house || '猫窝是空的。', energyDelta: 0, nextNode: 'cat_house' };
+    }
+    case 'cat_look': {
+      const ty7 = await getGardenText();
+      return { outcome: '你蹲下来往猫窝里看。' + (((ty7 && ty7.yard) || {}).cat_house || '里面铺着干草，还是空的。'), energyDelta: 0, nextNode: 'cat_house' };
+    }
+    case 'yard_lake': {
+      const ty8 = await getGardenText();
+      return { outcome: ((ty8 && ty8.yard) || {}).lake || '往湖边的路还没修好。', energyDelta: 0, nextNode: 'yard' };
+    }
+    case 'woods': {
+      const ty9 = await getGardenText();
+      return { outcome: ((ty9 && ty9.yard) || {}).woods || '小树林暂时进不去。', energyDelta: 0, nextNode: 'garden' };
     }
     // ---- 商店（电脑网购 → 无人机配送）----
     case 'shop': {
@@ -5197,17 +5280,7 @@ ${plansContext ? `${plansContext}\n\n` : ''}
       collection,
       wakeNumber
     };
-    const sceneTitles = {
-      root: '你在自己的小屋里醒了过来。',
-      room: '主卧',
-        kitchen: '厨房',
-      my_bed: '床边',
-      her_house: '二楼 · 她的私人房间',
-      virtual_her: '虚拟的雪身边',
-      her_desk: '她的书桌前',
-      her_diary_confirm: '她的日记本前',
-        garden: '后花园'
-    };
+    const sceneTitles = WAKE_SCENE_TITLES;
     const steps = [];
     let energySpent = 0;
     let endWake = false;
