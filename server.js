@@ -4332,7 +4332,7 @@ async function unlockCollectionItem(key) {
 }
 
 // 渲染当前菜单给默看
-function renderMenuText(nodeId, ctx) {
+async function renderMenuText(nodeId, ctx) {
   const node = WAKE_MENU[nodeId];
   if (!node) return '（菜单似乎迷路了）';
   const lines = node.options.map((o, i) => {
@@ -4340,7 +4340,24 @@ function renderMenuText(nodeId, ctx) {
     const tagText = o.tag ? `——${o.tag}` : '';
     return `${i + 1}. [${o.id}] ${o.label}${costText}${tagText}`;
   });
-  return `【当前场景】${ctx.sceneTitle}\n【彩蛋图鉴】（${ctx.collection.found}/${ctx.collection.total}）\n【体力】${ctx.energy}/${ctx.energyMax}\n请选择要做的选项（调用 choose_action，option_id 对应数字编号对应的 id）：\n${lines.join('\n')}`;
+  const head = [`【当前场景】${ctx.sceneTitle}`];
+  // 小屋陈设：只在"一楼"这几个场景说一次（说多了是噪音）。文案在 garden-text.json 的 cabin.main_room，可自行编辑
+  if (['root', 'room', 'kitchen'].includes(nodeId)) {
+    try {
+      const t = await getGardenText();
+      if (t && t.cabin && t.cabin.main_room) head.push(`【小屋】${t.cabin.main_room}`);
+    } catch (e) { /* 文案拿不到就不显示 */ }
+  }
+  // 随身：背包 + 金币。不注入田里的实时状态——让他自己走过去看（雪 10/4：保留惊喜）
+  try {
+    const st = await getGardenState();
+    const t = await getGardenText();
+    if (st && t) head.push(`【随身】${gardenBriefForPrompt(st, t).replace(/^【后花园】/, '')}`);
+  } catch (e) { /* 花园不可用就不显示 */ }
+  head.push(`【彩蛋图鉴】（${ctx.collection.found}/${ctx.collection.total}）`);
+  head.push(`【体力】${ctx.energy}/${ctx.energyMax}`);
+  head.push('请选择要做的选项（调用 choose_action，option_id 对应数字编号对应的 id）：');
+  return `${head.join('\n')}\n${lines.join('\n')}`;
 }
 
 // 执行菜单选项，返回 { outcome, nextNode, endWake, energyDelta }
@@ -4800,7 +4817,7 @@ ${plansContext ? `${plansContext}\n\n` : ''}
     while (ctx.energy > 0 && !endWake && attempts < 12) {
       attempts++;
       ctx.sceneTitle = sceneTitles[ctx.node] || '';
-      conversation.push({ role: 'user', content: `【菜单】\n${renderMenuText(ctx.node, ctx)}` });
+      conversation.push({ role: 'user', content: `【菜单】\n${await renderMenuText(ctx.node, ctx)}` });
 
       // 第一轮开思考模式（auto+medium），让默能思考后再选择
       let resp = await callMenuChoice(conversation, false);
