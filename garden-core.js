@@ -20,7 +20,11 @@ function newState(day) {
     plots: Array.from({ length: DEFAULT_PLOTS }, (_, k) => ({
       i: k + 1, crop: null, plantedDay: null, wateredToday: 0, pest: 0, weed: 0, dead: false
     })),
-    bag: {},                   // 背包：{ item: [{ at: 'ISO' }] } 按"获得时间"逐个记，保质期用时间差算
+    // 初始种子：INIT_SEEDS 原来只定义了常量却没塞进背包（雪 10/4 在真实唤醒日志里抓到）
+    bag: Object.keys(INIT_SEEDS).reduce((acc, k) => {
+      acc['seed_' + k] = Array.from({ length: INIT_SEEDS[k] }, () => ({ at: day || null }));
+      return acc;
+    }, {}),
     fridge: {},
     chickens: [],
     coop: { eggs: 0 },          // 鸡窝：蛋先落这儿，要默走过去捡才进背包（雪 10/4）
@@ -90,8 +94,10 @@ function settle(state, day, { rng = Math.random, raining = false, crops = {}, ev
     }
 
     // 意外事件（每块田独立掷）；昨天的旗标到此才清
+    // 雪 10/4：没发芽就不会生虫/长草——只在"已发芽"（阶段≥2）之后才掷
     p.pest = 0; p.weed = 0;
-    if (before < total) {
+    const sprouted = stageIndex(before, total) >= 1;
+    if (before < total && sprouted) {
       if (rng() < pestRate) { p.pest = 1; log.push({ type: 'pest', plot: p.i, crop: p.crop }); }
       if (rng() < weedRate) { p.weed = 1; log.push({ type: 'weed', plot: p.i, crop: p.crop }); }
     }

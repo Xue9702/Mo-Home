@@ -122,7 +122,7 @@ t('无人机订单：下单后下一次跨天到货', () => {
   s.orders.push({ item: 'seed_daisy', n: 2, placedDay: '2026-10-06', deliverDay: '2026-10-07' });
   const r = settle(s, '2026-10-07', { rng: NO_LUCK });
   assert.strictEqual(r.arrived, 1, '应到货 1 单');
-  assert.strictEqual(r.state.bag.seed_daisy.length, 2, '两包种子进背包');
+  assert.strictEqual(r.state.bag.seed_daisy.length - s.bag.seed_daisy.length, 2, '两包种子进背包（断言增量——初始背包本来就有雏菊种子）');
   assert.strictEqual(r.state.orders.length, 0, '订单应清空');
 });
 
@@ -256,7 +256,7 @@ t('商店：下单后下一次唤醒到货（不用等跨天）', () => {
   s = G.order(s, { item: 'seed_daisy', n: 3, crops: REAL_CROPS }).state;
   const sameDay = G.tickWake(s);                 // 这是"下单那一次"之后的第一次唤醒
   assert.strictEqual(sameDay.n, 1, '下次唤醒就该到货');
-  assert.strictEqual(sameDay.state.bag.seed_daisy.length, 3, '3 包种子进背包');
+  assert.strictEqual(sameDay.state.bag.seed_daisy.length - s.bag.seed_daisy.length, 3, '3 包种子进背包（断言增量）');
   assert.strictEqual(sameDay.state.orders.length, 0, '订单应清空');
 });
 
@@ -268,6 +268,30 @@ t('商店：买小鸡到货后进鸡棚（不是进背包）', () => {
   assert.strictEqual(w.state.chickens.length, 1, '鸡棚里应有 1 只');
   assert.ok(!w.state.bag.chick, '不该把活鸡塞进背包');
   assert.strictEqual(G.order(s, { item: 'chick', n: 3, crops: REAL_CROPS }).ok, false, '超过 3 只上限应挡住');
+});
+t('初始状态：背包里有 5 颗种子、30 金币（原来 INIT_SEEDS 定义了却没塞进背包）', () => {
+  const s = G.newState('2026-10-06');
+  assert.strictEqual(s.coins, 30);
+  assert.strictEqual(s.bag.seed_daisy.length, 2, '雏菊×2');
+  assert.strictEqual(s.bag.seed_bokchoy.length, 2, '小白菜×2');
+  assert.strictEqual(s.bag.seed_carrot.length, 1, '胡萝卜×1');
+  assert.strictEqual(Object.keys(s.bag).length, 3, '一共 3 种、5 颗');
+});
+
+t('没发芽不会生虫', () => {
+  let s = G.newState('2026-10-06');
+  s.bag.seed_rose = [{ at: '2026-10-06' }];
+  s = G.plant(s, { plot: 1, crop: 'rose', crops: CROPS }).state;
+  // 让 before 停在 0：不跨天就结算，settle 会提前返回；这里直接连掷 20 天看有没有虫在阶段1出现
+  let cur = s;
+  for (let d = 7; d <= 20; d++) {
+    cur = settle(cur, `2026-10-${String(d).padStart(2, '0')}`, { rng: () => 0, weedRate: 0 }).state;
+    const p = cur.plots[0];
+    if (p.pest) {
+      const idx = G.stageIndex(G.progressOf(p, cur.day), CROPS.rose.days);
+      assert.ok(idx >= 1, `生虫时必须已发芽（实际阶段 ${idx}）`);
+    }
+  }
 });
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

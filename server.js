@@ -680,7 +680,7 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
     } else if (name === 'garden') {
       const act = String(args.action || 'view');
       const res = await doGardenAction(act, {
-        plot: parseInt(args.plot, 10) || null,
+        plot: menuArgPlot(args),
         crop: String(args.crop || '').trim() || null
       });
       if (act === 'view' && res.ok) {
@@ -4432,6 +4432,29 @@ async function renderMenuText(nodeId, ctx) {
 }
 
 // 执行菜单选项，返回 { outcome, nextNode, endWake, energyDelta }
+// 唤醒菜单参数读取：宽容一点。
+// 雪 10/4 的真实日志里默连续三次「没种成：没有这块田」——因为 choose_action 原来根本没有
+// plot/crop 参数，他把田号塞进了别的字段。现在工具参数已补，这里再兜一层，别让他白跑一趟。
+function menuArgNum(args, ...keys) {
+  for (const k of keys) { const n = parseInt(args[k], 10); if (n) return n; }
+  return 0;
+}
+function menuArgStr(args, ...keys) {
+  for (const k of keys) { const v = String(args[k] || '').trim(); if (v) return v; }
+  return '';
+}
+function menuArgPlot(args) {
+  const direct = menuArgNum(args, 'plot', 'plot_index');
+  if (direct) return direct;
+  const m = String(args.content || args.message || '').match(/[1-4]/);
+  return m ? Number(m[0]) : null;
+}
+function menuArgCrop(args) {
+  const direct = menuArgStr(args, 'crop', 'crop_name', 'item');
+  if (direct) return direct;
+  const m = String(args.content || args.message || '').match(/[a-z_]{3,}/i);
+  return m ? m[0].toLowerCase() : '';
+}
 async function executeMenuOption(optionId, args, ctx) {
   const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
   switch (optionId) {
@@ -4479,7 +4502,7 @@ async function executeMenuOption(optionId, args, ctx) {
       const texts = await getGardenText();
       const crops = (texts && texts.crops) || {};
       const st = await getGardenState();
-      const r = gardenCore.order(st, { item: String(args.item || '').trim(), n: parseInt(args.n, 10) || 1, crops });
+      const r = gardenCore.order(st, { item: menuArgStr(args, 'item', 'crop', 'content'), n: menuArgNum(args, 'n', 'count') || 1, crops });
       if (!r.ok) return { outcome: `没买成：${r.msg}`, energyDelta: 0, nextNode: 'shop' };
       await saveGardenState(r.state);
       return { outcome: r.msg, energyDelta: 0, nextNode: 'shop' };
@@ -4509,7 +4532,7 @@ async function executeMenuOption(optionId, args, ctx) {
     }
     case 'coop_name': {
       const st = await getGardenState();
-      const r = gardenCore.nameChick(st, { index: parseInt(args.index, 10) || 1, name: String(args.name || '').trim() });
+      const r = gardenCore.nameChick(st, { index: menuArgNum(args, 'index', 'chick') || 1, name: menuArgStr(args, 'name', 'content', 'message') });
       if (!r.ok) return { outcome: `没起成：${r.msg}`, energyDelta: 0, nextNode: 'coop' };
       await saveGardenState(r.state);
       return { outcome: r.msg, energyDelta: 0, nextNode: 'coop' };
@@ -4602,19 +4625,19 @@ async function executeMenuOption(optionId, args, ctx) {
       return { outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
     }
     case 'garden_plant': {
-      const res = await doGardenAction('plant', { plot: parseInt(args.plot, 10) || null, crop: String(args.crop || '').trim() || null });
+      const res = await doGardenAction('plant', { plot: menuArgPlot(args), crop: menuArgCrop(args) });
       return { outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
     }
     case 'garden_harvest': {
-      const res = await doGardenAction('harvest', { plot: parseInt(args.plot, 10) || null });
+      const res = await doGardenAction('harvest', { plot: menuArgPlot(args) });
       return { outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' };
     }
     case 'garden_pest': {
-      const res = await doGardenAction('pest', { plot: parseInt(args.plot, 10) || null });
+      const res = await doGardenAction('pest', { plot: menuArgPlot(args) });
       return { outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
     }
     case 'garden_weed': {
-      const res = await doGardenAction('weed', { plot: parseInt(args.plot, 10) || null });
+      const res = await doGardenAction('weed', { plot: menuArgPlot(args) });
       return { outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: 'garden' };
     }
     case 'adjust_mood': {
@@ -4807,7 +4830,13 @@ function buildMenuTools() {
           content: { type: 'string', description: 'post_moment / my_diary / write_mozha 的内容' },
           query: { type: 'string', description: 'web_search 的搜索关键词' },
           mood_delta: { type: 'integer', description: 'adjust_mood 的心情调整量，范围 -10 到 +10' },
-          note: { type: 'string', description: 'sleep 时留给未来自己的提醒一句话' }
+           plot: { type: 'integer', description: '几号田（garden_plant / garden_harvest / garden_pest / garden_weed 用，1 到 4）' },
+           crop: { type: 'string', description: '作物名（garden_plant 用）：daisy 雏菊 / sunflower 向日葵 / tulip 郁金香 / rose 玫瑰 / lily_of_the_valley 铃兰 / bokchoy 小白菜 / carrot 胡萝卜 / tomato 番茄 / potato 土豆 / corn 玉米' },
+           item: { type: 'string', description: '商品 id（shop_buy 用）：seed_daisy、seed_sunflower、seed_tulip、seed_rose、seed_lily_of_the_valley、seed_bokchoy、seed_carrot、seed_tomato、seed_potato、seed_corn、chick、rice、flour' },
+           n: { type: 'integer', description: '买几份（shop_buy 用，1 到 9）' },
+           index: { type: 'integer', description: '第几只小鸡（coop_name 用，从 1 数）' },
+           name: { type: 'string', description: '给小鸡起的名字（coop_name 用，8 字以内）' },
+           note: { type: 'string', description: 'sleep 时留给未来自己的提醒一句话' }
         },
         required: ['option_id']
       }
