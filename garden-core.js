@@ -373,12 +373,25 @@ function tickWake(state) {
   return { state: s, arrived, n: arrived.length };
 }
 
+// 喷泉许愿：投一枚金币许一个愿（金币的一个出口）。许愿内容由 server 层带进行动日志（雪 10/4 定）。
+function wish(state, { text = '', day = null } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  const clean = String(text || '').trim().slice(0, 200);
+  if (!clean) return { state: s, ok: false, msg: '想许什么愿？说出来才作数' };
+  if ((s.coins || 0) < 1) return { state: s, ok: false, msg: '一枚金币也没有了，许不了愿' };
+  s.coins -= 1;
+  s.fountain = s.fountain || { wishes: [] };
+  s.fountain.wishes = s.fountain.wishes || [];
+  s.fountain.wishes.push({ at: day || s.day || null, text: clean });
+  return { state: s, ok: true, msg: `你把一枚金币投进池子，它在水底打了个转才停住。你许的愿是：${clean}`, count: s.fountain.wishes.length };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
   addItem, purgeExpired, water, plant, harvest, clearHazard,
   CHICK_PRICE, CHICK_MAX, CHICK_GROW_FEEDS,
   buyChick, feedChickens, nameChick, collectEggs, viewCoop,
-  shopList, order, tickWake,
+  shopList, order, tickWake, wish,
   viewPlot, viewGarden
 };

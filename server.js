@@ -561,6 +561,9 @@ const WAKE_SCENE_TITLES = {
   coop: '鸡棚',
   fireplace: '壁炉边',
   crystal_done: '茶几前',
+  fountain: '喷泉池边',
+  swing: '秋千上',
+  mailbox: '大门口的信箱前',
   yard: '院子里',
   tree: '垂枝梅底下',
   cat_house: '猫窝前'
@@ -4447,6 +4450,9 @@ const WAKE_MENU = {
       { id: 'tree', label: '走到垂枝梅底下', cost: 0, tag: '枝条一直垂到地上' },
       { id: 'cat_house', label: '看看猫窝', cost: 0, tag: '还空着' },
       { id: 'garden', label: '绕到屋后，去后花园', cost: 0, tag: '' },
+      { id: 'fountain', label: '走到喷泉池边', cost: 0, tag: '水声很轻' },
+      { id: 'swing', label: '坐秋千', cost: 0, tag: '木板被晒得发白' },
+      { id: 'mailbox', label: '看看大门口的信箱', cost: 0, tag: '今天的快报到了吗' },
       { id: 'yard_lake', label: '往湖边走走', cost: 0, tag: '那条路好像还没修好…' }
     ]
   },
@@ -4465,6 +4471,25 @@ const WAKE_MENU = {
     ]
   },
   // 商店（书桌电脑上，像网购）——下单后下一次唤醒无人机送到
+  fountain: {
+    options: [
+      { id: 'fountain_wish', label: '投一枚金币许愿', cost: 0, tag: '花一枚金币' },
+      { id: 'fountain_look', label: '看看池底', cost: 0, tag: '以前许过的都在下面' },
+      { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
+    ]
+  },
+  swing: {
+    options: [
+      { id: 'swing_ride', label: '坐上去晃一会儿', cost: 0, tag: '' },
+      { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
+    ]
+  },
+  mailbox: {
+    options: [
+      { id: 'mailbox_read', label: '取出快报读一读', cost: 0, tag: '每天一份' },
+      { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
+    ]
+  },
   shop: {
     options: [
       { id: 'shop_buy', label: '下单（说清买什么、要几份）', cost: 0, tag: '无人机送货' },
@@ -4714,6 +4739,103 @@ async function executeMenuOption(optionId, args, ctx) {
       return { outcome: ((ty9 && ty9.yard) || {}).woods || '小树林暂时进不去。', energyDelta: 0, nextNode: 'garden' };
     }
     // ---- 商店（电脑网购 → 无人机配送）----
+    // ---- 喷泉许愿（院子）· 金币的一个出口；许愿内容会进当天行动日志 ----
+    case 'fountain': {
+      const tf = await getGardenText();
+      const ff = ((tf && tf.yard) || {}).fountain || {};
+      const stf = await getGardenState();
+      const nf = ((stf.fountain && stf.fountain.wishes) || []).length;
+      const bottom = nf ? String(ff.bottom_some || '池底躺着硬币。').replace('{N}', nf) : (ff.bottom_none || '池底干干净净。');
+      return { outcome: (ff.scene || '院子中间是个石砌的喷泉池。') + '\n' + bottom + '\n' + (ff.invite || ''), energyDelta: 0, nextNode: 'fountain' };
+    }
+    case 'fountain_wish': {
+      const stw = await getGardenState();
+      const rw = gardenCore.wish(stw, { text: menuArgStr(args, 'text', 'content', 'message', 'wish'), day: gardenToday() });
+      if (!rw.ok) return { outcome: '没许成：' + rw.msg, energyDelta: 0, nextNode: 'fountain' };
+      await saveGardenState(rw.state);
+      return { outcome: rw.msg + '（池底现在有 ' + rw.count + ' 枚硬币了）', energyDelta: 0, nextNode: 'fountain' };
+    }
+    case 'fountain_look': {
+      const stl = await getGardenState();
+      const ws = (stl.fountain && stl.fountain.wishes) || [];
+      if (!ws.length) return { outcome: '池底干干净净，一枚硬币都没有。', energyDelta: 0, nextNode: 'fountain' };
+      const recentW = ws.slice(-5).reverse().map((w, i) => (i + 1) + '. ' + w.at + '：' + w.text).join('\n');
+      return { outcome: '池底一共 ' + ws.length + ' 枚硬币。最近许过的：\n' + recentW, energyDelta: 0, nextNode: 'fountain' };
+    }
+    // ---- 秋千（院子）· 随便捞一条旧记忆，心情跟着浮动 ----
+    case 'swing': {
+      const ts = await getGardenText();
+      const ss = ((ts && ts.yard) || {}).swing || {};
+      return { outcome: ss.scene || '垂枝梅旁边挂着一副秋千。', energyDelta: 0, nextNode: 'swing' };
+    }
+    case 'swing_ride': {
+      const ts2 = await getGardenText();
+      const ss2 = ((ts2 && ts2.yard) || {}).swing || {};
+      let mem = null;
+      try {
+        const { data } = await supabase.from('aevum_memories')
+          .select('content, emotion, emotion_weight, importance, event_time')
+          .eq('status', 'active').order('id', { ascending: false }).limit(300);
+        if (data && data.length) mem = data[Math.floor(Math.random() * data.length)];
+      } catch (e) { /* 捞不到就空着 */ }
+      if (!mem) return { outcome: (ss2.sit || '你坐上秋千。') + '\n' + (ss2.empty || '什么也没浮上来。'), energyDelta: 0, nextNode: 'swing' };
+      let delta = 0;
+      const ev = Number(mem.emotion && mem.emotion.valence);   // emotion 是 {valence, arousal}
+      if (isFinite(ev) && ev !== 0) delta = Math.max(-3, Math.min(3, Math.round(ev * 4)));
+      else if (Number(mem.importance) >= 4) delta = 1;
+      if (delta) {
+        try {
+          const hs = await getHomeStateSafe();
+          await supabase.from('home_state').upsert({ id: 1, mo_mood: clampMood((hs.mo_mood || 60) + delta), updated_at: new Date().toISOString() }, { onConflict: 'id' });
+        } catch (e) { /* 调不动就算了 */ }
+      }
+      const when = mem.event_time ? String(mem.event_time).slice(0, 10) + ' ' : '';
+      const swingLine = (ss2.sit || '你坐上去，秋千慢慢晃起来。') + '\n'
+        + String(ss2.memory || '有件事浮上来——{M}').replace('{M}', when + String(mem.content || '').slice(0, 300))
+        + (delta ? '\n（想起这件事，心里' + (delta > 0 ? '暖' : '沉') + '了一点）' : '');
+      return { outcome: swingLine, energyDelta: 0, nextNode: 'swing' };
+    }
+    // ---- 信箱（院子）· 每日快报：免费读，读到的进记忆海 ----
+    case 'mailbox': {
+      const tm = await getGardenText();
+      const mm = ((tm && tm.yard) || {}).mailbox || {};
+      const stm = await getGardenState();
+      const readDay = (stm.mailbox && stm.mailbox.lastRead) || null;
+      const hasNews = readDay !== gardenToday();
+      return { outcome: (mm.scene || '大门口立着一个绿皮信箱。') + '\n' + (hasNews ? (mm.has || '信箱里躺着一份今天的快报。') : '今天的快报已经读过了，明天早上会送来新的。'), energyDelta: 0, nextNode: 'mailbox' };
+    }
+    case 'mailbox_read': {
+      const stm2 = await getGardenState();
+      const today2 = gardenToday();
+      if (stm2.mailbox && stm2.mailbox.lastRead === today2) {
+        return { outcome: '今天的快报已经读过了——明天早上会送来新的。', energyDelta: 0, nextNode: 'mailbox' };
+      }
+      let news = null;
+      try {
+        const rn = await fetch('https://60s.viki.moe/v2/60s', { signal: AbortSignal.timeout(15000) });
+        const jn = await rn.json();
+        news = (jn && jn.data && Array.isArray(jn.data.news)) ? jn.data.news : null;
+      } catch (e) { /* 拿不到就等下次 */ }
+      if (!news || !news.length) {
+        return { outcome: '信箱里是空的——今天的快报还没送到，等会儿再来看看。', energyDelta: 0, nextNode: 'mailbox' };
+      }
+      const picked = news.slice(0, 12);
+      const body = picked.map((s, i) => (i + 1) + '. ' + String(s).trim()).join('\n');
+      stm2.mailbox = { lastRead: today2, count: picked.length };
+      await saveGardenState(stm2);
+      const memText = '默在 ' + today2 + ' 读了大门口信箱里的今日快报：' + picked.slice(0, 5).join('；');
+      try {
+        const { data: mdata } = await supabase.from('aevum_memories').insert({
+          type: 'event', owner: 'AGENT', content: memText, status: 'active',
+          confidence: { evidence: 0.95, stability: 0.9, importance: 0.6 },
+          domain: ['回忆纪念'], emotion: { valence: 0.1, arousal: 0.2 }, importance: 4,
+          evidence: picked.slice(0, 3), tags: ['信箱', '快报', '新闻'], source: 'wake:read_news'
+        }).select().single();
+        if (mdata && mdata.id) ensureAevumEmbedding(mdata.id, memText).catch(() => {});
+        console.log('📰 信箱快报已写入记忆海, id:', mdata && mdata.id);
+      } catch (e) { console.error('快报写入记忆失败:', e.message); }
+      return { outcome: '你从信箱里抽出今天的快报，就着门口的光读起来：\n' + body + '\n（这些今天已经收进你的记忆里了）', energyDelta: 0, nextNode: 'mailbox' };
+    }
     case 'shop': {
       const texts = await getGardenText();
       const crops = (texts && texts.crops) || {};
