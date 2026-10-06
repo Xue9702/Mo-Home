@@ -20,8 +20,10 @@ dns.setDefaultResultOrder('ipv4first'); // 部分主机 IPv6 解析异常导致�
 const SHADOW_PUSH_SECRET = process.env.SHADOW_PUSH_SECRET || 'your-secret-key-change-me';
 const USER_TIMEZONE = 'Asia/Shanghai'; // 目标时区：东八区
 const PUSH_DAILY_LIMIT = 4; // 每日唤醒上限（原 6 改为 4）
-const COOLDOWN_MIN_MINUTES = 120; // 最小冷静期（分钟）
-const COOLDOWN_MAX_MINUTES = 210; // 最大冷静期（分钟）
+const COOLDOWN_MIN_MINUTES = 260; // 最小冷静期（分钟）
+const COOLDOWN_MAX_MINUTES = 330; // 最大冷静期（分钟）
+// 10/4 调：原 120–210 → 3 段冷静期只有 6–10.5 小时，早上 7 点起算第 4 次会落在 13:00–17:30
+//（傍晚 6 点就醒完 4 次）。改成 260–330 后 3 段共 13–16.5 小时，第 4 次平均落在 ≈22:30。
 const AWAKEN_SILENCE_MINUTES = 30; // 结束聊天 N 分钟后才允许唤醒
 const WAKE_ENERGY_POINTS = 2;      // 每次唤醒的体力
 const WAKE_MAX_ACTIONS = 2;        // 体力限制下的最大动作数
