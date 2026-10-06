@@ -104,7 +104,10 @@ function randomDelay(minMinutes, maxMinutes) {
 }
 
 // 深夜保护时间段（东八区时间）
-const QUIET_HOURS = { start: 2, end: 12 }; // 统一深夜保护：2-12点
+// 统一深夜保护：静默时段内不唤醒（两层门的第一层）。
+// 原 { start: 2, end: 12 } → 允许窗口 12:00-02:00。
+// 10/4 按雪要求改为 { start: 0, end: 7 } → 允许窗口 07:00-24:00，让默能看见清晨的景色。
+const QUIET_HOURS = { start: 0, end: 7 };
 
 // 简单的内存锁，防止并发推送
 let isPushInProgress = false; // 这个保留，防止并发
