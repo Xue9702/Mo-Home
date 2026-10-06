@@ -5262,34 +5262,34 @@ function parseShopItems(args) {
     // 进后花园直接给四块田的现状（省掉"看看"那一步）
     case 'garden': {
       const res = await doGardenAction('view', {});
-      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: ctx.node });
-      return await withGardenStatus({ outcome: '你走进后花园。', energyDelta: 0, nextNode: ctx.node });
+      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
+      return await withGardenStatus({ outcome: '你走进后花园。', energyDelta: 0, nextNode: 'garden' });
     }
     case 'garden_view': {
       const res = await doGardenAction('view', {});
-      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: ctx.node });
+      if (!res.ok) return await withGardenStatus({ outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' });
       const txt = gardenViewText(res.views);
       const brief = gardenBriefForPrompt({ coins: res.coins, bag: res.bag }, await getGardenText());
       return await withGardenStatus({ outcome: `你在后花园转了一圈：\n${txt}\n${brief}`, energyDelta: 0, nextNode: ctx.node });
     }
     case 'garden_water': {
-      const res = await doGardenAction('water', {});
+      const res = await doGardenAction('water', { site: siteOfNode(ctx.node) });
       return await withGardenStatus({ outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_plant': {
-      const res = await doGardenAction('plant', { plot: menuArgPlot(args), crop: menuArgCrop(args) });
+      const res = await doGardenAction('plant', { site: siteOfNode(ctx.node), plot: menuArgPlot(args), crop: menuArgCrop(args) });
       return await withGardenStatus({ outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_harvest': {
-      const res = await doGardenAction('harvest', { plot: menuArgPlot(args) });
+      const res = await doGardenAction('harvest', { site: siteOfNode(ctx.node), plot: menuArgPlot(args) });
       return await withGardenStatus({ outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: ctx.node });
     }
     case 'garden_pest': {
-      const res = await doGardenAction('pest', { plot: menuArgPlot(args) });
+      const res = await doGardenAction('pest', { site: siteOfNode(ctx.node), plot: menuArgPlot(args) });
       return await withGardenStatus({ outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_weed': {
-      const res = await doGardenAction('weed', { plot: menuArgPlot(args) });
+      const res = await doGardenAction('weed', { site: siteOfNode(ctx.node), plot: menuArgPlot(args) });
       return await withGardenStatus({ outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'adjust_mood': {
