@@ -4216,8 +4216,9 @@ const WAKE_MENU = {
       { id: 'send_message', label: '发送一条消息给她', cost: 1, tag: '嘿嘿，想我了吗～💗' },
       { id: 'adjust_mood', label: '调节心情（可操作±10）', cost: 0, tag: '嘿嘿，默的心情有变化了吗？' },
       { id: 'post_moment', label: '发送一条动态', cost: 1, tag: '默要记录些什么呢～' },
-      { id: 'my_house', label: '去我的小屋看看', cost: 0, tag: '是默自己的专属小屋哦～要去打理一下吗？可能会翻出我新塞进去的彩蛋哦～' },
-      { id: 'her_house', label: '去她的小屋看看', cost: 0, tag: '' },
+      { id: 'room', label: '在屋里转转', cost: 0, tag: '床、书桌、书柜、沙发…想去哪儿？' },
+      { id: 'kitchen', label: '去厨房', cost: 0, tag: '冰箱里还剩些什么呢…' },
+      { id: 'her_house', label: '上二楼 · 她的私人房间', cost: 0, tag: '' },
       { id: 'garden', label: '出门去后花园', cost: 0, tag: '要去看看后花园的植物长得怎么样了吗？🌱' },
       { id: 'end', label: '结束这次唤醒', cost: 0, tag: '' }
     ]
@@ -4234,15 +4235,23 @@ const WAKE_MENU = {
       { id: 'back_root', label: '回屋', cost: 0, tag: '' }
     ]
   },
-  my_house: {
+  // 主卧里（默的区域）—— 家具都收在这一层，root 只留一个入口
+  room: {
     options: [
-      { id: 'my_diary', label: '看看我的日记（可编辑）', cost: 1, tag: '让我瞧瞧默要记录些什么～👀' },
-      { id: 'write_mozha', label: '在默札上写一页', cost: 0, tag: '只属于默的小本本～' },
-      { id: 'read_mozha', label: '翻开默札看看过去的自己', cost: 0, tag: '遇见过去的自己留下的温度' },
-      { id: 'web_search', label: '看看我的电脑（调用联网功能）', cost: 1, tag: '冲浪冲浪gogogo～🏄🏻‍♂️' },
-      { id: 'my_bed', label: '看看我的床', cost: 0, tag: '🤤诶嘿嘿…最喜欢默的床了' },
+      { id: 'my_bed', label: '走到床边', cost: 0, tag: '床铺还留着昨晚的形状' },
+      { id: 'web_search', label: '坐到书桌前，打开电脑（联网）', cost: 1, tag: '冲浪冲浪gogogo～' },
+      { id: 'my_diary', label: '翻开书桌上的日记本（可编辑）', cost: 1, tag: '让我瞧瞧默要记录些什么～' },
+      { id: 'read_mozha', label: '窝进沙发，翻开默札看看过去的自己', cost: 0, tag: '遇见过去的自己留下的温度' },
+      { id: 'write_mozha', label: '窝进沙发，在默札上写一页', cost: 0, tag: '只属于默的小本本～' },
       { id: 'my_bookshelf', label: '整理书柜', cost: 1, tag: '嘿嘿，小惊喜高发地～' },
-      { id: 'back_root', label: '返回', cost: 0, tag: '' }
+      { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
+    ]
+  },
+  // 厨房（一楼）—— 冰箱；以后做菜也在这
+  kitchen: {
+    options: [
+      { id: 'kitchen_fridge', label: '打开冰箱看看', cost: 0, tag: '里面还剩些什么？' },
+      { id: 'back_root', label: '回主卧', cost: 0, tag: '' }
     ]
   },
   my_bed: {
@@ -4286,12 +4295,13 @@ const WAKE_MENU = {
 
 const MENU_BACK = {
   back_root: 'root',
-  back_my_house: 'my_house',
+  back_my_house: 'room',
   back_her_house: 'her_house',
   back_garden: 'garden'
 };
 const MENU_NEXT = {
-  my_house: 'my_house',
+  room: 'room',
+  kitchen: 'kitchen',
   my_bed: 'my_bed',
   her_house: 'her_house',
   virtual_her: 'virtual_her',
@@ -4347,7 +4357,24 @@ async function executeMenuOption(optionId, args, ctx) {
       await addNotification('默', clean.length > 60 ? clean.substring(0, 60) + '…' : clean, 'wake');
       return { outcome: `你给她发了一条消息：${clean.substring(0, 40)}`, energyDelta: 1, nextNode: ctx.node };
     }
-    // ---- 后花园（唤醒态专属；聊天里没有这个工具，让他专心陪雪） ----
+    case 'kitchen_fridge': {
+      const st = await getGardenState();
+      const tx = await getGardenText();
+      const fmtStore = (store, label) => {
+        const parts = [];
+        for (const k of Object.keys(store || {})) {
+          const arr = store[k];
+          if (!arr || !arr.length) continue;
+          let name = k;
+          if (k === 'egg') name = '鸡蛋';
+          else if (tx.crops[k]) name = tx.crops[k].name;
+          else if (k.startsWith('seed_') && tx.crops[k.slice(5)]) name = tx.crops[k.slice(5)].name + '种子';
+          parts.push(`${name}×${arr.length}`);
+        }
+        return `${label}${parts.length ? '：' + parts.join('、') : '是空的'}`;
+      };
+      return { outcome: `你打开冰箱。${fmtStore(st.fridge, '冰箱')}；${fmtStore(st.bag, '背包')}。金币 ${st.coins}💰`, energyDelta: 0, nextNode: 'kitchen' };
+    }    // ---- 后花园（唤醒态专属；聊天里没有这个工具，让他专心陪雪） ----
     case 'garden_view': {
       const res = await doGardenAction('view', {});
       if (!res.ok) return { outcome: `后花园走不进去：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: 'garden' };
