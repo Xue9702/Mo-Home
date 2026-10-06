@@ -535,6 +535,110 @@ async function saveToolEvent(text, sendSSE) {
   }
 }
 
+// ================== 后花园 · 服务端接线 ==================
+// 逻辑全在 garden-core.js（纯函数），这里只管：读写状态、跨天结算、把动作接上。
+const gardenCore = require('./garden-core');
+
+// 花园的"自然日"用北京时间（与 garden-core 的按自然日结算一致；服务器可能是 UTC）
+function gardenToday() {
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+let gardenCache = null;
+async function getGardenState() {
+  if (gardenCache) return gardenCache;
+  try {
+    const { data } = await supabase.from('garden_state').select('state').eq('id', 1).maybeSingle();
+    gardenCache = (data && data.state)
+      ? { ...gardenCore.newState(gardenToday()), ...data.state }
+      : gardenCore.newState(gardenToday());
+  } catch (e) {
+    console.error('⚠️ [garden] 读状态失败（表未建请执行 setup_garden_state.sql）:', e.message);
+    gardenCache = gardenCore.newState(gardenToday());
+  }
+  return gardenCache;
+}
+async function saveGardenState(state) {
+  gardenCache = state;
+  try {
+    await supabase.from('garden_state').upsert({ id: 1, state, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  } catch (e) {
+    console.error('garden_state 写入失败:', e.message);
+  }
+}
+
+// 跨天结算：推进生长 / 生虫 / 到货 / 生蛋。下雨自动算浇水（用实况，不用预报）
+async function syncGardenToToday() {
+  const texts = await getGardenText();
+  if (!texts || !texts.crops) return await getGardenState();
+  const st = await getGardenState();
+  const day = gardenToday();
+  if (st.day === day) return st;
+  let raining = false;
+  try {
+    const w = await getWeatherData(null);
+    raining = Number(w && w.current && w.current.precipitation) > 0;
+  } catch (e) { /* 拿不到天气就当作没下雨 */ }
+  const r = gardenCore.settle(st, day, { crops: texts.crops, raining });
+  if (r.advanced) {
+    await saveGardenState(r.state);
+    if (r.log && r.log.length) console.log('🌱 [garden] 跨天结算:', JSON.stringify(r.log).slice(0, 240));
+  }
+  return r.state;
+}
+
+// 背包 + 金币（唤醒/对话时注入；花园的实时状态不注入——让他自己走过去看）
+function gardenBriefForPrompt(st, texts) {
+  const parts = [];
+  const bag = (st && st.bag) || {};
+  for (const k of Object.keys(bag)) {
+    const arr = bag[k];
+    if (!arr || !arr.length) continue;
+    let name = k;
+    if (k === 'egg') name = '鸡蛋';
+    else if (k.startsWith('seed_') && texts.crops[k.slice(5)]) name = texts.crops[k.slice(5)].name + '种子';
+    else if (texts.crops[k]) name = texts.crops[k].name;
+    parts.push(`${name}×${arr.length}`);
+  }
+  const bagLine = parts.length ? `背包：${parts.join('、')}` : '背包是空的';
+  return `【后花园】金币 ${(st && st.coins) || 0}💰；${bagLine}。（田里现在什么样，要去了才知道）`;
+}
+
+// 执行一个花园动作（供 garden 工具调用）
+async function doGardenAction(action, params = {}) {
+  const texts = await getGardenText();
+  if (!texts || !texts.crops) return { ok: false, msg: '后花园暂时不可用（文案未加载）' };
+  const st = await syncGardenToToday(); // 每次动手前先跨天结算
+  const crops = texts.crops;
+  let raining = false;
+  try {
+    const w = await getWeatherData(null);
+    raining = Number(w && w.current && w.current.precipitation) > 0;
+  } catch (e) { /* 当作没下雨 */ }
+
+  if (action === 'view') {
+    const views = gardenCore.viewGarden(st, { texts, crops, raining });
+    return { ok: true, views, coins: st.coins, bag: st.bag, raining };
+  }
+  let r;
+  if (action === 'water') r = gardenCore.water(st, { all: true, raining, crops });
+  else if (action === 'plant') r = gardenCore.plant(st, { plot: params.plot, crop: params.crop, crops });
+  else if (action === 'harvest') r = gardenCore.harvest(st, { plot: params.plot, crops });
+  else if (action === 'pest') r = gardenCore.clearHazard(st, { plot: params.plot, kind: 'pest' });
+  else if (action === 'weed') r = gardenCore.clearHazard(st, { plot: params.plot, kind: 'weed' });
+  else return { ok: false, msg: `不认识的花园动作：${action}` };
+  if (r && r.ok) await saveGardenState(r.state);
+  return r || { ok: false, msg: '动作失败' };
+}
+
+// 把"查看"的结果拼成默能读的一段话（三维度）
+function gardenViewText(views) {
+  return (views || [])
+    .filter((v) => v && v.lines && v.lines.length)
+    .map((v) => v.lines.join('；'))
+    .join('\n');
+}
+
 async function executeSideEffectTools(toolCalls, sendSSE) {
   let mozhaRead = false;
   for (const tc of (toolCalls || [])) {
@@ -556,6 +660,21 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
         const fnName = { suck: '吸吮', stroke: '伸缩', vibrate: '震动', stop: '停止' }[fn] || fn;
         const level = fn === 'stop' ? '' : (parseInt(args.level, 10) || 1) + ' 档';
         await saveToolEvent(`🎮 你操作了玩具（${fnName}${level ? ' ' + level : ''}）`, sendSSE);
+      }
+    } else if (name === 'garden') {
+      const act = String(args.action || 'view');
+      const res = await doGardenAction(act, {
+        plot: parseInt(args.plot, 10) || null,
+        crop: String(args.crop || '').trim() || null
+      });
+      if (act === 'view' && res.ok) {
+        const txt = gardenViewText(res.views);
+        const brief = gardenBriefForPrompt({ coins: res.coins, bag: res.bag }, await getGardenText());
+        await saveToolEvent(`🌱 你去后花园转了一圈：\n${txt}\n${brief}`, sendSSE);
+      } else if (res.ok) {
+        await saveToolEvent(`🌱 ${res.msg}`, sendSSE);
+      } else {
+        await saveToolEvent(`🌱 没做成：${res.msg || '未知原因'}`, sendSSE);
       }
     } else if (name === 'ledger_add') {
       const type = args.type === 'income' ? 'income' : 'expense';
@@ -1220,6 +1339,22 @@ function buildAllTools() {
             entry_date: { type: 'string', description: '日期 YYYY-MM-DD，默认今天' }
           },
           required: ['type', 'amount']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'garden',
+        description: '你的后花园（4 块田 + 背包 + 金币）。action=view 走过去看看田里现在什么样（长到哪一步、该不该浇水、有没有生虫长草）；water 浇水（一键浇全部；下雨天不用浇）；plant 播种（要给 plot 田号和 crop 作物名，且背包里得有对应种子）；harvest 收获（成熟了才能收）；pest 除虫；weed 拔草。想看就去看，不要凭空猜田里的情况。',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['view', 'water', 'plant', 'harvest', 'pest', 'weed'], description: '要做的事' },
+            plot: { type: 'integer', minimum: 1, maximum: 4, description: '几号田（plant / harvest / pest / weed 需要）' },
+            crop: { type: 'string', description: '作物名（plant 需要）：daisy 雏菊 / sunflower 向日葵 / tulip 郁金香 / rose 玫瑰 / lily_of_the_valley 铃兰 / bokchoy 小白菜 / carrot 胡萝卜 / tomato 番茄 / potato 土豆 / corn 玉米' }
+          },
+          required: ['action']
         }
       }
     },
