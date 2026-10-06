@@ -499,10 +499,10 @@ function valueOf(id, texts) {
   const t = texts || {};
   const fv = t.food_value || {};
   if (typeof fv[id] === 'number') return fv[id];
-  const c = itemCat(id, t);
-  if (typeof fv[c] === 'number') return fv[c];
   const f = fineCat(id, t);
   if (typeof fv[f] === 'number') return fv[f];
+  const c = itemCat(id, t);
+  if (typeof fv[c] === 'number') return fv[c];
   return 1;
 }
 
