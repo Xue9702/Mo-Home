@@ -23,6 +23,7 @@ function newState(day) {
     bag: {},                   // 背包：{ item: [{ at: 'ISO' }] } 按"获得时间"逐个记，保质期用时间差算
     fridge: {},
     chickens: [],
+    coop: { eggs: 0 },          // 鸡窝：蛋先落这儿，要默走过去捡才进背包（雪 10/4）
     orders: [],                // 无人机订单：{ item, n, placedDay, deliverDay }
     todayFlags: { firstWakeDone: false, eggChecked: false }
   };
@@ -113,13 +114,17 @@ function settle(state, day, { rng = Math.random, raining = false, crops = {}, ev
   // 4. 小鸡：第一次唤醒每只 30% 生蛋；前一天喂过 → 35~40%
   const eggs = [];
   for (const c of s.chickens) {
-    if (!c.grown) continue;
-    const p = c.fedYesterday ? 0.35 + rng() * 0.05 : 0.30;
-    if (rng() < p) { eggs.push(c); }
+    // ⚠️ 跨天必须先清 fedYesterday，且不能被下面的 continue 跳过——
+    // 否则小鸡崽的"今天喂过"永远清不掉，第二天喂不动，就永远长不大（单测抓到的双重死锁）
+    const wasFed = !!c.fedYesterday;
     c.fedYesterday = false;
+    if (!c.grown) continue;
+    const p = wasFed ? 0.35 + rng() * 0.05 : 0.30;
+    if (rng() < p) { eggs.push(c); }
   }
   if (eggs.length) {
-    addItem(s.bag, 'egg', eggs.length, day);
+    s.coop = s.coop || { eggs: 0 };
+    s.coop.eggs = (s.coop.eggs || 0) + eggs.length;   // 落在鸡窝，等默来捡（雪 10/4）
     log.push({ type: 'eggs', n: eggs.length });
   }
 
@@ -243,9 +248,80 @@ function viewGarden(state, { texts = {}, crops = {}, raining = false } = {}) {
   return state.plots.map((p) => viewPlot(state, p.i, { texts, crops, raining }));
 }
 
+// ---------- 鸡棚（后花园） ----------
+const CHICK_PRICE = 200;
+const CHICK_MAX = 3;
+const CHICK_GROW_FEEDS = 3;   // 喂满 3 次长大（雪 10/4 定）
+
+function buyChick(state, { price = CHICK_PRICE, name = '' } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  if ((s.chickens || []).length >= CHICK_MAX) return { state: s, ok: false, msg: `鸡棚最多养 ${CHICK_MAX} 只` };
+  if ((s.coins || 0) < price) return { state: s, ok: false, msg: `金币不够（要 ${price}，现在 ${s.coins || 0}）` };
+  s.coins = (s.coins || 0) - price;
+  s.chickens = s.chickens || [];
+  s.chickens.push({ name: String(name || '').trim().slice(0, 8), grown: false, fedDays: 0, fedYesterday: false });
+  return { state: s, ok: true, msg: `买回一只小鸡崽（-${price}💰）` };
+}
+
+function feedChickens(state) {
+  const s = JSON.parse(JSON.stringify(state));
+  const list = s.chickens || [];
+  if (!list.length) return { state: s, ok: false, msg: '鸡棚里还没有小鸡' };
+  let fed = 0, grew = 0;
+  for (const c of list) {
+    if (c.fedYesterday) continue;              // 一天只喂一次
+    c.fedYesterday = true;
+    if (!c.grown) {
+      c.fedDays = (c.fedDays || 0) + 1;
+      if (c.fedDays >= CHICK_GROW_FEEDS) { c.grown = true; grew++; }
+    }
+    fed++;
+  }
+  if (!fed) return { state: s, ok: false, msg: '今天已经喂过了' };
+  return { state: s, ok: true, msg: `喂了 ${fed} 只${grew ? `，其中 ${grew} 只长大了` : ''}`, grew };
+}
+
+function nameChick(state, { index = 0, name = '' } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  const list = s.chickens || [];
+  const i = Number(index) - 1;                 // 默说"第 1 只"
+  if (!list[i]) return { state: s, ok: false, msg: '没有这只小鸡' };
+  const clean = String(name || '').trim().slice(0, 8);
+  if (!clean) return { state: s, ok: false, msg: '得起个名字' };
+  list[i].name = clean;
+  return { state: s, ok: true, msg: `第 ${i + 1} 只小鸡叫「${clean}」了` };
+}
+
+function collectEggs(state) {
+  const s = JSON.parse(JSON.stringify(state));
+  const n = (s.coop && s.coop.eggs) || 0;
+  if (!n) return { state: s, ok: false, msg: '鸡窝里现在没有蛋' };
+  addItem(s.bag, 'egg', n, s.day);
+  s.coop.eggs = 0;
+  return { state: s, ok: true, msg: `捡了 ${n} 颗蛋，放进背包`, n };
+}
+
+function viewCoop(state) {
+  const lines = [];
+  const list = state.chickens || [];
+  const eggs = (state.coop && state.coop.eggs) || 0;
+  if (!list.length) lines.push('鸡棚是空的，干草铺得很平，还没有谁住进来');
+  list.forEach((c, i) => {
+    const nm = c.name ? `${c.name}（第 ${i + 1} 只）` : `第 ${i + 1} 只`;
+    const stage = c.grown
+      ? '已经长成大鸡了，冠子红红的'
+      : `还是只毛茸茸的小鸡崽（喂过 ${c.fedDays || 0}/${CHICK_GROW_FEEDS} 天）`;
+    lines.push(`${nm}：${stage}${c.fedYesterday ? '，今天喂过了' : '，今天还没喂'}`);
+  });
+  if (eggs > 0) lines.push(`鸡窝里躺着 ${eggs} 颗蛋，还热着`);
+  return { lines, eggs, count: list.length };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
   addItem, purgeExpired, water, plant, harvest, clearHazard,
+  CHICK_PRICE, CHICK_MAX, CHICK_GROW_FEEDS,
+  buyChick, feedChickens, nameChick, collectEggs, viewCoop,
   viewPlot, viewGarden
 };

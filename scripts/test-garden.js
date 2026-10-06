@@ -145,5 +145,86 @@ t('过期清理：按自然日差算保质期', () => {
   assert.strictEqual(bag.potato.length, 1, '另一颗留着');
 });
 
+t('买小鸡：扣金币、最多 3 只', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 1000;   // 一只 200，买 3 只要 600
+  const b = G.buyChick(s, {});
+  assert.ok(b.ok, b.msg);
+  assert.strictEqual(b.state.coins, 300, '应扣 200 金币');
+  assert.strictEqual(b.state.chickens[0].grown, false, '刚买来还是小鸡崽');
+  let x = b.state;
+  for (let i = 0; i < 2; i++) x = G.buyChick(x, {}).state;
+  assert.strictEqual(x.chickens.length, 3);
+  assert.strictEqual(G.buyChick(x, {}).ok, false, '第 4 只应被上限挡住');
+});
+
+t('买小鸡：金币不够就买不了，且不扣钱', () => {
+  const s = G.newState('2026-10-06');   // 初始 30 金币
+  assert.strictEqual(G.buyChick(s, {}).ok, false);
+  assert.strictEqual(s.coins, 30);
+});
+
+t('喂食：一天只能喂一次，喂满 3 次长大', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 500;
+  s = G.buyChick(s, {}).state;
+  const f1 = G.feedChickens(s);
+  assert.ok(f1.ok);
+  assert.strictEqual(f1.state.chickens[0].fedDays, 1);
+  assert.strictEqual(f1.state.chickens[0].grown, false);
+  assert.strictEqual(G.feedChickens(f1.state).ok, false, '同一天不该能再喂');
+  let cur = f1.state;
+  for (let d = 7; d <= 9; d++) {
+    cur = settle(cur, `2026-10-0${d}`, { rng: NO_LUCK }).state;
+    if (d < 9) cur = G.feedChickens(cur).state;
+  }
+  assert.strictEqual(cur.chickens[0].grown, true, '喂满 3 次应长大');
+});
+
+t('长大后才下蛋，且蛋落鸡窝不进背包（原来这段是死代码）', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 500;
+  s = G.buyChick(s, {}).state;
+  const s2 = settle(s, '2026-10-07', { rng: () => 0 }).state;   // rng=0 必下蛋，但它没长大
+  assert.strictEqual(s2.coop.eggs, 0, '小鸡崽不该下蛋');
+  assert.ok(!s2.bag.egg, '背包里不该有蛋');
+  s2.chickens[0].grown = true;                                   // 手动催熟
+  const s3 = settle(s2, '2026-10-08', { rng: () => 0 }).state;
+  assert.strictEqual(s3.coop.eggs, 1, '长大的鸡应下 1 颗蛋');
+  assert.ok(!s3.bag.egg, '蛋要留在鸡窝，不能直接进背包');
+});
+
+t('捡蛋：鸡窝 → 背包', () => {
+  const s = G.newState('2026-10-06');
+  s.coop.eggs = 3;
+  const c = G.collectEggs(s);
+  assert.ok(c.ok);
+  assert.strictEqual(c.state.coop.eggs, 0, '鸡窝应清空');
+  assert.strictEqual(c.state.bag.egg.length, 3, '3 颗蛋进背包');
+  assert.strictEqual(G.collectEggs(c.state).ok, false, '空鸡窝捡不到蛋');
+});
+
+t('给小鸡起名字', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 500;
+  s = G.buyChick(s, {}).state;
+  const r = G.nameChick(s, { index: 1, name: '团子' });
+  assert.ok(r.ok, r.msg);
+  assert.strictEqual(r.state.chickens[0].name, '团子');
+  assert.strictEqual(G.nameChick(s, { index: 9, name: 'x' }).ok, false, '没有第 9 只');
+});
+
+t('鸡棚查看：每只的状态 + 鸡窝里的蛋', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 500;
+  s = G.buyChick(s, {}).state;
+  s = G.nameChick(s, { index: 1, name: '团子' }).state;
+  s.coop.eggs = 2;
+  const v = G.viewCoop(s);
+  assert.ok(v.lines.some((l) => l.includes('团子')), '应带名字');
+  assert.ok(v.lines.some((l) => l.includes('小鸡崽')), '应说明还没长大');
+  assert.ok(v.lines.some((l) => l.includes('2 颗蛋')), '应报告鸡窝里的蛋');
+  assert.strictEqual(v.eggs, 2);
+});
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);
