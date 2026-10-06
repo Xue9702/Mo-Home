@@ -4784,7 +4784,7 @@ ${plansContext ? `${plansContext}\n\n` : ''}
     const sceneTitles = {
       root: '你在自己的小屋里醒了过来。',
       room: '主卧',
-  kitchen: '厨房',
+        kitchen: '厨房',
       my_bed: '床边',
       her_house: '二楼 · 她的私人房间',
       virtual_her: '虚拟的雪身边',
