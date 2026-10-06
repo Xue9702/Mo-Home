@@ -150,7 +150,7 @@ t('买小鸡：扣金币、最多 3 只', () => {
   s.coins = 1000;   // 一只 200，买 3 只要 600
   const b = G.buyChick(s, {});
   assert.ok(b.ok, b.msg);
-  assert.strictEqual(b.state.coins, 300, '应扣 200 金币');
+  assert.strictEqual(s.coins - b.state.coins, 200, '应扣 200 金币');   // 相对断言：不受起始金币影响
   assert.strictEqual(b.state.chickens[0].grown, false, '刚买来还是小鸡崽');
   let x = b.state;
   for (let i = 0; i < 2; i++) x = G.buyChick(x, {}).state;
