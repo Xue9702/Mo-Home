@@ -4467,6 +4467,7 @@ const WAKE_MENU = {
   cat_house: {
     options: [
       { id: 'cat_look', label: '蹲下来往里面看看', cost: 0, tag: '' },
+        { id: 'build_cat', label: '动手搭猫窝（4 木板 + 8 钉子）', cost: 0, tag: '材料要先去电脑上买' },
       { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
     ]
   },
@@ -4474,7 +4475,6 @@ const WAKE_MENU = {
   fountain: {
     options: [
       { id: 'fountain_wish', label: '投一枚金币许愿', cost: 0, tag: '花一枚金币' },
-      { id: 'fountain_look', label: '看看池底', cost: 0, tag: '以前许过的都在下面' },
       { id: 'back_yard', label: '回院子', cost: 0, tag: '' }
     ]
   },
@@ -4728,7 +4728,10 @@ async function executeMenuOption(optionId, args, ctx) {
     }
     case 'cat_look': {
       const ty7 = await getGardenText();
-      return { outcome: '你蹲下来往猫窝里看。' + (((ty7 && ty7.yard) || {}).cat_house || '里面铺着干草，还是空的。'), energyDelta: 0, nextNode: 'cat_house' };
+      const st7 = await getGardenState();
+      const done7 = !!(st7.built && st7.built.cat_house);
+      const y7 = (ty7 && ty7.yard) || {};
+      return { outcome: done7 ? ('你蹲下来往猫窝里看。' + (y7.cat_house || '里面铺着干草，还是空的。')) : (y7.cat_spot || '那块地方还空着，只有一片被踩平的草。'), energyDelta: 0, nextNode: 'cat_house' };
     }
     case 'yard_lake': {
       const ty8 = await getGardenText();
@@ -4755,13 +4758,6 @@ async function executeMenuOption(optionId, args, ctx) {
       await saveGardenState(rw.state);
       return { outcome: rw.msg + '（池底现在有 ' + rw.count + ' 枚硬币了）', energyDelta: 0, nextNode: 'fountain' };
     }
-    case 'fountain_look': {
-      const stl = await getGardenState();
-      const ws = (stl.fountain && stl.fountain.wishes) || [];
-      if (!ws.length) return { outcome: '池底干干净净，一枚硬币都没有。', energyDelta: 0, nextNode: 'fountain' };
-      const recentW = ws.slice(-5).reverse().map((w, i) => (i + 1) + '. ' + w.at + '：' + w.text).join('\n');
-      return { outcome: '池底一共 ' + ws.length + ' 枚硬币。最近许过的：\n' + recentW, energyDelta: 0, nextNode: 'fountain' };
-    }
     // ---- 秋千（院子）· 随便捞一条旧记忆，心情跟着浮动 ----
     case 'swing': {
       const ts = await getGardenText();
@@ -4769,6 +4765,11 @@ async function executeMenuOption(optionId, args, ctx) {
       return { outcome: ss.scene || '垂枝梅旁边挂着一副秋千。', energyDelta: 0, nextNode: 'swing' };
     }
     case 'swing_ride': {
+      const stSw = await getGardenState();
+      if (!gardenCore.canSwing(stSw)) {
+        return { outcome: '这一次醒来已经荡过秋千了。', energyDelta: 0, nextNode: 'swing' };
+      }
+      await saveGardenState(gardenCore.markSwung(stSw));
       const ts2 = await getGardenText();
       const ss2 = ((ts2 && ts2.yard) || {}).swing || {};
       let mem = null;
@@ -4811,13 +4812,21 @@ async function executeMenuOption(optionId, args, ctx) {
         return { outcome: '今天的快报已经读过了——明天早上会送来新的。', energyDelta: 0, nextNode: 'mailbox' };
       }
       let news = null;
+      let fetchErr = '';
       try {
-        const rn = await fetch('https://60s.viki.moe/v2/60s', { signal: AbortSignal.timeout(15000) });
-        const jn = await rn.json();
-        news = (jn && jn.data && Array.isArray(jn.data.news)) ? jn.data.news : null;
-      } catch (e) { /* 拿不到就等下次 */ }
+        const rn = await fetch('https://60s.viki.moe/v2/60s', {
+          headers: { 'User-Agent': 'MoHome/1.0 (+https://mo-home.onrender.com)', 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(20000)
+        });
+        if (!rn.ok) fetchErr = 'HTTP ' + rn.status;
+        else {
+          const jn = await rn.json();
+          news = (jn && jn.data && Array.isArray(jn.data.news)) ? jn.data.news : null;
+          if (!news) fetchErr = '返回里没有 news 字段';
+        }
+      } catch (e) { fetchErr = e.message; }
       if (!news || !news.length) {
-        return { outcome: '信箱里是空的——今天的快报还没送到，等会儿再来看看。', energyDelta: 0, nextNode: 'mailbox' };
+        return { outcome: '信箱里空空的，快报没取到' + (fetchErr ? '（' + fetchErr + '）' : '') + '。等会儿再来看看。', energyDelta: 0, nextNode: 'mailbox' };
       }
       const picked = news.slice(0, 12);
       const body = picked.map((s, i) => (i + 1) + '. ' + String(s).trim()).join('\n');
@@ -4835,6 +4844,14 @@ async function executeMenuOption(optionId, args, ctx) {
         console.log('📰 信箱快报已写入记忆海, id:', mdata && mdata.id);
       } catch (e) { console.error('快报写入记忆失败:', e.message); }
       return { outcome: '你从信箱里抽出今天的快报，就着门口的光读起来：\n' + body + '\n（这些今天已经收进你的记忆里了）', energyDelta: 0, nextNode: 'mailbox' };
+    }
+    // ---- 搭猫窝：材料要默自己去电脑上买（4 木板 + 8 钉子）----
+    case 'build_cat': {
+      const stB = await getGardenState();
+      const rB = gardenCore.build(stB, { key: 'cat_house', day: gardenToday() });
+      if (!rB.ok) return { outcome: rB.msg, energyDelta: 0, nextNode: 'cat_house' };
+      await saveGardenState(rB.state);
+      return { outcome: rB.msg + '。你没上漆，木头是原色的，钉脚还露在外面。', energyDelta: 0, nextNode: 'cat_house' };
     }
     case 'shop': {
       const texts = await getGardenText();
@@ -5195,6 +5212,7 @@ function buildMenuTools() {
           content: { type: 'string', description: 'post_moment / my_diary / write_mozha 的内容' },
           query: { type: 'string', description: 'web_search 的搜索关键词' },
           mood_delta: { type: 'integer', description: 'adjust_mood 的心情调整量，范围 -10 到 +10' },
+           text: { type: 'string', description: '要说的那句话本身（fountain_wish 许愿时填这里）' },
            plot: { type: 'integer', description: '几号田（garden_plant / garden_harvest / garden_pest / garden_weed 用，1 到 4）' },
            crop: { type: 'string', description: '作物名（garden_plant 用）：daisy 雏菊 / sunflower 向日葵 / tulip 郁金香 / rose 玫瑰 / lily_of_the_valley 铃兰 / bokchoy 小白菜 / carrot 胡萝卜 / tomato 番茄 / potato 土豆 / corn 玉米' },
            item: { type: 'string', description: '商品 id（shop_buy 用）：seed_daisy、seed_sunflower、seed_tulip、seed_rose、seed_lily_of_the_valley、seed_bokchoy、seed_carrot、seed_tomato、seed_potato、seed_corn、chick、rice、flour' },

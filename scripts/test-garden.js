@@ -228,9 +228,9 @@ t('鸡棚查看：每只的状态 + 鸡窝里的蛋', () => {
   assert.ok(v.lines.some((l) => l.includes('2 颗蛋')), '应报告鸡窝里的蛋');
   assert.strictEqual(v.eggs, 2);
 });
-t('商店：商品表含 10 种子 + 小鸡 + 米面，价格对得上', () => {
+t('商店：商品表含 10 种子 + 小鸡 + 米面 + 建材，价格对得上', () => {
   const list = G.shopList(REAL_CROPS);
-  assert.strictEqual(list.length, 13, '应为 13 件商品');
+  assert.strictEqual(list.length, 15, '应为 15 件商品（10 种子 + 小鸡 + 米 + 面 + 木板 + 钉子）');
   const rose = list.find((x) => x.id === 'seed_rose');
   assert.strictEqual(rose.price, 25, '玫瑰种子 25 金币');
   assert.strictEqual(rose.name, '玫瑰种子');
@@ -292,6 +292,36 @@ t('没发芽不会生虫', () => {
       assert.ok(idx >= 1, `生虫时必须已发芽（实际阶段 ${idx}）`);
     }
   }
+});
+t('建材与搭建：买料 → 到货 → 搭猫窝 → 材料被消耗', () => {
+  let s = G.newState('2026-10-06');
+  s.coins = 200;
+  s = G.tickWake(G.order(s, { item: 'wood', n: 4, crops: REAL_CROPS }).state).state;   // 下单要等下次唤醒到货
+  s = G.tickWake(G.order(s, { item: 'nail', n: 8, crops: REAL_CROPS }).state).state;
+  assert.strictEqual(s.bag.wood.length, 4, '4 块木板');
+  assert.strictEqual(s.bag.nail.length, 8, '8 颗钉子');
+  const b = G.build(s, { day: '2026-10-06' });
+  assert.ok(b.ok, b.msg);
+  assert.ok(b.state.built.cat_house, '应记下搭好了');
+  assert.ok(!b.state.bag.wood && !b.state.bag.nail, '材料应被消耗掉');
+  assert.strictEqual(G.build(b.state, {}).ok, false, '不该能重复搭');
+});
+
+t('材料不够时搭不成，且不消耗材料', () => {
+  const s = G.newState('2026-10-06');
+  const b = G.build(s, {});
+  assert.strictEqual(b.ok, false);
+  assert.ok(b.msg.includes('材料还不够'), '应说明缺什么：' + b.msg);
+});
+
+t('秋千：同一次唤醒只能荡一次，跨次唤醒恢复', () => {
+  const s = G.newState('2026-10-06');
+  s.wakeSeq = 5;
+  assert.strictEqual(G.canSwing(s), true, '第一次可以荡');
+  const s2 = G.markSwung(s);
+  assert.strictEqual(G.canSwing(s2), false, '同一次唤醒不能再荡');
+  s2.wakeSeq = 6;                                  // 下一次唤醒
+  assert.strictEqual(G.canSwing(s2), true, '新的一次唤醒又可以荡了');
 });
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

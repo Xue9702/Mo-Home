@@ -325,7 +325,18 @@ function viewCoop(state) {
 
 // ---------- 商店（电脑网购 → 无人机配送）----------
 // 雪 10/4：商店入口在书桌的电脑上（像网购）；下单后**下一次唤醒**无人机就到货。
-const SHOP_FOOD = { rice: { name: '大米', price: 5 }, flour: { name: '面粉', price: 5 } };
+// 商店里除种子以外的商品（含建材——猫窝要默自己买木头钉子来搭，雪 10/4 定）
+const SHOP_FOOD = {
+  rice: { name: '大米', price: 5 },
+  flour: { name: '面粉', price: 5 },
+  wood: { name: '木板', price: 12 },
+  nail: { name: '钉子', price: 3 }
+};
+
+// 能搭的东西（图纸）——材料齐了才能搭
+const BUILD_RECIPES = {
+  cat_house: { name: '猫窝', need: { wood: 4, nail: 8 } }
+};
 
 function shopList(crops) {
   const list = [];
@@ -386,6 +397,40 @@ function wish(state, { text = '', day = null } = {}) {
   return { state: s, ok: true, msg: `你把一枚金币投进池子，它在水底打了个转才停住。你许的愿是：${clean}`, count: s.fountain.wishes.length };
 }
 
+// 搭建：消耗背包里的材料把东西做出来（雪 10/4：猫窝不该一开始就有，要默自己买料搭）
+const MATERIAL_NAMES = { wood: '木板', nail: '钉子' };
+
+function build(state, { key = 'cat_house', day = null } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  const rec = BUILD_RECIPES[key];
+  if (!rec) return { state: s, ok: false, msg: '没有这东西的图纸' };
+  if (s.built && s.built[key]) return { state: s, ok: false, msg: `${rec.name}已经搭好了` };
+  const lack = [];
+  for (const it of Object.keys(rec.need)) {
+    const have = (s.bag[it] || []).length;
+    if (have < rec.need[it]) lack.push(`${MATERIAL_NAMES[it] || it} 要 ${rec.need[it]} 份、现在只有 ${have}`);
+  }
+  if (lack.length) return { state: s, ok: false, msg: '材料还不够——' + lack.join('；') };
+  for (const it of Object.keys(rec.need)) {
+    s.bag[it] = s.bag[it].slice(rec.need[it]);
+    if (!s.bag[it].length) delete s.bag[it];
+  }
+  s.built = s.built || {};
+  s.built[key] = { at: day || s.day || null };
+  return { state: s, ok: true, msg: `材料齐了。你锯、钉、磨，把${rec.name}搭了起来` };
+}
+
+// 秋千：每次唤醒只能荡一次（雪 10/4）——用 wakeSeq 判定这是不是"同一次唤醒"
+function canSwing(state) {
+  const s = state || {};
+  return (s.swingSeq || 0) !== (s.wakeSeq || 0);
+}
+function markSwung(state) {
+  const s = JSON.parse(JSON.stringify(state));
+  s.swingSeq = s.wakeSeq || 0;
+  return s;
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
@@ -393,5 +438,6 @@ module.exports = {
   CHICK_PRICE, CHICK_MAX, CHICK_GROW_FEEDS,
   buyChick, feedChickens, nameChick, collectEggs, viewCoop,
   shopList, order, tickWake, wish,
+  BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung,
   viewPlot, viewGarden
 };
