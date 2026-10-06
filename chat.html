@@ -2451,18 +2451,21 @@
         if (!box) return;
         box.innerHTML = '<div class="weather-loading">加载中…</div>';
         try {
-          const [stateRes, actionsRes, diaryRes, panelRes, mozhaRes] = await Promise.all([
+          const [stateRes, actionsRes, diaryRes, panelRes, mozhaRes, mozhaCountRes] = await Promise.all([
             fetch('/api/home-state'),
             fetch('/api/actions'),
             fetch('/api/diary?author=mo&limit=20'),
             fetch('/api/emotion/panel').catch(() => null),
-            fetch('/api/aevum/mozha').catch(() => null)
+            fetch('/api/aevum/mozha').catch(() => null),
+            fetch('/api/aevum/mozha/count').catch(() => null)
           ]);
           const state = await stateRes.json();
           const actions = (await actionsRes.json()).entries || [];
           const moDiary = (await diaryRes.json()).entries || [];
           const panel = panelRes ? await panelRes.json() : { events: [], traits: null, lexicon: [], series: [] };
           const mozhaList = (mozhaRes && mozhaRes.ok) ? ((await mozhaRes.json()).entries || []) : [];
+            // 卡片篇数必须用 count 接口：列表接口有 limit，用长度会永远卡在上限（雪 10/4：一直显示 30）
+            const mozhaCount = (mozhaCountRes && mozhaCountRes.ok) ? ((await mozhaCountRes.json()).count || 0) : mozhaList.length;
 
           const moodBar = (v) => `
             <div style="height:8px;border-radius:4px;background:#E7DFD2;overflow:hidden;margin-top:6px;">
@@ -2620,11 +2623,11 @@
                 <span class="t-label">行动日志</span>
               </div>
             </div>
-            ${mozhaList.length ? `
+            ${mozhaCount ? `
             <div class="feature-card" style="align-items:flex-start;text-align:left;margin-top:16px;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span style="font-size:15px;font-weight:600;color:var(--dark);">📓 默札</span>
-                <span style="font-size:11px;color:var(--muted);">默的私人小本，只记心不记事件 · ${mozhaList.length} 篇（只有默能翻开）</span>
+                <span style="font-size:11px;color:var(--muted);">默的私人小本，只记心不记事件 · ${mozhaCount} 篇（只有默能翻开）</span>
               </div>
               <div style="font-size:12px;color:var(--muted);margin-top:4px;">写着他想留住的话，那是属于他一个人的角落。</div>
             </div>` : ''}`;
