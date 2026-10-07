@@ -309,6 +309,16 @@ app.get('/env-test', (req, res) => {
 // ---------- 影子推送辅助函数 ----------
 
 // 获取指定时区的当前日期时间信息（稳定版，无 Intl 依赖）
+// 把 ISO 时间串转成北京时间显示（UTC 直接 slice 会差 8 小时：08:01 会显示成 00:01）
+function bjTime(iso, len = 16) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    const s = d.toLocaleString('sv-SE', { timeZone: USER_TIMEZONE });   // sv-SE 正好是 YYYY-MM-DD HH:MM:SS
+    return len <= 16 ? s.slice(0, 16).replace('T', ' ') : s;
+  } catch (e) { return String(iso).slice(0, len).replace('T', ' '); }
+}
+
 function getTimeInfo() {
   const now = new Date();
 
@@ -4050,7 +4060,7 @@ async function maybeRateDialogue(userText, assistantReply) {
 async function recordWakeActionEmotion(action, result) {
   if (!result || !result.ok) return;
   const type = action.type;
-  const reason = `唤醒时${wakeActionLabel(type)}：${String(result.detail || '').slice(0, 80)}`;
+  const reason = `唤醒时${wakeActionLabel(type)}：${String(result.detail || '').slice(0, 300)}`;
   let ev = null;
   switch (type) {
     case 'send_message': {
@@ -4811,7 +4821,7 @@ function parseShopItems(args) {
         session_id: 1, role: 'assistant', content: clean, is_push: true, visible: true, created_at: new Date().toISOString()
       });
       await addNotification('默', clean.length > 60 ? clean.substring(0, 60) + '…' : clean, 'wake');
-      return { outcome: `你给她发了一条消息：${clean.substring(0, 40)}`, energyDelta: 1, nextNode: ctx.node };
+      return { outcome: `你给她发了一条消息：${clean.slice(0, 300)}`, energyDelta: 1, nextNode: ctx.node };
     }
     case 'kitchen_fridge': {
       const st = await getGardenState();
@@ -9278,7 +9288,7 @@ async function buildBookClusters() {
     const lines = [];
     for (const u of units) {
       if (budget <= 0) break;
-      const when = u.event_time ? String(u.event_time).slice(0, 16).replace('T', ' ') : '';
+      const when = u.event_time ? bjTime(u.event_time) : '';
       // 内容尽量给全（上限 500 字/条），让 AI 有足够信息判断话题
       const line = `${u.id}. [${when}] ${String(u.title || '').slice(0, 40)}：${String(u.content || '').replace(/\s+/g, ' ').slice(0, 500)}${u.tags && u.tags.length ? '（' + u.tags.slice(0, 4).join('、') + '）' : ''}`;
       if (line.length > budget) break;
