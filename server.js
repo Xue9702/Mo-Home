@@ -2610,7 +2610,10 @@ app.post('/api/chat', async (req, res) => {
     let longingContext = '';
     try {
       const [homeStateMood, lastMsgAt] = await Promise.all([getHomeStateSafe(), getLastUserActivity()]);
-      const longingInfo = computeLonging(homeStateMood.affection || 0, lastMsgAt);
+      // 想念强度必须用「排除了她刚发这条」的时间差（lastGapMs）——上面那条 2小时20分 就是对的。
+  // 原来传的是 getLastUserActivity()，它拿到的是她刚发来的消息，所以永远是 0 小时/0 分钟前（雪 10/5 抓到）
+  const longingAnchor = lastGapMs > 0 ? new Date(Date.now() - lastGapMs).toISOString() : lastMsgAt;
+  const longingInfo = computeLonging(homeStateMood.affection || 0, longingAnchor);
       const isReunion = lastGapMs > 2 * 3600000;
       longingContext = buildLongingPromptText(longingInfo, isReunion);
       if (isReunion && longingInfo.longing > 0.15) {
@@ -8720,7 +8723,8 @@ async function getLatestWakeContext() {
     const acts = (a.actions || []).map(x =>
       `${x.type}${x.tag ? '（' + String(x.tag) + '）' : ''}${x.detail ? '：' + String(x.detail) : ''}`
     ).join('；');
-    const time = new Date(a.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    // ⚠️ 必须带 timeZone：服务器（Render）是 UTC，不带就少 8 小时——雪看到的「8 点唤醒显示成 00:01」就是这个
+    const time = new Date(a.created_at).toLocaleString('zh-CN', { timeZone: USER_TIMEZONE, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const lines = [`第 ${a.wake_number || 1} 次唤醒 · ${time}`];
     if (acts) lines.push(acts);
     if (a.summary) lines.push('总结：' + String(a.summary));
@@ -11090,7 +11094,7 @@ async function getMomentsContext() {
     // 将动态格式化为一段可读的文字
     const momentsList = data.map(m => {
       const authorName = m.author === 'mo' ? '默' : '雪';
-      const time = new Date(m.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const time = new Date(m.created_at).toLocaleString('zh-CN', { timeZone: USER_TIMEZONE, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });   // 带时区，否则少 8 小时
       let momentText = `[${authorName} ${time}] ${m.content}`;
       if (m.reply_content) {
         momentText += `\n  -> 默的回复: ${m.reply_content}`;
