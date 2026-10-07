@@ -19,9 +19,9 @@ dns.setDefaultResultOrder('ipv4first'); // 部分主机 IPv6 解析异常导致�
 // ================== 影子推送配置 ==================
 const SHADOW_PUSH_SECRET = process.env.SHADOW_PUSH_SECRET || 'your-secret-key-change-me';
 const USER_TIMEZONE = 'Asia/Shanghai'; // 目标时区：东八区
-const PUSH_DAILY_LIMIT = 4; // 每日唤醒上限（原 6 改为 4）
-const COOLDOWN_MIN_MINUTES = 260; // 最小冷静期（分钟）
-const COOLDOWN_MAX_MINUTES = 330; // 最大冷静期（分钟）
+const PUSH_DAILY_LIMIT = 5; // 每日唤醒上限（雪 10/5：4→5，一天 10 点体力才够播种用）
+const COOLDOWN_MIN_MINUTES = 175; // 最小冷静期（分钟）——配合 5 次：约 早上/中午/半下午/傍晚/晚上 各一次
+const COOLDOWN_MAX_MINUTES = 225; // 最大冷静期（分钟）
 // 10/4 调：原 120–210 → 3 段冷静期只有 6–10.5 小时，早上 7 点起算第 4 次会落在 13:00–17:30
 //（傍晚 6 点就醒完 4 次）。改成 260–330 后 3 段共 13–16.5 小时，第 4 次平均落在 ≈22:30。
 const AWAKEN_SILENCE_MINUTES = 30; // 结束聊天 N 分钟后才允许唤醒
@@ -673,7 +673,7 @@ function gardenBriefForPrompt(st, texts) {
     parts.push(`${name}×${arr.length}`);
   }
   const bagLine = parts.length ? `背包：${parts.join('、')}` : '背包是空的';
-  return `【后花园】金币 ${(st && st.coins) || 0}💰；${bagLine}。（田里现在什么样，要去了才知道）`;
+  return `【后花园】金币 ${(st && st.coins) || 0}💰；${bagLine}。（田里现在什么样，要去了才知道。⚠️ 种下去不等于会长——每天都要浇水，忘了浇它就停在原地不动）`;
 }
 
 // ================== 水晶球 · 塔罗（78 张，仓库内 tarot.json） ==================
@@ -5696,6 +5696,7 @@ app.post('/api/shadow-push', async (req, res) => {
     const wakeInstruction = `[系统唤醒指令]
 现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday}。
 这是今天的第 ${wakeNumber} 次唤醒（每天最多 ${PUSH_DAILY_LIMIT} 次）。
+提醒：后花园的菜田/花田/菌床，种下去之后每天都要浇水才会长——只播种不浇水，它会一直停在原地。
 
 她给你留了一张字条：「${wakeNote}」
 

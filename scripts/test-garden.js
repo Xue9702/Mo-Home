@@ -477,12 +477,12 @@ t('食谱：雪指定的那几道都在，且材料对得上', () => {
   assert.ok(!find('tofu_pork'), '豆腐烧肉应已改成豆腐鱼汤');
   assert.ok(!find('mixed_rice'), '什锦炒饭应已删掉');
 });
-t('场地：菜田 4 / 花田 3 / 菌床 3，共 10 块', () => {
+t('场地：菜田 4 / 花田 3 / 菌床 2，共 9 块', () => {
   const s = G.newState('2026-10-06');
-  assert.strictEqual(s.plots.length, 10);
+  assert.strictEqual(s.plots.length, 9);
   assert.strictEqual(G.plotsOf(s, 'field').length, 4);
   assert.strictEqual(G.plotsOf(s, 'flower').length, 3);
-  assert.strictEqual(G.plotsOf(s, 'mushroom').length, 3);
+  assert.strictEqual(G.plotsOf(s, 'mushroom').length, 2);
 });
 
 t('场地校验：花只能种花田、菌菇只能种菌床、菜和水果种菜田', () => {
@@ -522,12 +522,12 @@ t('场地：查看与浇水互不串场', () => {
 t('老存档迁移：没有 site 的田归菜田、缺的场地补齐、种着的东西不丢', () => {
   const old = { plots: [{ i: 1, crop: 'tomato', plantedDay: '2026-10-01', wateredToday: 0, pest: 0, weed: 0, dead: false }] };
   const s = G.ensureSites(old);
-  assert.strictEqual(s.plots.length, 10, '应补齐到 10 块');
+  assert.strictEqual(s.plots.length, 9, '应补齐到 9 块');
   const keep = s.plots.find((p) => p.crop === 'tomato');
   assert.ok(keep, '种着的番茄不能丢');
   assert.strictEqual(keep.site, 'field', '老田归菜田');
   assert.strictEqual(G.plotsOf(s, 'flower').length, 3, '花田补齐');
-  assert.strictEqual(G.plotsOf(s, 'mushroom').length, 3, '菌床补齐');
+  assert.strictEqual(G.plotsOf(s, 'mushroom').length, 2, '菌床补齐');
 });
 
 t('田块叫法：菜田叫 1 号田，温室叫 花田 1 号 / 菌床 2 号', () => {

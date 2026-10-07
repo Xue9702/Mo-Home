@@ -16,7 +16,7 @@ const INIT_SEEDS = { daisy: 2, bokchoy: 2, carrot: 1 };
 const SITES = [
   { key: 'field',    name: '菜田', count: 4, accepts: ['veg', 'fruit'] },
   { key: 'flower',   name: '花田', count: 3, accepts: ['flower'] },
-  { key: 'mushroom', name: '菌床', count: 3, accepts: ['mushroom'] }
+  { key: 'mushroom', name: '菌床', count: 2, accepts: ['mushroom'] }
 ];
 const SITE_NAME = { field: '菜田', flower: '花田', mushroom: '菌床' };
 
@@ -44,6 +44,13 @@ function ensureSites(state) {
   const s = JSON.parse(JSON.stringify(state));
   s.plots = s.plots || [];
   for (const p of s.plots) if (!p.site) p.site = 'field';
+  // 场地数量缩减时，多出来的空田收掉（种着东西的保留，别把人家的苗铲了）
+  for (const def of SITES) {
+    const extra = s.plots.filter((p) => p.site === def.key && p.i > def.count);
+    for (const p of extra) {
+      if (!p.crop || p.dead) s.plots = s.plots.filter((x) => x !== p);
+    }
+  }
   for (const def of SITES) {
     const have = s.plots.filter((p) => p.site === def.key).map((p) => p.i);
     for (let k = 1; k <= def.count; k++) {
