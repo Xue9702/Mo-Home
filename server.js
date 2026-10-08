@@ -615,6 +615,7 @@ function gardenToday() {
 }
 
 let gardenCache = null;
+let gardenPersistOk = null;   // null=还没写过 true=写库正常 false=写库失败（花园会丢）
 async function getGardenState() {
   if (sandboxWake) return sandboxWake;   // 沙盒：读写只在内存，永不落库
   if (gardenCache) return gardenCache;
