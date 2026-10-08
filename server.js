@@ -5591,6 +5591,25 @@ async function callMenuChoice(messages, forced = true) {
 }
 
 // ------------------ 影子推送接口（数据库状态版） ------------------
+// 立刻唤醒一次（调试用，雪 10/6 要的）。内部转发给 shadow-push，不重复实现唤醒逻辑。
+// 用它而不是复用 /api/debug/wake/* 是因为那个前缀被沙盒的中间件占着。
+app.post('/api/debug/wake-now', async (req, res) => {
+  const tok = req.query.token || req.headers['x-debug-token'];
+  if (!DEBUG_TOKEN || tok !== DEBUG_TOKEN) return res.status(404).json({ error: 'not found' });
+  const self = process.env.RENDER_EXTERNAL_URL || ('http://127.0.0.1:' + (process.env.PORT || 3000));
+  try {
+    const r = await fetch(self + '/api/shadow-push', {
+      method: 'POST',
+      headers: { 'x-push-secret': SHADOW_PUSH_SECRET, 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const t = await r.text();
+    return res.json({ ok: true, httpStatus: r.status, result: String(t).slice(0, 800) });
+  } catch (e) {
+    return res.json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/api/shadow-push', async (req, res) => {
   // 安全校验
   const secret = req.headers['x-push-secret'];
