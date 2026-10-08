@@ -3545,9 +3545,8 @@ function getDateStr(d) {
     return date.toLocaleDateString('sv-SE', { timeZone: USER_TIMEZONE });   // sv-SE 正好是 YYYY-MM-DD
   } catch (e) {
     const t = new Date(date.getTime() + 8 * 3600 * 1000);
-    return ${t.getUTCFullYear()}--;
+    return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
   }
-}
 }
 
 // 读取/初始化 home_state（心情等；表未建时返回默认值，不抛错）
