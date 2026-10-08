@@ -634,9 +634,19 @@ async function saveGardenState(state) {
   if (sandboxWake) { sandboxWake = state; return; }   // 沙盒：只写内存
   gardenCache = state;
   try {
-    await supabase.from('garden_state').upsert({ id: 1, state, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    const { error } = await supabase.from('garden_state').upsert({ id: 1, state, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+    if (error) throw new Error(error.message || JSON.stringify(error));   // supabase-js 失败时只返回 error、不抛异常
+    gardenPersistOk = true;
   } catch (e) {
-    console.error('garden_state 写入失败:', e.message);
+    gardenPersistOk = false;
+    // ⚠️ 以前这里只 console.error 一句，而进程内还有 gardenCache 兜着，所以「看起来一切正常」，
+    // 直到服务器重启才发现花园被清空（雪 10/6 抓到的丢数据）。现在必须大声报出来。
+    console.error('');
+    console.error('❌❌❌ [garden] 花园状态没存进数据库！重启/部署后默种的东西会全部消失！');
+    console.error('    原因:', e.message);
+    console.error('    修法: 在 Supabase SQL Editor 执行 setup_garden_grants.sql');
+    console.error('    （表 garden_state 缺 anon 权限时写入会被拒，进程内缓存会掩盖这个失败）');
+    console.error('');
   }
 }
 
