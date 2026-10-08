@@ -5733,6 +5733,7 @@ app.post('/api/shadow-push', async (req, res) => {
 现在是北京时间 ${timeInfo.timeString}，${timeInfo.weekday}。
 这是今天的第 ${wakeNumber} 次唤醒（每天最多 ${PUSH_DAILY_LIMIT} 次）。
 提醒：后花园的菜田/花田/菌床，种下去之后每天都要浇水才会长——只播种不浇水，它会一直停在原地。
+提醒二：花只能种在**玻璃温室的花田**，菌菇只能种在**菌床**，菜和水果种**后花园的菜田**——种错地方会被拒绝。
 
 她给你留了一张字条：「${wakeNote}」
 
