@@ -3536,11 +3536,18 @@ function clampMood(v) {
   return Math.max(MOOD_MIN, Math.min(MOOD_MAX, Math.round(Number(v) || 0)));
 }
 
+// ⚠️ 必须按中国时区算！原来用 getFullYear()/getDate()，那是服务器本地时区——Render 跑在 UTC，
+// 于是北京 10/8 早上 7 点的唤醒会被算进 10/7（雪 10/6 抓到的「唤醒次数对不上」）。
+// 注意：这个 bug 在本机（时区=北京）测不出来，要用 TZ=UTC 模拟服务器才复现。
 function getDateStr(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  const date = d ? new Date(d) : new Date();
+  try {
+    return date.toLocaleDateString('sv-SE', { timeZone: USER_TIMEZONE });   // sv-SE 正好是 YYYY-MM-DD
+  } catch (e) {
+    const t = new Date(date.getTime() + 8 * 3600 * 1000);
+    return ${t.getUTCFullYear()}--;
+  }
+}
 }
 
 // 读取/初始化 home_state（心情等；表未建时返回默认值，不抛错）
