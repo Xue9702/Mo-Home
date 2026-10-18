@@ -242,8 +242,25 @@ function plant(state, { site = 'field', plot, crop, crops = {}, seedItem = null 
   return { state: s, ok: true, msg: `在${plotLabel(site, plot)}种下了${crops[crop].name}` };
 }
 
-function harvest(state, { site = 'field', plot, crops = {} } = {}) {
+function harvest(state, { site = 'field', plot, crops = {}, all = false } = {}) {
   const s = JSON.parse(JSON.stringify(state));
+  // 没指定田号时允许一键收：把该场地所有已成熟的田一起收（雪 10/9 日志里默选「收获」
+  // 却没带田号 → 原来直接报「这块田是空的」）
+  if (all || !plot) {
+    const targets = (s.plots || []).filter((p) => (p.site || 'field') === site && p.crop && !p.dead
+      && progressOf(p, s.day) >= Number((crops[p.crop] || {}).days || 2));
+    if (!targets.length) {
+      const anyCrop = (s.plots || []).some((p) => (p.site || 'field') === site && p.crop && !p.dead);
+      return { state: s, ok: false, msg: anyCrop ? '这块场地的作物都还没成熟' : '这块场地现在空着，没有可收的' };
+    }
+    const got = [];
+    for (const p of targets) {
+      addItem(s.bag, p.crop, 1, s.day);
+      got.push((crops[p.crop] || {}).name || p.crop);
+      p.crop = null; p.plantedDay = null; p.wateredToday = 0; p.pest = 0; p.weed = 0; p.dead = false;
+    }
+    return { state: s, ok: true, msg: `收下了${got.join('、')}` };
+  }
   const p = findPlot(s, site, plot);
   if (!p || !p.crop) return { state: s, ok: false, msg: '这块田是空的' };
   if (p.dead) { p.crop = null; p.dead = false; return { state: s, ok: true, msg: '清理了枯萎的苗' }; }
@@ -257,18 +274,25 @@ function harvest(state, { site = 'field', plot, crops = {} } = {}) {
 }
 
 // 除虫 / 拔草（各 -1 体力，由 server 层扣）
-function clearHazard(state, { site = 'field', plot, kind } = {}) {
+function clearHazard(state, { site = 'field', plot, kind, all = false } = {}) {
   const s = JSON.parse(JSON.stringify(state));
+  const label = kind === 'pest' ? '虫' : '草';
+  // 没指定田号时对该场地所有"有害的田"一起处理（同上：原来会报「没有这块田」）
+  if (all || !plot) {
+    const flagged = (s.plots || []).filter((p) => (p.site || 'field') === site && p[kind] > 0);
+    if (!flagged.length) return { state: s, ok: false, msg: `这块场地没有${label}` };
+    const done = [];
+    for (const p of flagged) {
+      p[kind] = 0;
+      done.push(plotLabel(site, p.i));
+    }
+    return { state: s, ok: true, msg: done.join('、') + `的${label}处理掉了` };
+  }
   const p = findPlot(s, site, plot);
   if (!p) return { state: s, ok: false, msg: '没有这块田' };
-  if (kind === 'pest') {
-    if (!p.pest) return { state: s, ok: false, msg: '这块田没有虫' };
-    p.pest = 0;
-    return { state: s, ok: true, msg: plotLabel(site, plot) + '的虫除掉了' };
-  }
-  if (!p.weed) return { state: s, ok: false, msg: '这块田没有杂草' };
-  p.weed = 0;
-  return { state: s, ok: true, msg: plotLabel(site, plot) + '的草拔掉了' };
+  if (!p[kind]) return { state: s, ok: false, msg: `这块田没有${label}` };
+  p[kind] = 0;
+  return { state: s, ok: true, msg: plotLabel(site, plot) + (kind === 'pest' ? '的虫除掉了' : '的草拔掉了') };
 }
 
 // ---------- 查看：三维度 ----------

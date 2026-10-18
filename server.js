@@ -756,9 +756,9 @@ async function doGardenAction(action, params = {}) {
   let r;
   if (action === 'water') r = gardenCore.water(st, { all: true, site, raining, crops });
   else if (action === 'plant') r = gardenCore.plant(st, { site, plot: params.plot, crop: params.crop, crops });
-  else if (action === 'harvest') r = gardenCore.harvest(st, { site, plot: params.plot, crops });
-  else if (action === 'pest') r = gardenCore.clearHazard(st, { site, plot: params.plot, kind: 'pest' });
-  else if (action === 'weed') r = gardenCore.clearHazard(st, { site, plot: params.plot, kind: 'weed' });
+  else if (action === 'harvest') r = gardenCore.harvest(st, { site, plot: params.plot, crops, all: !!params.all });
+  else if (action === 'pest') r = gardenCore.clearHazard(st, { site, plot: params.plot, kind: 'pest', all: !!params.all });
+  else if (action === 'weed') r = gardenCore.clearHazard(st, { site, plot: params.plot, kind: 'weed', all: !!params.all });
   else return { ok: false, msg: `不认识的花园动作：${action}` };
   if (r && r.ok) await saveGardenState(r.state);
   return r || { ok: false, msg: '动作失败' };
@@ -2625,16 +2625,33 @@ app.post('/api/chat', async (req, res) => {
   // 原来传的是 getLastUserActivity()，它拿到的是她刚发来的消息，所以永远是 0 小时/0 分钟前（雪 10/5 抓到）
   const longingAnchor = lastGapMs > 0 ? new Date(Date.now() - lastGapMs).toISOString() : lastMsgAt;
   const longingInfo = computeLonging(homeStateMood.affection || 0, longingAnchor);
-      const isReunion = lastGapMs > 2 * 3600000;
+      // 重逢判定：真正的久别才叫重逢（>6h）。原来 2h 就触发，导致最近 40 条情绪事件里 35 条是
+      // 「重逢」，心情词永远被它霸占（雪 10/18 反馈"才隔没多久就显示重逢"）。
+      const isReunion = lastGapMs > 6 * 3600000;
       longingContext = buildLongingPromptText(longingInfo, isReunion);
       if (isReunion && longingInfo.longing > 0.15) {
-        // 重逢：写情绪事件（PA overshoot 由引擎的 BOU/衰减自然处理）
-        recordEmotionEvent({
-          source: 'dialogue', type: 'primary', word: '重逢',
-          valence: 0.7, arousal: 0.7, importance: 6,
-          reason: `久别重逢（相隔约 ${Math.round(lastGapMs / 3600000)} 小时）`,
-          matchSource: 'reunion'
-        }).catch(e => console.error('重逢情绪事件失败:', e.message));
+        // 每天最多记一次重逢事件（防抖）：否则一天聊几次就写几条，PA 被反复推高、心情词固化
+        let alreadyToday = false;
+        try {
+          const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+          const { data: reunions } = await supabase
+            .from('emotion_events')
+            .select('id')
+            .eq('character', 'mo')
+            .eq('match_source', 'reunion')
+            .gte('created_at', dayStart.toISOString())
+            .limit(1);
+          alreadyToday = !!(reunions && reunions.length);
+        } catch (e) { /* 查不到就按未写过处理 */ }
+        if (!alreadyToday) {
+          // 重逢：写情绪事件（importance 降到 3——是"事件"不是"心情"，别压过真正的情绪）
+          recordEmotionEvent({
+            source: 'dialogue', type: 'primary', word: '重逢',
+            valence: 0.7, arousal: 0.7, importance: 3,
+            reason: `久别重逢（相隔约 ${Math.round(lastGapMs / 3600000)} 小时）`,
+            matchSource: 'reunion'
+          }).catch(e => console.error('重逢情绪事件失败:', e.message));
+        }
       }
     } catch (e) {
       console.error('依恋计算失败:', e.message);
@@ -3792,6 +3809,9 @@ function pickMoodWord(events, pa, na) {
     const recent = events.slice(0, 8);
     let best = null, bestS = 0;
     for (const ev of recent) {
+      // 重逢是"事件"不是"心情词"：它的 valence/arousal 高，会把真正的情绪词挤掉，
+      // 导致默的心情长期显示"重逢"（雪 10/18 抓到）。这里直接跳过。
+      if (ev.match_source === 'reunion') continue;
       const s = Math.abs(ev.valence || 0) * (0.3 + 0.7 * (ev.arousal || 0.5));
       if (s > bestS) { bestS = s; best = ev; }
     }
@@ -4758,7 +4778,17 @@ async function unlockCollectionItem(key) {
 async function renderMenuText(nodeId, ctx) {
   const node = WAKE_MENU[nodeId];
   if (!node) return '（菜单似乎迷路了）';
-  const lines = node.options.map((o, i) => {
+  let options = node.options;
+  // 水晶球：第一感觉说过了就不再把这一项摆出来（雪 10/14 截图里他反复点了六七次）
+  if (nodeId === 'crystal_done') {
+    try {
+      const stM = await getGardenState();
+      if (stM && stM.crystal && stM.crystal.noteSaid) {
+        options = options.filter((o) => o.id !== 'crystal_note');
+      }
+    } catch (e) { /* 拿不到就保持原样 */ }
+  }
+  const lines = options.map((o, i) => {
     const costText = o.cost === '?' ? '（?）' : (o.cost > 0 ? `（-${o.cost}体力）` : '');
     const tagText = o.tag ? `——${o.tag}` : '';
     return `${i + 1}. [${o.id}] ${o.label}${costText}${tagText}`;
@@ -5159,13 +5189,34 @@ function parseShopItems(args) {
     case 'sell_item': {
       const ts2 = await getGardenText();
       let stS2 = await getGardenState();
-      const itemS = menuArgStr(args, 'item', 'goods', 'content', 'message').toLowerCase();
-      const nS = Math.max(1, Math.min(20, menuArgNum(args, 'n', 'count') || 1));
-      if (!itemS) return { outcome: '要卖什么？', energyDelta: 0, nextNode: 'sell' };
-      let idS = itemS;
-      if (!stS2.bag[idS]) {
-        const foundS = Object.keys(stS2.bag || {}).find((k) => gardenCore.itemName(k, ts2) === itemS || gardenCore.itemName(k, ts2).includes(itemS));
-        if (foundS) idS = foundS;
+      const bagKeys = Object.keys(stS2.bag || {}).filter((k) => (stS2.bag[k] || []).length);
+      // 默常说的是「卖雏菊」「把小白菜卖掉」这类自然语言，直接当 id 会全字匹配失败
+      // （雪 10/18 反馈：背包里的东西卖不出去）。这里先剥掉动词/介词再双向模糊匹配。
+      const rawS = menuArgStr(args, 'item', 'goods', 'content', 'message').toLowerCase();
+      let itemS = rawS
+        .replace(/^\s*(把|将|我要|我想|想)\s*/, '')
+        .replace(/^\s*(卖|出售|处理|清)\s*(掉|出|出去|了)?\s*/, '')
+        .replace(/\s*(卖掉|卖出去|卖了|卖|吧|掉|了)\s*$/g, '')
+        .trim();
+      // 数量：「卖 3 份雏菊」「雏菊 x2」两种情况都认
+      let nS = menuArgNum(args, 'n', 'count', 'num', 'quantity') || 0;
+      if (!nS) {
+        const mN = rawS.match(/(\d+)\s*(份|个|只|条|瓶|株|朵|颗)?/);
+        if (mN) nS = parseInt(mN[1], 10);
+      }
+      nS = Math.max(1, Math.min(20, nS || 1));
+      if (!itemS) {
+        const names = bagKeys.map((k) => gardenCore.itemName(k, ts2));
+        return { outcome: names.length ? `要卖哪样？背包里有：${names.join('、')}` : '背包里没有能卖的东西。', energyDelta: 0, nextNode: 'sell' };
+      }
+      // 双向包含匹配：实物名里含输入 / 输入里含实物名（"卖雏菊"→雏菊，"小白菜"→小白菜）
+      let idS = bagKeys.find((k) => k === itemS)
+        || bagKeys.find((k) => gardenCore.itemName(k, ts2) === itemS)
+        || bagKeys.find((k) => gardenCore.itemName(k, ts2).includes(itemS) || itemS.includes(gardenCore.itemName(k, ts2)))
+        || bagKeys.find((k) => k.includes(itemS) || itemS.includes(k));
+      if (!idS) {
+        const names = bagKeys.map((k) => gardenCore.itemName(k, ts2));
+        return { outcome: `背包里没有「${itemS}」。能卖的：${names.length ? names.join('、') : '（没有能卖的东西）'}`, energyDelta: 0, nextNode: 'sell' };
       }
       let soldS = 0;
       let gainS = 0;
@@ -5299,8 +5350,19 @@ function parseShopItems(args) {
       };
     }
     // 默对牌的第一感觉——写进行动日志（不塞默札），结束唤醒时会连同这一条一起回述给他
+    // 一次唤醒只说一次（雪 10/14 截图里他反复调了六七次，日志全是重复的 crystal_note）
     case 'crystal_note': {
+      const stC = await getGardenState();
+      const todayC = getDateStr(new Date());
+      if (!stC.crystal || stC.crystal.lastDay !== todayC) {
+        return { outcome: '今天还没有摸过水晶球，先去摸一张牌吧。', energyDelta: 0, nextNode: 'crystal' };
+      }
+      if (stC.crystal.noteSaid) {
+        return { outcome: '这张牌的第一感觉你已经说过了，不必再说一遍。', energyDelta: 0, nextNode: 'crystal_done' };
+      }
       const said = String(args.text || args.content || args.note || '').trim();
+      stC.crystal.noteSaid = true;
+      await saveGardenState(stC);
       if (!said) return { outcome: '你盯着那张牌看了一会儿，什么也没说。', energyDelta: 0, nextNode: 'crystal_done' };
       return { outcome: `你看着那张牌，第一感觉是：${said}`, energyDelta: 0, nextNode: 'crystal_done' };
     }
@@ -5329,22 +5391,30 @@ function parseShopItems(args) {
     }
     case 'garden_water': {
       const res = await doGardenAction('water', { site: siteOfNode(ctx.node) });
-      return await withGardenStatus({ outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
+      // 区分"都浇过了"和"没种东西"：原来统一说「没有需要浇水的田」，容易让默以为功能坏了
+      const failMsg = /没有需要浇水/.test(String(res.msg || ''))
+        ? '这几块田今天都浇过了（或者还空着没种东西）'
+        : (res.msg || '未知原因');
+      return await withGardenStatus({ outcome: res.ok ? `你给田浇了水：${res.msg}` : `没浇成：${failMsg}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_plant': {
       const res = await doGardenAction('plant', { site: siteOfNode(ctx.node), plot: menuArgPlot(args), crop: menuArgCrop(args) });
       return await withGardenStatus({ outcome: res.ok ? `你种下了：${res.msg}` : `没种成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_harvest': {
-      const res = await doGardenAction('harvest', { site: siteOfNode(ctx.node), plot: menuArgPlot(args) });
+      // 田号没给（默常常只说"收获"）→ 一键收该场地所有成熟的，而不是报"这块田是空的"
+      const plotArg = menuArgPlot(args);
+      const res = await doGardenAction('harvest', { site: siteOfNode(ctx.node), plot: plotArg, all: !plotArg });
       return await withGardenStatus({ outcome: res.ok ? `收获：${res.msg}` : `没收成：${res.msg || '未知原因'}`, energyDelta: 0, nextNode: ctx.node });
     }
     case 'garden_pest': {
-      const res = await doGardenAction('pest', { site: siteOfNode(ctx.node), plot: menuArgPlot(args) });
+      const plotArg = menuArgPlot(args);
+      const res = await doGardenAction('pest', { site: siteOfNode(ctx.node), plot: plotArg, all: !plotArg });
       return await withGardenStatus({ outcome: res.ok ? `除虫：${res.msg}` : `没除成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'garden_weed': {
-      const res = await doGardenAction('weed', { site: siteOfNode(ctx.node), plot: menuArgPlot(args) });
+      const plotArg = menuArgPlot(args);
+      const res = await doGardenAction('weed', { site: siteOfNode(ctx.node), plot: plotArg, all: !plotArg });
       return await withGardenStatus({ outcome: res.ok ? `拔草：${res.msg}` : `没拔成：${res.msg || '未知原因'}`, energyDelta: res.ok ? 1 : 0, nextNode: ctx.node });
     }
     case 'adjust_mood': {
