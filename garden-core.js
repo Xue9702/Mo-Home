@@ -775,6 +775,19 @@ function trashItem(state, { item = '', texts = {} } = {}) {
   return { state: s, ok: true, msg: '你把' + itemName(item, texts) + '丢进垃圾桶，盖子啪地合上' };
 }
 
+// 送给雪：从背包拿出一样东西送她，按价值折算好感（雪 10/18）
+// 好感 = 卖价/5，最少 2；没有卖价的（种子/材料/成品）固定 +2
+function giveItem(state, { item = '', texts = {} } = {}) {
+  const s = JSON.parse(JSON.stringify(state));
+  if (!((s.bag[item] || []).length)) return { state: s, ok: false, msg: '背包里没有' + itemName(item, texts) };
+  const name = itemName(item, texts);
+  const price = sellPriceOf(item, texts);
+  const affectionGain = price > 0 ? Math.max(2, Math.round(price / 5)) : 2;
+  s.bag[item].pop();
+  if (!s.bag[item].length) delete s.bag[item];
+  return { state: s, ok: true, name, price, affectionGain };
+}
+
 module.exports = {
   DEFAULT_PLOTS, INIT_COINS, INIT_SEEDS,
   newState, stageIndex, progressOf, waterSatisfied, settle,
@@ -785,7 +798,7 @@ module.exports = {
   BUILD_RECIPES, MATERIAL_NAMES, build, canSwing, markSwung, orderMany,
   SITES, SITE_NAME, newPlots, plotsOf, findPlot, ensureSites, siteAccepts, plotLabel,
   findRecipe, autoPick, checkCook,
-  hasRod, fishOnce, sellPriceOf, sellItem, trashItem,
+  hasRod, fishOnce, sellPriceOf, sellItem, trashItem, giveItem,
   BUCKET_NAME, TIER_NAME, itemCat, fineCat, valueOf, itemName, tierOfRecipe, cook,
   viewPlot, viewGarden
 };

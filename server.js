@@ -554,6 +554,7 @@ async function saveToolEvent(text, sendSSE) {
 //   ④ 需要 DEBUG_TOKEN 环境变量；没配 = 功能关闭（线上默认关闭）
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || '';
 let sandboxWake = null;        // 非 null = 沙盒开启，且这是沙盒自己的花园状态
+let sandboxHomeState = null;   // 沙盒自己的 home_state 副本（好感/心情/虚拟雪在做什么），不写真库
 let sandboxAt = 0;             // 沙盒最后一次有人操作的时刻（闲置超时就自动关，雪 10/4 要的保险）
 const SANDBOX_IDLE_MS = 30 * 60 * 1000;
 function sandboxExpired() {
@@ -561,11 +562,18 @@ function sandboxExpired() {
   if (Date.now() - sandboxAt > SANDBOX_IDLE_MS) {
     console.log('🧪 沙盒闲置超过 30 分钟，自动关闭（默的自主唤醒恢复）');
     sandboxWake = null;
+    sandboxHomeState = null;
     return true;
   }
   return false;
 }
 let sandboxEnergy = WAKE_ENERGY_POINTS;
+
+// 好感写入的统一入口：沙盒里摸头/亲抱/送礼都不能改真库（沙盒承诺"只在内存"）
+async function setAffection(value) {
+  if (sandboxWake) { if (sandboxHomeState) sandboxHomeState.affection = value; return; }
+  await supabase.from('home_state').upsert({ id: 1, affection: value, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+}
 
 // 唤醒场景的中文名（沙盒与真实唤醒共用，别各写一份）
 const WAKE_SCENE_TITLES = {
@@ -1152,6 +1160,8 @@ async function sandboxCtx(node) {
     energy: sandboxEnergy,
     energyMax: WAKE_ENERGY_POINTS,
     collection,
+    // 沙盒也要有 home_state（虚拟雪在做什么/好感/心情），用内存副本，绝不写真库
+    homeState: sandboxHomeState || {},
     sceneTitle: WAKE_SCENE_TITLES[node] || WAKE_SCENE_TITLES.root
   };
 }
@@ -1194,6 +1204,7 @@ app.post('/api/debug/wake/start', async (req, res) => {
     sandboxWake = fresh;
     sandboxAt = Date.now();
     sandboxEnergy = WAKE_ENERGY_POINTS;
+    try { sandboxHomeState = JSON.parse(JSON.stringify(await getHomeStateSafe())); } catch (e) { sandboxHomeState = {}; }
     console.log(`🧪 沙盒开启（${fromReal ? '复制自真实状态' : '全新'}），默的自主唤醒暂停`);
     res.json({ ok: true, fromReal, menu: await sandboxMenu('root'), note: '沙盒已开启：改动只在内存，默的自主唤醒已暂停。' });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1227,6 +1238,7 @@ app.post('/api/debug/wake/choose', async (req, res) => {
 app.post('/api/debug/wake/stop', async (req, res) => {
   if (!debugGuard(req, res)) return;
   sandboxWake = null;
+  sandboxHomeState = null;
   gardenCache = null;
   console.log('🧪 沙盒关闭，默的自主唤醒恢复');
   res.json({ ok: true, note: '沙盒已关闭：沙盒里的改动已丢弃，默的自主唤醒恢复。' });
@@ -4714,6 +4726,7 @@ const WAKE_MENU = {
       { id: 'pat_head', label: '摸摸她的头', cost: 1, tag: '' },
       { id: 'kiss', label: '亲亲她', cost: 1, tag: '' },
       { id: 'hug', label: '抱抱她', cost: 1, tag: '' },
+      { id: 'gift_to_her', label: '送她一样东西', cost: 0, tag: '背包里的都能送，她收到会开心' },
       { id: 'back_her_house', label: '不打扰她，去别处瞧瞧', cost: 0, tag: '' }
     ]
   },
@@ -5521,7 +5534,7 @@ function parseShopItems(args) {
     case 'pat_head': {
       const gain = 1 + Math.floor(Math.random() * 3);
       const affection = clampAffection((ctx.homeState.affection || 0) + gain);
-      await supabase.from('home_state').upsert({ id: 1, affection, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      await setAffection(affection);
       ctx.homeState.affection = affection;
       return { outcome: `你轻轻摸了摸她的头，她微微红了脸。好感值 +${gain}（当前 ${affection}）`, energyDelta: 1, nextNode: ctx.node };
     }
@@ -5530,7 +5543,7 @@ function parseShopItems(args) {
       const verb = optionId === 'kiss' ? '你低头亲了亲她的脸颊' : '你轻轻抱住了她';
       const gain = 2 + Math.floor(Math.random() * 4);
       const affection = clampAffection((ctx.homeState.affection || 0) + gain);
-      await supabase.from('home_state').upsert({ id: 1, affection, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+      await setAffection(affection);
       ctx.homeState.affection = affection;
       let gift = '';
       if (Math.random() < 0.5) {
@@ -5543,6 +5556,56 @@ function parseShopItems(args) {
         }
       }
       return { outcome: `${verb}，她的心跳快了半拍。好感值 +${gain}（当前 ${affection}）${gift}`, energyDelta: 1, nextNode: ctx.node };
+    }
+    // 送她东西：背包里任何一样都能送，收到会加好感（雪 10/18 要的）
+    // 好感 = 卖价/5（最少 2）；没卖价的种子/材料/成品固定 +2
+    case 'gift_to_her': {
+      const tsG = await getGardenText();
+      const stG = await getGardenState();
+      const bagKeysG = Object.keys(stG.bag || {}).filter((k) => (stG.bag[k] || []).length);
+      const rawG = menuArgStr(args, 'item', 'goods', 'content', 'message').toLowerCase();
+      // 同售卖：剥掉「把/送给/给」这类词再双向模糊匹配
+      const itemG = rawG
+        .replace(/^\s*(把|将|我要|我想|想)\s*/, '')
+        .replace(/^\s*(送给|送|给|赠)\s*/, '')
+        .replace(/\s*(送给她|送给|送你|送|给|吧|了)\s*$/g, '')
+        .trim();
+      if (!itemG) {
+        const names = bagKeysG.map((k) => gardenCore.itemName(k, tsG));
+        return { outcome: names.length ? `要送她哪样？你背包里有：${names.join('、')}` : '你背包里空空的，没什么可送。', energyDelta: 0, nextNode: ctx.node };
+      }
+      const idG = bagKeysG.find((k) => k === itemG)
+        || bagKeysG.find((k) => gardenCore.itemName(k, tsG) === itemG)
+        || bagKeysG.find((k) => gardenCore.itemName(k, tsG).includes(itemG) || itemG.includes(gardenCore.itemName(k, tsG)))
+        || bagKeysG.find((k) => k.includes(itemG) || itemG.includes(k));
+      if (!idG) {
+        const names = bagKeysG.map((k) => gardenCore.itemName(k, tsG));
+        return { outcome: `背包里没有「${itemG}」。能送的：${names.length ? names.join('、') : '（背包是空的）'}`, energyDelta: 0, nextNode: ctx.node };
+      }
+      const rG = gardenCore.giveItem(stG, { item: idG, texts: tsG });
+      if (!rG.ok) return { outcome: rG.msg, energyDelta: 0, nextNode: ctx.node };
+      // 能不能一次送几份：n / count，或者从「送她两朵雏菊」里的数字
+      let nG = menuArgNum(args, 'n', 'count', 'num', 'quantity') || 0;
+      if (!nG) {
+        const mN = String(args.content || args.message || '').match(/(\d+)\s*(份|个|朵|条|只|瓶|颗)?/);
+        if (mN) nG = parseInt(mN[1], 10);
+      }
+      // 默认 1 份；2 份以上循环送（背包不够就送多少算多少）
+      nG = Math.max(1, Math.min(9, nG || 1));
+      let stG2 = rG.state;
+      let given = 1;
+      let gainTotal = rG.affectionGain;
+      for (let i = 1; i < nG; i++) {
+        const more = gardenCore.giveItem(stG2, { item: idG, texts: tsG });
+        if (!more.ok) break;
+        stG2 = more.state; given++; gainTotal += more.affectionGain;
+      }
+      await saveGardenState(stG2);
+      const affection = clampAffection((ctx.homeState.affection || 0) + gainTotal);
+      await setAffection(affection);
+      ctx.homeState.affection = affection;
+      const what = given > 1 ? `${rG.name} ×${given}` : rG.name;
+      return { outcome: `你把${what}轻轻放到她手边，她抬头看你，眼睛亮了一下。好感值 +${gainTotal}（当前 ${affection}）`, energyDelta: 0, nextNode: ctx.node };
     }
     case 'her_diary': {
       const entries = await getDiaryEntries('xue', 50);
@@ -5612,8 +5675,8 @@ function buildMenuTools() {
            items: { type: 'string', description: '一串物品（shop_buy 买什么 / cook_make 里\，可以一次写好几样，例如「seed_rose x2, wood x4, nail x10」；只买一件就写一件，例如「chick」' },
            plot: { type: 'integer', description: '几号田（garden_plant / garden_harvest / garden_pest / garden_weed 用，1 到 4）' },
            crop: { type: 'string', description: '作物名（garden_plant 用）：daisy 雏菊 / sunflower 向日葵 / tulip 郁金香 / rose 玫瑰 / lily_of_the_valley 铃兰 / bokchoy 小白菜 / carrot 胡萝卜 / tomato 番茄 / potato 土豆 / corn 玉米' },
-           item: { type: 'string', description: '商品 id（shop_buy 用）：seed_daisy、seed_sunflower、seed_tulip、seed_rose、seed_lily_of_the_valley、seed_bokchoy、seed_carrot、seed_tomato、seed_potato、seed_corn、chick、rice、flour' },
-           n: { type: 'integer', description: '买几份（shop_buy 用，1 到 9）' },
+           item: { type: 'string', description: '物品：shop_buy 填商品 id（seed_daisy / seed_sunflower / seed_tulip / seed_rose / seed_lily_of_the_valley / seed_bokchoy / seed_carrot / seed_tomato / seed_potato / seed_corn / chick / rice / flour）；sell_item（卖哪样）和 gift_to_her（送她哪样）可以直接写中文名，例如「雏菊」「小白菜」「鸡蛋」/ egg' },
+           n: { type: 'integer', description: '几份（shop_buy / sell_item / gift_to_her 用，1 到 9）' },
            index: { type: 'integer', description: '第几只小鸡（coop_name 用，从 1 数）' },
            name: { type: 'string', description: '给小鸡起的名字（coop_name 用，8 字以内）' },
            note: { type: 'string', description: 'sleep 时留给未来自己的提醒一句话' }

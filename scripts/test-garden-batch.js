@@ -53,5 +53,23 @@ findP(st2, 'flower', 2).crop = 'tulip'; findP(st2, 'flower', 2).plantedDay = '20
 const hf = gc.harvest(st2, { site: 'flower', crops, all: true });
 ok('花田批量收两样', hf.ok && /雏菊/.test(hf.msg) && /郁金香/.test(hf.msg), hf.msg);
 
+// 8) 送礼：背包有 → 成功并给出好感增益；背包没有 → 失败
+const gSt = gc.newState(DAY);
+gc.addItem(gSt.bag, 'daisy', 2, DAY);
+gc.addItem(gSt.bag, 'rose', 1, DAY);
+const g1 = gc.giveItem(gSt, { item: 'daisy', texts });
+ok('送礼成功（雏菊）', g1.ok && g1.name === '雏菊', JSON.stringify(g1).slice(0, 80));
+ok('送礼后背包少一份雏菊', (g1.state.bag.daisy || []).length === 1);
+ok('雏菊好感增益 = 卖价18/5≈4', g1.affectionGain === 4, '实际 ' + g1.affectionGain);
+const g2 = gc.giveItem(gSt, { item: 'rose', texts });
+ok('玫瑰好感增益更高（70/5=14）', g2.ok && g2.affectionGain === 14, '实际 ' + g2.affectionGain);
+const g3 = gc.giveItem(gSt, { item: 'sunflower', texts });
+ok('背包没有的送不出去', !g3.ok && /没有/.test(g3.msg), g3.msg);
+// 没卖价的物品固定 +2
+const gSt2 = gc.newState(DAY);
+gc.addItem(gSt2.bag, 'wood', 1, DAY);
+const g4 = gc.giveItem(gSt2, { item: 'wood', texts });
+ok('没卖价的材料固定 +2', g4.ok && g4.affectionGain === 2, '实际 ' + g4.affectionGain);
+
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);
