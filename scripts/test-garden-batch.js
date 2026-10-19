@@ -71,5 +71,17 @@ gc.addItem(gSt2.bag, 'wood', 1, DAY);
 const g4 = gc.giveItem(gSt2, { item: 'wood', texts });
 ok('没卖价的材料固定 +2', g4.ok && g4.affectionGain === 2, '实际 ' + g4.affectionGain);
 
+// 9) 做好的菜：有卖价（按档次）、能送、好感按价折算
+const dishId = 'dish_fried_egg';
+const dishPrice = gc.sellPriceOf(dishId, texts);
+ok('菜有卖价了（煎蛋 25）', dishPrice === 25, '实际 ' + dishPrice);
+const dSt = gc.newState(DAY);
+gc.addItem(dSt.bag, dishId, 1, DAY);
+const dG = gc.giveItem(dSt, { item: dishId, texts });
+ok('菜能送出去', dG.ok && dG.name === '煎蛋', JSON.stringify(dG).slice(0, 80));
+ok('菜好感 = 25/5 = 5', dG.affectionGain === 5, '实际 ' + dG.affectionGain);
+const dSell = gc.sellItem(dSt, { item: dishId, texts });
+ok('菜能卖掉', dSell.ok && dSell.price === 25, JSON.stringify(dSell).slice(0, 80));
+
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`);
 process.exit(fail ? 1 : 0);

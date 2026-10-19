@@ -745,13 +745,21 @@ function fishOnce(state, { rng = Math.random, texts = {}, day = null } = {}) {
   return { state: s, ok: true, type: 'miss', text: pick };
 }
 
-// 卖东西：作物按 sell_price、鸡蛋 15、鱼按品相
+// 卖东西：作物按 sell_price、鸡蛋 15、鱼按品相、做好的菜按档次
 function sellPriceOf(id, texts) {
   const t = texts || {};
   if (t.crops && t.crops[id] && t.crops[id].sell_price) return Number(t.crops[id].sell_price);
   if (id === 'egg') return 15;
   const m = String(id).match(/^fish_([a-z_]+)_(small|normal|fat)$/);
   if (m && t.fish && t.fish.kinds && t.fish.kinds[m[1]]) return Number(((t.fish.kinds[m[1]].sell || {})[m[2]]) || 0);
+  // 做好的菜（dish_xxx）：按菜品档次定价。原来这里返回 0 → 菜既卖不出去、送礼也只算 +2（雪 10/19）
+  if (String(id).startsWith('dish_')) {
+    const rec = (((t.recipes || {}).list) || []).find((r) => 'dish_' + r.id === id);
+    if (rec) {
+      const tier = tierOfRecipe(rec, t);
+      return ({ 1: 25, 2: 50, 3: 85, 4: 130 })[tier] || 25;
+    }
+  }
   return 0;
 }
 function sellItem(state, { item = '', texts = {} } = {}) {

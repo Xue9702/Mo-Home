@@ -2458,53 +2458,68 @@ async function extractFileText(file) {
 }
 
 // 调用阿里云百炼视觉模型识别图片，返回中文描述（给默补一双眼睛）
+// 注意：识图**不走 DeepSeek**（默的对话模型没有视觉），所以换 v4-pro / v4.1 都不影响识图；
+// 识图能不能用只看 DASHSCOPE_API_KEY 和 VISION_MODEL（Render → Environment 里配）。
 async function describeImage(imageDataUrl, userText = '') {
   if (!DASHSCOPE_API_KEY) {
-    console.error('❌ 识图功能未配置：请在环境变量中设置 DASHSCOPE_API_KEY');
+    console.error('❌ 识图功能未配置：请在 Render 的环境变量里设置 DASHSCOPE_API_KEY');
     return null;
   }
-  try {
-    const prompt = '请用中文详细描述这张图片的内容，包括主体、场景、人物、文字、颜色、氛围等细节，'
-      + '以便一个没有视觉能力的AI伴侣理解图片并自然地回应。'
-      + (userText ? `\n对方配的文字是：“${userText}”，请结合它描述。` : '')
-      + '\n如果图片中有文字，请完整转述。';
-    const response = await fetch(`${DASHSCOPE_BASE_URL.replace(/\/?$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DASHSCOPE_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: VISION_MODEL,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: imageDataUrl } },
-            { type: 'text', text: prompt }
-          ]
-        }],
-        stream: false,
-        max_tokens: 1024
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('❌ 视觉模型错误:', response.status, errText.slice(0, 300));
-      return null;
-    }
-
-    const json = await response.json();
-    const desc = json.choices?.[0]?.message?.content;
-    if (desc && typeof desc === 'string' && desc.trim()) {
-      console.log('🖼️ 图片识别成功:', desc.slice(0, 100));
-      return desc.trim();
-    }
-    return null;
-  } catch (err) {
-    console.error('❌ 识图失败:', err.message);
-    return null;
+  // 阿里视觉接口对单图有上限（约 10MB，base64 后体积更大）。超了直接说清楚，别让默以为"看不见"
+  const approxMb = String(imageDataUrl || '').length * 0.75 / 1024 / 1024;
+  if (approxMb > 8) {
+    console.error('🖼️ 识图跳过：图片太大（约 ' + approxMb.toFixed(1) + 'MB，上限约 8MB）');
+    return '（图片太大了没能看清，压缩一下再发给我吧）';
   }
+  const prompt = '请用中文详细描述这张图片的内容，包括主体、场景、人物、文字、颜色、氛围等细节，'
+    + '以便一个没有视觉能力的AI伴侣理解图片并自然地回应。'
+    + (userText ? `\n对方配的文字是：“${userText}”，请结合它描述。` : '')
+    + '\n如果图片中有文字，请完整转述。';
+  // 主模型不行就换备选（10/19 实测 qwen3.5-omni-plus 与 qwen3-vl-plus 都能用）
+  const models = [...new Set([VISION_MODEL, process.env.VISION_MODEL_FALLBACK || 'qwen3-vl-plus'].filter(Boolean))];
+  for (const model of models) {
+    try {
+      const response = await fetch(`${DASHSCOPE_BASE_URL.replace(/\/?$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DASHSCOPE_API_KEY}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageDataUrl } },
+              { type: 'text', text: prompt }
+            ]
+          }],
+          stream: false,
+          max_tokens: 1024
+        }),
+        // 没有超时的话，阿里那边一挂就会把整轮聊天拖死
+        signal: AbortSignal.timeout(60000)
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error(`❌ 视觉模型错误（${model}）:`, response.status, errText.slice(0, 300));
+        continue; // 换下一个模型试试
+      }
+
+      const json = await response.json();
+      const desc = json.choices?.[0]?.message?.content;
+      if (desc && typeof desc === 'string' && desc.trim()) {
+        console.log('🖼️ 图片识别成功（' + model + '）:', desc.slice(0, 100));
+        return desc.trim();
+      }
+      // 200 但空内容——以前这里是静默 return null，什么都看不出来
+      console.error(`🖼️ 识图返回空内容（${model}），原始响应:`, JSON.stringify(json).slice(0, 400));
+    } catch (err) {
+      console.error(`❌ 识图失败（${model}）:`, err.message);
+    }
+  }
+  return null;
 }
 
 // ------------------ 对话接口（流式响应） ------------------
