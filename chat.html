@@ -1423,6 +1423,18 @@
                       style="width:100%;accent-color:#1e90ff;">
                   </div>
                   <div style="font-size: 11px; color: #999;">V4.1 flash 发布后，想先换哪个就改哪个，保存后对后续对话立即生效。</div>
+                  <div style="background:#f7f8fa;border-radius:10px;padding:10px;">
+                    <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:#444;cursor:pointer;">
+                      <input id="visionViaAliInput" type="checkbox" style="width:16px;height:16px;margin-top:1px;">
+                      <span>
+                        图片先用阿里视觉模型转成文字描述
+                        <span style="display:block;font-size:11px;color:#999;margin-top:2px;">
+                          打开：兼容所有模型（包括不支持图像的 pro），但要额外调一次阿里接口，慢 1~3 秒。<br>
+                          关闭：把原图直接发给默（需主模型支持图像，如 deepseek-flash），更快也更准。
+                        </span>
+                      </span>
+                    </label>
+                  </div>
                   <div style="display: flex; gap: 10px; justify-content: flex-end;">
                     <button onclick="toggleSettingPanel('modelPanel','modelChevron')"
                       style="padding: 8px 16px; border: 1px solid #ddd; border-radius: 20px; background: #fff; cursor: pointer;">取消</button>
@@ -2098,6 +2110,8 @@
           const cr = document.getElementById('creativityInput');
           const cv = document.getElementById('creativityVal');
           if (cr) { cr.value = (d.creativity != null ? d.creativity : 1.0); if (cv) cv.textContent = Number(cr.value).toFixed(1); }
+          const vva = document.getElementById('visionViaAliInput');
+          if (vva) vva.checked = d.vision_via_ali !== false;
         } catch (e) { /* 读取失败保持占位符 */ }
       }
       window.loadModelConfig = loadModelConfig;
@@ -2108,13 +2122,15 @@
         const embed = document.getElementById('embedModelInput').value.trim();
         const crInput = document.getElementById('creativityInput');
         const creativity = crInput ? parseFloat(crInput.value) : 1.0;
+        const vvaInput = document.getElementById('visionViaAliInput');
+        const vision_via_ali = vvaInput ? !!vvaInput.checked : true;
         const status = document.getElementById('modelStatus');
         if (!main || !task || !embed) { status.textContent = '❌ 三个模型名都不能为空'; return; }
         try {
           const res = await fetch('/api/model-config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ main_model: main, task_model: task, embed_model: embed, thinking_level: currentThinkingLevel, creativity })
+            body: JSON.stringify({ main_model: main, task_model: task, embed_model: embed, thinking_level: currentThinkingLevel, creativity, vision_via_ali })
           });
           const d = await res.json();
           if (!res.ok || !d.ok) throw new Error(d.error || '保存失败');

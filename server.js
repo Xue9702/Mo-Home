@@ -1199,11 +1199,11 @@ async function performWebExtract(url) {
 
 // ================== 模型配置（前端设置页可切换，V4.1 等新模型发布时雪自助更换） ==================
 // main_model=对话/思考模型；task_model=记忆提取/书整理/情绪等后台任务模型
-let modelConfigCache = { main_model: 'deepseek-v4-flash', task_model: 'deepseek-v4-flash', embed_model: 'qwen3.7-text-embedding', thinking_level: 'high', creativity: 1.0 };
+let modelConfigCache = { main_model: 'deepseek-v4-flash', task_model: 'deepseek-v4-flash', embed_model: 'qwen3.7-text-embedding', thinking_level: 'high', creativity: 1.0, vision_via_ali: '1' };
 async function refreshModelConfig(force) {
   if (force || !modelConfigCache._loaded) {
     try {
-      const { data } = await supabase.from('model_config').select('*').limit(30);
+      const { data } = await supabase.from('model_config').select('*').limit(40);
       if (data && data.length) {
         for (const r of data) {
           if (r.key === 'main_model') modelConfigCache.main_model = String(r.value || 'deepseek-v4-flash');
@@ -1211,6 +1211,7 @@ async function refreshModelConfig(force) {
           else if (r.key === 'embed_model') modelConfigCache.embed_model = String(r.value || 'qwen3.7-text-embedding');
           else if (r.key === 'thinking_level') modelConfigCache.thinking_level = String(r.value || 'high');
           else if (r.key === 'creativity') modelConfigCache.creativity = Number(r.value) || 1.0;
+          else if (r.key === 'vision_via_ali') modelConfigCache.vision_via_ali = String(r.value || '1');
         }
       }
     } catch (e) { /* 表未建用默认 */ }
@@ -1221,6 +1222,9 @@ async function refreshModelConfig(force) {
 const getMainModel = () => modelConfigCache.main_model || 'deepseek-v4-flash';
 const getTaskModel = () => modelConfigCache.task_model || 'deepseek-v4-flash';
 const getEmbedModel = () => modelConfigCache.embed_model || 'qwen3.7-text-embedding';
+// 图片走哪条路：'1'（默认）= 先用阿里视觉模型转文字描述（兼容不支持图像的模型）；
+// '0' = 不调阿里，把原图直接发给主模型（要求主模型支持图像，如 deepseek-flash）。
+const getVisionViaAli = () => modelConfigCache.vision_via_ali !== '0';
 // 思考强度白名单：只允许 DeepSeek 支持的档位，防注入非法值
 const VALID_THINKING = ['none', 'low', 'medium', 'high'];
 const getThinkingLevel = () => VALID_THINKING.includes(modelConfigCache.thinking_level) ? modelConfigCache.thinking_level : 'high';
@@ -1422,7 +1426,7 @@ app.post('/api/debug/wake/stop', async (req, res) => {
 app.get('/api/model-config', async (req, res) => {
   try {
     const cfg = await refreshModelConfig();
-    res.json({ ok: true, main_model: cfg.main_model, task_model: cfg.task_model, embed_model: cfg.embed_model, thinking_level: getThinkingLevel(), creativity: getCreativity() });
+    res.json({ ok: true, main_model: cfg.main_model, task_model: cfg.task_model, embed_model: cfg.embed_model, thinking_level: getThinkingLevel(), creativity: getCreativity(), vision_via_ali: getVisionViaAli() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1443,13 +1447,17 @@ app.post('/api/model-config', async (req, res) => {
     // 灵活度：0-2 数字
     const creativity = Math.max(0, Math.min(2, Number(req.body?.creativity)));
     const creativityVal = isFinite(creativity) ? creativity : 1.0;
+    // 图片走阿里识图？true/'1' = 走阿里；false/'0' = 原图直接给模型
+    const vvaRaw = req.body?.vision_via_ali;
+    const visionViaAli = (vvaRaw === false || vvaRaw === '0' || vvaRaw === 0) ? '0' : '1';
     const now = new Date().toISOString();
     const upserts = [
       { key: 'main_model', value: main, updated_at: now },
       { key: 'task_model', value: task, updated_at: now },
       { key: 'embed_model', value: embed, updated_at: now },
       { key: 'thinking_level', value: thinking, updated_at: now },
-      { key: 'creativity', value: String(creativityVal), updated_at: now }
+      { key: 'creativity', value: String(creativityVal), updated_at: now },
+      { key: 'vision_via_ali', value: visionViaAli, updated_at: now }
     ];
     const { error } = await supabase.from('model_config').upsert(upserts, { onConflict: 'key' });
     if (error) return res.status(500).json({ error: error.message });
@@ -1458,8 +1466,9 @@ app.post('/api/model-config', async (req, res) => {
     modelConfigCache.embed_model = embed;
     modelConfigCache.thinking_level = thinking;
     modelConfigCache.creativity = creativityVal;
-    console.log('🧠 模型配置已更新: 对话=' + main, '| 后台=' + task, '| 嵌入=' + embed, '| 思考=' + thinking, '| 温度=' + creativityVal);
-    res.json({ ok: true, main_model: main, task_model: task, embed_model: embed, thinking_level: thinking, creativity: creativityVal });
+    modelConfigCache.vision_via_ali = visionViaAli;
+    console.log('🧠 模型配置已更新: 对话=' + main, '| 后台=' + task, '| 嵌入=' + embed, '| 思考=' + thinking, '| 温度=' + creativityVal, '| 阿里识图=' + (visionViaAli === '1' ? '开' : '关'));
+    res.json({ ok: true, main_model: main, task_model: task, embed_model: embed, thinking_level: thinking, creativity: creativityVal, vision_via_ali: visionViaAli === '1' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2762,15 +2771,19 @@ app.post('/api/chat', async (req, res) => {
   let fullThinking = '';
 
   try {
+    // 图片走哪条路：设置页开关决定（'1'=阿里识图兼容不支持图像的模型；'0'=原图直接给主模型）
+    const useAliVision = getVisionViaAli();
     // 图片识别 / 文档解析 / 历史加载：三者互不依赖，并行发起（原本串行 await，网络往返白白累加）
     const [rawImageAlt, rawFileText, rawHistory] = await Promise.all([
-      image ? describeImage(image, text) : Promise.resolve(null),
+      (image && useAliVision) ? describeImage(image, text) : Promise.resolve(null),
       file ? extractFileText(file) : Promise.resolve(null),
       loadLatestRounds(1, 20)
     ]);
 
-    // 识别图片（如果有）：转成中文描述，让默"看见"图片
-    const imageAlt = image ? (rawImageAlt || '（图片内容解析失败）') : null;
+    // 识别图片（如果有）：走阿里时用文字描述；不走阿里时只留占位（原图直接在消息里给模型）
+    const imageAlt = image
+      ? (useAliVision ? (rawImageAlt || '（图片内容解析失败）') : '（原图已直接发送给模型）')
+      : null;
 
     // 解析上传的文档（如果有）：提取文字，让默能"阅读"文件
     const fileText = file ? rawFileText : null;
@@ -2961,10 +2974,20 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // 调用 DeepSeek API（第一轮：思考实时转发，可见内容先缓存，便于拦截搜索标签）
+    // 不走阿里识图时：把原图作为多模态内容直接交给主模型（要求模型支持图像，如 deepseek-flash）
+    if (image && !useAliVision) {
+      console.log('🖼️ 图片直接随消息发送（不走阿里识图），主模型 = ' + getMainModel());
+    }
+    const userContentPayload = (image && !useAliVision)
+      ? [
+          { type: 'text', text: finalUserContent },
+          { type: 'image_url', image_url: { url: image } }
+        ]
+      : finalUserContent;
     const chatMessages = [
       { role: 'system', content: systemPrompt },
       ...historyMessages,
-      { role: 'user', content: finalUserContent }
+      { role: 'user', content: userContentPayload }
     ];
 
     const first = await callDeepSeekStream(chatMessages, sendSSE, {
