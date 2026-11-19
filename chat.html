@@ -1354,7 +1354,8 @@
 
       <!-- 设置页面 -->
       <div id="settingsPage" class="page">
-        <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box;">
+        <!-- flex:1 + min-height:0 + overflow-y:auto：设置项展开后能上下滚动（否则超出部分被裁掉、点不到保存） -->
+        <div style="padding: 20px; max-width: 600px; margin: 0 auto; width: 100%; box-sizing: border-box; flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;">
 
           <!-- 设置项列表（点击卡片展开/收起） -->
           <div style="display: flex; flex-direction: column; gap: 12px;">
