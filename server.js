@@ -687,6 +687,9 @@ async function saveMozhaEntry(content) {
 
 // v3.1 函数调用副作用：动态/玩具/默札写入（服务端执行或转发浏览器）；返回是否要翻阅默札
 // 工具事件：实时显示在聊天页（拍一拍样式）+ 存进聊天历史，让默记得自己调用过什么
+// ⚠️ 前缀里带一个不可见分隔符 U+2063：前端只认"带标记的"工具事件，
+//    这样默在正文里自己写「【工具事件】…」也不会被当成真的工具事件（雪 2026-11-20 发现）。
+const TOOL_EVENT_MARK = '\u2063'; // INVISIBLE SEPARATOR
 async function saveToolEvent(text, sendSSE) {
   if (!text) return;
   try { if (sendSSE) sendSSE({ toolEvent: text }); } catch (e) { /* 前端不在线时忽略 */ }
@@ -694,7 +697,7 @@ async function saveToolEvent(text, sendSSE) {
     await supabase.from('messages').insert({
       session_id: 1,
       role: 'assistant',
-      content: `【工具事件】${String(text).slice(0, 120)}`,
+      content: `${TOOL_EVENT_MARK}【工具事件】${String(text).slice(0, 120)}`,
       visible: true
     });
   } catch (e) {
@@ -943,7 +946,7 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
     const name = tc.function?.name;
     if (!name) continue;
     let args = {};
-    try { args = JSON.parse(tc.function?.arguments || '{}'); } catch (e) { args = {}; }
+    try { args = JSON.parse(tc.function?.arguments || '{}'); } catch (e) { console.error('⚠️ 工具参数解析失败（坏 JSON，工具会以空参数执行）:', e.message); args = {}; }
     if (name === 'post_moment') {
       const content = String(args.content || '').trim();
       if (content) {
@@ -1482,6 +1485,17 @@ app.get('/api/stream-status', (req, res) => {
   });
 });
 
+// 合并工具调用的流式分片：增量追加、全量重发时替换。
+// 用 startsWith 判断"全量重发"比 endsWith 去重安全——后者会把恰好等于后缀的增量片段误删。
+function mergeToolDelta(cur, delta) {
+  const c = String(cur || '');
+  const d = String(delta || '');
+  if (!d) return c;
+  if (!c) return d;
+  if (d.startsWith(c)) return d;   // 全量重发（新串以旧串开头）
+  return c + d;                    // 正常增量
+}
+
 // 调用 DeepSeek（流式）。bufferContent=true 时先缓存可见内容，结束时统一返回，
 // 避免把 [SEARCH_QUERY] 这类工具标签直接流给前端；思考内容始终实时转发。
 // recordStream=true 时记录"当前活跃回复流快照"（Capacitor 切后台补看半截用）
@@ -1604,9 +1618,11 @@ async function callDeepSeekStream(chatMessages, sendSSE, { bufferContent = false
               const cur = toolCallsMap.get(idx) || { id: '', type: 'function', function: { name: '', arguments: '' } };
               if (tc.id) cur.id = tc.id;
               if (tc.type) cur.type = tc.type;
-              // 尾缀去重：与思考分片一样，工具调用分片也可能被重发，避免参数/名称被重复拼接
-              if (tc.function?.name && !cur.function.name.endsWith(tc.function.name)) cur.function.name += tc.function.name;
-              if (tc.function?.arguments && !cur.function.arguments.endsWith(tc.function.arguments)) cur.function.arguments += tc.function.arguments;
+              // 增量分片直接追加；若分片以"已累积串"开头，说明是全量重发 → 替换。
+              // ⚠️ 以前用 endsWith 去重，会把"恰好等于当前串后缀"的增量片段误判成重复而丢掉，
+              // 导致参数缺字 → JSON.parse 失败 → 工具静默执行失败（"默有时调不出工具/记账有时失败"）。
+              if (tc.function?.name) cur.function.name = mergeToolDelta(cur.function.name, tc.function.name);
+              if (tc.function?.arguments) cur.function.arguments = mergeToolDelta(cur.function.arguments, tc.function.arguments);
               toolCallsMap.set(idx, cur);
             }
           }
@@ -6144,7 +6160,7 @@ ${plansContext ? `${plansContext}\n\n` : ''}
       }
       let args = {};
       if (toolCall) {
-        try { args = JSON.parse(toolCall.function.arguments || '{}'); } catch (e) { args = {}; }
+        try { args = JSON.parse(toolCall.function.arguments || '{}'); } catch (e) { console.error('⚠️ 工具参数解析失败（坏 JSON，工具会以空参数执行）:', e.message); args = {}; }
       }
       const optionId = String(args.option_id || '');
       const node = WAKE_MENU[ctx.node];
@@ -7752,7 +7768,7 @@ async function executeRecallMemory(toolCalls, sendSSE = null) {
   const tc = (toolCalls || []).find(c => c.function?.name === 'recall_memory');
   if (!tc) return null;
   let args = {};
-  try { args = JSON.parse(tc.function?.arguments || '{}'); } catch (e) { args = {}; }
+  try { args = JSON.parse(tc.function?.arguments || '{}'); } catch (e) { console.error('⚠️ 工具参数解析失败（坏 JSON，工具会以空参数执行）:', e.message); args = {}; }
   const query = String(args.query || '').trim();
   const mid = parseInt(args.memory_id, 10);
   let result = { text: '', found: false, mode: null, query: '', memory_id: null };
