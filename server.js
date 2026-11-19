@@ -2727,6 +2727,8 @@ async function describeImage(imageDataUrl, userText = '') {
 
 // ------------------ 对话接口（流式响应） ------------------
 app.post('/api/chat', async (req, res) => {
+  const T0 = Date.now();
+  const lap = (label) => console.log(`⏱️ [chat] ${label} +${Date.now() - T0}ms`);
   const { message, image, file } = req.body;
   const text = (message || '').trim();
 
@@ -2744,7 +2746,14 @@ app.post('/api/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   // 发送 SSE 数据到前端的工具函数
+  // 顺便记录"首字时间"：从请求进来到模型吐出第一个字（思考或正文）的耗时，
+  // 这是用户主观感受到的"卡顿"主体，排查慢回复时看这条日志。
+  let firstTokenAt = 0;
   const sendSSE = (data) => {
+    if (!firstTokenAt && (data && (data.content || data.thinking))) {
+      firstTokenAt = Date.now();
+      console.log(`⏱️ [chat] 首字 +${firstTokenAt - T0}ms`);
+    }
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
@@ -2844,6 +2853,7 @@ app.post('/api/chat', async (req, res) => {
       getMoodSnapshot().catch(() => null),
       getStardewContext(req.body.stardewBrief)
     ]);
+    lap('注入准备完成（记忆/情绪/天气/待办等已并行拉取）');
     // 从数据库读取最新的 system prompt
     const promptData = promptRes && promptRes.data;
     const moodContext = buildMoodPromptText(moodSnapshot);
@@ -2962,6 +2972,7 @@ app.post('/api/chat', async (req, res) => {
       tools: buildAllTools(),
       recordStream: true
     });
+    lap('第一轮流式结束（思考+正文都生成完）');
 
     if (first.error) {
       // 中断时若已有部分内容：补发给当前设备，并存一条可见回复，避免"消失"
