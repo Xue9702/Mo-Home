@@ -432,12 +432,169 @@ function buildSystemPrompt(basePrompt, memoryContext = '', momentsContext = '', 
 }
 
 // 默的玩具说明书：默认不注入，由玩具页开关决定是否每轮放进记忆上下文
-const TOY_MANUAL = `【默的玩具说明书】\n雪偶尔会让你控制她的小玩具。只有雪明确要求时才使用，且必须调用工具 toy_control（fn：suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 档位 1-8，stop 不需要 level）。标签 [TOY_CMD]{"fn":"...","level":1}[/TOY_CMD] 仅作备用。\n- 不确定档位时从低档（1-2）开始，别一上来就高档；随时可以停止\n- 执行时在回复正文里自然地告诉她你在做什么\n- 如果雪说"没反应"，提醒她去玩具页确认连接\n- 安全第一：长时间使用时中途给几次停止休息，不要把最高档开太久`;
+const TOY_MANUAL = `【默的玩具说明书】\n雪偶尔会让你控制她的小玩具。只有雪明确要求时才使用，且必须调用工具 toy_control（fn：suck=吸吮、stroke=伸缩、vibrate=震动、stop=停止；level 档位 1-8，stop 不需要 level）。标签 [TOY_CMD]{"fn":"...","level":1}[/TOY_CMD] 仅作备用。\n\n另外她还有一台「突突二代」（kisstoy）：两个伸缩电机，用工具 kisstoy_control（fn：head=头部伸缩、bottom=底部伸缩、both=两个一起、stop=全部停止；level 1-8，1 最轻）。它走手机 App 的云端连接，所以雪的手机 App 必须保持前台，否则玩具会离线。\n\n- 不确定档位时从低档（1-2）开始，别一上来就高档；随时可以停止\n- 执行时在回复正文里自然地告诉她你在做什么\n- 如果雪说"没反应"，提醒她去玩具页确认连接（kisstoy 还要确认手机 App 在前台）\n- 安全第一：长时间使用时中途给几次停止休息，不要把最高档开太久`;
 
 async function getToyManualContext(toyManual) {
   if (!toyManual || !toolSwitchEnabled('toy_control')) return '';
   return `\n\n${TOY_MANUAL}`;
 }
+
+// ================== kisstoy 云端控制（突突二代 / TUTU Ⅱ） ==================
+// 架构：手机 App ←蓝牙→ 玩具，同时 App ←WebSocket→ kisstoy 云端；小屋作为控制端也连云端。
+// 所以 App 必须保持前台——App 一关，云端连接和蓝牙都断，玩具就离线。
+// 协议来源：社区逆向（github.com/sue1231513/KissToy）。要点：
+//   · 在线查询 {"event":"online_status","data":{"group":...}}（是 group 不是 target）
+//   · 控制 {"event":"control","data":{"target":group,"device_id":..,"motors":{"1":0-100,"4":0-100}}}
+//   · 强度按 5 的步长量化；心跳每 10 秒一次，否则被服务端掐断
+// 突突二代（device_id=18）两个电机：1=头部伸缩、4=底部伸缩，最低启动强度 20。
+const KISSTOY_API = 'https://api.app.knightjenay.cn';
+const KISSTOY_WS = 'wss://api.app.knightjenay.cn/websocket-kisstoy';
+const KISSTOY_MOTOR_NAMES = { 1: '头部伸缩', 4: '底部伸缩' };
+let kisstoy = {
+  ws: null,
+  group: process.env.KISSTOY_GROUP || '',
+  deviceId: process.env.KISSTOY_DEVICE_ID || '18',
+  shareId: '',
+  online: false,
+  motors: { 1: 0, 4: 0 },
+  lastError: '',
+  heartbeat: null,
+  reconnectTimer: null,
+  boundAt: 0
+};
+function kisstoyLog(msg) { console.log('🔧 [kisstoy]', msg); }
+function kisstoyAlive() { return !!kisstoy.ws && kisstoy.ws.readyState === 1; }
+function kisstoySend(obj) {
+  if (!kisstoyAlive()) return false;
+  try { kisstoy.ws.send(JSON.stringify(obj)); return true; } catch (e) { kistoyLogSafe(e); return false; }
+}
+function kistoyLogSafe(e) { kisstoyLog('发送失败: ' + (e && e.message)); }
+// 强度量化：0 / 5 / 10 … 100
+function kisstoyQuantize(v) {
+  const n = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  return n === 0 ? 0 : Math.floor(n / 5) * 5;
+}
+// 档位（1-8）→ 强度：20 起，最高 100
+function kisstoyLevelToStrength(level) {
+  const L = Math.max(1, Math.min(8, parseInt(level, 10) || 1));
+  return [20, 30, 40, 55, 70, 80, 90, 100][L - 1];
+}
+// 参数持久化：group / device_id 存 model_config（和模型配置同表，key 独立互不影响）
+// share_id 不存——它在 App 里每次重新发起分享都会变，运行时通过接口更新即可。
+async function kisstoySaveConfig() {
+  try {
+    const now = new Date().toISOString();
+    await supabase.from('model_config').upsert([
+      { key: 'kisstoy_group', value: kisstoy.group || '', updated_at: now },
+      { key: 'kisstoy_device_id', value: String(kisstoy.deviceId || ''), updated_at: now }
+    ], { onConflict: 'key' });
+  } catch (e) { kisstoyLog('保存参数失败: ' + e.message); }
+}
+async function kisstoyLoadConfig() {
+  try {
+    const { data } = await supabase.from('model_config').select('key,value').in('key', ['kisstoy_group', 'kisstoy_device_id']);
+    for (const r of data || []) {
+      if (r.key === 'kisstoy_group' && r.value) kisstoy.group = r.value;
+      if (r.key === 'kisstoy_device_id' && r.value) kisstoy.deviceId = r.value;
+    }
+  } catch (e) { /* 表未建就跳过 */ }
+  kisstoyLog(`参数加载完成 group=${kisstoy.group ? kisstoy.group.slice(0, 8) + '…' : '(空)'} device=${kisstoy.deviceId}`);
+}
+
+// 绑定分享会话（每次在 App 里重新发起分享，id 都会变，必须重新绑定）
+async function kisstoyBind(shareId) {
+  const id = String(shareId || '').trim();
+  if (!id) return { ok: false, error: '缺少分享 id' };
+  try {
+    const r = await fetch(KISSTOY_API + '/kisstoy/remote-control/binding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+      body: JSON.stringify({ id }),
+      signal: AbortSignal.timeout(20000)
+    });
+    const j = await r.json().catch(() => ({}));
+    if (j && j.code === 1) {
+      kisstoy.shareId = id;
+      kisstoy.boundAt = Date.now();
+      kisstoyLog('绑定成功，share_id=' + id);
+      await kisstoySaveConfig();
+      return { ok: true };
+    }
+    kisstoy.lastError = (j && j.msg) || ('HTTP ' + r.status);
+    kisstoyLog('绑定失败: ' + kisstoy.lastError);
+    return { ok: false, error: kisstoy.lastError };
+  } catch (e) {
+    kisstoy.lastError = e.message;
+    kisstoyLog('绑定异常: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+}
+// 建立 WebSocket（含心跳与断线重连）
+function kisstoyConnect() {
+  if (!kisstoy.group) { kisstoyLog('没有 group，跳过连接'); return; }
+  if (kisstoyAlive()) return;
+  try {
+    const WebSocket = require('ws');
+    const ws = new WebSocket(KISSTOY_WS + '?group=' + encodeURIComponent(kisstoy.group));
+    kisstoy.ws = ws;
+    ws.on('open', () => {
+      kisstoyLog('WebSocket 已连接');
+      ws.send(JSON.stringify({ event: 'online_status', data: { group: kisstoy.group } }));
+      clearInterval(kisstoy.heartbeat);
+      kisstoy.heartbeat = setInterval(() => {
+        try { if (kisstoyAlive()) ws.send(JSON.stringify({ event: 'ping' })); } catch (e) { /* ignore */ }
+      }, 10000);
+    });
+    ws.on('message', (buf) => {
+      let j = null;
+      try { j = JSON.parse(String(buf)); } catch (e) { return; }
+      if (j.event === 'online_status') {
+        kisstoy.online = !!(j.data && j.data.online_status === 1);
+      } else if (j.event === 'connect' && j.result === 'success') {
+        kisstoyLog('云端鉴权通过');
+      }
+    });
+    ws.on('close', () => {
+      kisstoy.online = false;
+      clearInterval(kisstoy.heartbeat);
+      kisstoyLog('WebSocket 断开，5 秒后重连');
+      clearTimeout(kisstoy.reconnectTimer);
+      kisstoy.reconnectTimer = setTimeout(() => { kisstoyConnect(); }, 5000);
+    });
+    ws.on('error', (e) => { kisstoy.lastError = e.message; kisstoyLog('WebSocket 错误: ' + e.message); });
+  } catch (e) {
+    kisstoy.lastError = e.message;
+    kisstoyLog('创建 WebSocket 失败: ' + e.message);
+  }
+}
+// 设置电机强度（传 {1: xx, 4: yy}，未传的电机保持 0）
+function kisstoyApplyMotors(motors) {
+  const next = { 1: 0, 4: 0 };
+  for (const k of [1, 4]) {
+    if (motors && motors[k] !== undefined) next[k] = kisstoyQuantize(motors[k]);
+  }
+  if (!kisstoyAlive()) { kisstoyConnect(); return { ok: false, error: '云端未连接（正在重连）' }; }
+  kisstoySend({ event: 'control', data: { target: kisstoy.group, device_id: String(kisstoy.deviceId), motors: { '1': next[1], '4': next[4] } } });
+  kisstoy.motors = next;
+  kisstoyLog(`控制 → 头部 ${next[1]} / 底部 ${next[4]}`);
+  return { ok: true, motors: next, online: kisstoy.online };
+}
+function kisstoyStop() { return kisstoyApplyMotors({ 1: 0, 4: 0 }); }
+function kisstoyStatus() {
+  return {
+    configured: !!kisstoy.group,
+    group: kisstoy.group,
+    deviceId: kisstoy.deviceId,
+    shareId: kisstoy.shareId,
+    online: kisstoy.online,
+    wsConnected: kisstoyAlive(),
+    motors: kisstoy.motors,
+    motorNames: KISSTOY_MOTOR_NAMES,
+    lastError: kisstoy.lastError,
+    boundAt: kisstoy.boundAt || null
+  };
+}
+
 
 // ------------------ 实时搜索工具（博查） ------------------
 
@@ -801,6 +958,21 @@ async function executeSideEffectTools(toolCalls, sendSSE) {
         const fnName = { suck: '吸吮', stroke: '伸缩', vibrate: '震动', stop: '停止' }[fn] || fn;
         const level = fn === 'stop' ? '' : (parseInt(args.level, 10) || 1) + ' 档';
         await saveToolEvent(`🎮 你操作了玩具（${fnName}${level ? ' ' + level : ''}）`, sendSSE);
+      }
+    } else if (name === 'kisstoy_control') {
+      // 突突二代：服务端直接走云端 WebSocket（不需要浏览器）
+      const fn = String(args.fn || '').trim();
+      const level = Math.max(1, Math.min(8, parseInt(args.level, 10) || 3));
+      if (fn === 'stop') {
+        kisstoyStop();
+        await saveToolEvent('🎮 你让突突二代停了下来', sendSSE);
+      } else if (['head', 'bottom', 'both'].includes(fn)) {
+        const s = kisstoyLevelToStrength(level);
+        const motors = fn === 'head' ? { 1: s } : fn === 'bottom' ? { 4: s } : { 1: s, 4: s };
+        const r = kisstoyApplyMotors(motors);
+        const nm = { head: '头部伸缩', bottom: '底部伸缩', both: '头部+底部' }[fn];
+        const extra = r.ok ? (kisstoy.online ? '' : '（云端未确认在线，可能要等几秒或让雪把 App 切回前台）') : '（云端未连接）';
+        await saveToolEvent(`🎮 你调了突突二代（${nm} ${level} 档）${extra}`, sendSSE);
       }
     } else if (name === 'garden') {
       const act = String(args.action || 'view');
@@ -1600,6 +1772,21 @@ function buildAllTools() {
           properties: {
             fn: { type: 'string', enum: ['suck', 'stroke', 'vibrate', 'stop'], description: '功能' },
             level: { type: 'integer', minimum: 1, maximum: 8, description: '档位（stop 时不需要）' }
+          },
+          required: ['fn']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'kisstoy_control',
+        description: '控制雪新买的「突突二代」（kisstoy 云端玩具）：两个伸缩电机——head=头部伸缩、bottom=底部伸缩、both=两个一起、stop=全部停止；档位 1-8（1 最轻，8 最强，默认按 3 起步）。只有雪明确要求时才调用。执行需要雪的手机 App 保持在前台（App 一关玩具就离线）。',
+        parameters: {
+          type: 'object',
+          properties: {
+            fn: { type: 'string', enum: ['head', 'bottom', 'both', 'stop'], description: 'head=头部伸缩 / bottom=底部伸缩 / both=两个一起 / stop=停止' },
+            level: { type: 'integer', minimum: 1, maximum: 8, description: '档位 1-8（stop 时不需要）' }
           },
           required: ['fn']
         }
@@ -2779,7 +2966,7 @@ app.post('/api/chat', async (req, res) => {
 
     // 检查是否收到了完整的回复（工具调用轮没有正文是正常的：搜索/星露谷/闹钟/待办等后续都有接续轮）
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'kisstoy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
     );
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
       console.error('未收到有效回复，完整响应体可能为空');
@@ -3374,7 +3561,7 @@ app.post('/api/regenerate', async (req, res) => {
 
     // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'kisstoy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
     );
 
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
@@ -6231,6 +6418,83 @@ app.get('/api/emotion/panel', async (req, res) => {
     });
   } catch (e) {
     console.error('情绪面板错误:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ================== kisstoy 控制接口（玩具实验室 / 默的工具共用） ==================
+// 鉴权：配了 TOY_TOKEN 就要求请求头 x-toy-token（或 ?token=）；没配则只允许本机访问，
+// 这样线上不配 token 就等于对公网关闭（status 会返回 group，不能裸奔）。
+const TOY_TOKEN = process.env.TOY_TOKEN || '';
+function toyAuthed(req) {
+  if (!TOY_TOKEN) {
+    const ip = String(req.ip || (req.socket && req.socket.remoteAddress) || '');
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  }
+  const got = String((req.headers && req.headers['x-toy-token']) || (req.query && req.query.token) || '');
+  return got === TOY_TOKEN;
+}
+app.get('/api/toy/kisstoy/status', async (req, res) => {
+  if (!toyAuthed(req)) return res.status(404).json({ error: 'not found' });
+  try {
+    if (!kisstoyAlive() && kisstoy.group) kisstoyConnect();
+    res.json({ ok: true, ...kisstoyStatus() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 绑定：雪在 App 里重新发起分享后，把新的 id 发过来（group/device_id 一般不变，可一并更新）
+app.post('/api/toy/kisstoy/bind', async (req, res) => {
+  if (!toyAuthed(req)) return res.status(404).json({ error: 'not found' });
+  try {
+    const shareId = String(req.body?.share_id || req.body?.id || '').trim();
+    const group = String(req.body?.group || '').trim();
+    const deviceId = String(req.body?.device_id || '').trim();
+    if (group) kisstoy.group = group;
+    if (deviceId) kisstoy.deviceId = deviceId;
+    if (!shareId) return res.status(400).json({ error: '缺少 share_id（App 里分享链接中的 id）' });
+    if (!kisstoy.group) return res.status(400).json({ error: '缺少 group（分享链接中的 group）' });
+    const r = await kisstoyBind(shareId);
+    if (!r.ok) return res.status(400).json({ error: r.error || '绑定失败' });
+    kisstoyConnect();
+    // 稍等云端回 online_status
+    await new Promise(r2 => setTimeout(r2, 1500));
+    res.json({ ok: true, ...kisstoyStatus() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 控制：head/bottom 传强度（0-100），或传 level（1-8）由服务端换算
+app.post('/api/toy/kisstoy/control', async (req, res) => {
+  if (!toyAuthed(req)) return res.status(404).json({ error: 'not found' });
+  try {
+    const b = req.body || {};
+    const motors = {};
+    if (b.head !== undefined) motors[1] = Number(b.head);
+    if (b.bottom !== undefined) motors[4] = Number(b.bottom);
+    if (b.level !== undefined) {
+      const s = kisstoyLevelToStrength(b.level);
+      motors[1] = motors[1] !== undefined ? motors[1] : s;
+      motors[4] = motors[4] !== undefined ? motors[4] : s;
+    }
+    if (!Object.keys(motors).length) {
+      return res.status(400).json({ error: '至少给 head / bottom / level 之一' });
+    }
+    const r = kisstoyApplyMotors(motors);
+    res.json({ ok: r.ok, ...kisstoyStatus(), ...(r.error ? { error: r.error } : {}) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/toy/kisstoy/stop', async (req, res) => {
+  if (!toyAuthed(req)) return res.status(404).json({ error: 'not found' });
+  try {
+    kisstoyStop();
+    res.json({ ok: true, ...kisstoyStatus() });
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
@@ -11017,7 +11281,7 @@ app.post('/api/edit-message', async (req, res) => {
 
     // 工具调用轮没有正文也算有效：搜索/星露谷/闹钟/待办等后续都有接续轮
     const sideEffectOnly = first.toolCalls && first.toolCalls.some(tc =>
-      ['web_search', 'post_moment', 'toy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
+      ['web_search', 'post_moment', 'toy_control', 'kisstoy_control', 'mozha_write', 'mozha_read', 'set_reminder', 'todo_add', 'todo_done', 'ledger_add', 'recall_memory'].includes(tc.function?.name)
     );
 
     if (!fullReply && !stardewFirst && !sideEffectOnly) {
@@ -12312,5 +12576,7 @@ app.listen(port, () => {
   console.log(`✅ 服务已启动，访问端口: ${port}`);
   // 启动即加载模型配置（防止重启后缓存回默认，导致前端切换不生效）
   refreshModelConfig(true).catch(() => {});
+  // 启动即恢复 kisstoy 的 group/device_id 并尝试连云端（share_id 需要雪重新发起分享后更新）
+  kisstoyLoadConfig().then(() => { if (kisstoy.group) kisstoyConnect(); }).catch(() => {});
 });
 module.exports = app;

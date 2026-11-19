@@ -3147,6 +3147,81 @@
       }
       window.toyToggleManual = toyToggleManual;
 
+      // ===== kisstoy 云端玩具（突突二代）：面板交互 =====
+      function kisstoyToken() { try { return localStorage.getItem('kst_token') || ''; } catch (e) { return ''; } }
+      function kisstoySaveToken() {
+        const el = document.getElementById('kstToken');
+        const v = ((el && el.value) || '').trim();
+        try { localStorage.setItem('kst_token', v); } catch (e) {}
+        alert(v ? 'token 已保存（只存在这台设备的浏览器里）' : '已清空 token（本地访问不需要）');
+      }
+      async function kisstoyApi(path, body) {
+        const headers = { 'Content-Type': 'application/json' };
+        const tk = kisstoyToken();
+        if (tk) headers['x-toy-token'] = tk;
+        const r = await fetch(path, {
+          method: body === undefined ? 'GET' : 'POST',
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+      }
+      window.kisstoySaveToken = kisstoySaveToken;
+      function kisstoyRenderStatus(s) {
+        const box = document.getElementById('kisstoyStatus');
+        if (!box) return;
+        const head = s.motors ? (s.motors['1'] || 0) : 0;
+        const bottom = s.motors ? (s.motors['4'] || 0) : 0;
+        const state = s.online ? '✅ 设备在线' : (s.wsConnected ? '⚠️ 云端已连、设备离线（App 可能切后台了）' : '❌ 云端未连接');
+        box.innerHTML = `${state} · 头部 <b>${head}</b> / 底部 <b>${bottom}</b>`
+          + (s.group ? ` · group ${escapeHtml2(String(s.group).slice(0, 8))}…` : ' · 未绑定')
+          + (s.shareId ? ` · id ${escapeHtml2(String(s.shareId))}` : '')
+          + (s.lastError ? ` · 错误：${escapeHtml2(s.lastError)}` : '');
+      }
+      async function kisstoyRefresh() {
+        try { kisstoyRenderStatus(await kisstoyApi('/api/toy/kisstoy/status')); }
+        catch (e) {
+          const b = document.getElementById('kisstoyStatus');
+          if (b) b.textContent = '查询失败：' + e.message;
+        }
+      }
+      async function kisstoyBindUI() {
+        const el = document.getElementById('kstShare');
+        const id = ((el && el.value) || '').trim();
+        if (!id) { alert('请填分享链接里的 id（App 里「发起远程分享」后链接中的 id 参数）'); return; }
+        try {
+          const s = await kisstoyApi('/api/toy/kisstoy/bind', { share_id: id });
+          kisstoyRenderStatus(s);
+          if (!s.online) alert('绑定成功，但设备显示离线——请确认手机 App 在前台、玩具已连接蓝牙');
+        } catch (e) { alert('绑定失败：' + e.message); }
+      }
+      async function kisstoySetFromUI() {
+        const head = Number((document.getElementById('kstHead') || {}).value || 0);
+        const bottom = Number((document.getElementById('kstBottom') || {}).value || 0);
+        try { kisstoyRenderStatus(await kisstoyApi('/api/toy/kisstoy/control', { head, bottom })); }
+        catch (e) { alert('控制失败：' + e.message); }
+      }
+      async function kisstoyQuick(level) {
+        try { kisstoyRenderStatus(await kisstoyApi('/api/toy/kisstoy/control', { level })); }
+        catch (e) { alert('控制失败：' + e.message); }
+      }
+      async function kisstoyStopUI() {
+        try {
+          kisstoyRenderStatus(await kisstoyApi('/api/toy/kisstoy/stop', {}));
+          const h = document.getElementById('kstHead');
+          const b = document.getElementById('kstBottom');
+          if (h) { h.value = 0; const v = document.getElementById('kstHeadVal'); if (v) v.textContent = '0'; }
+          if (b) { b.value = 0; const v = document.getElementById('kstBottomVal'); if (v) v.textContent = '0'; }
+        } catch (e) { alert('停止失败：' + e.message); }
+      }
+      window.kisstoyRefresh = kisstoyRefresh;
+      window.kisstoyBindUI = kisstoyBindUI;
+      window.kisstoySetFromUI = kisstoySetFromUI;
+      window.kisstoyQuick = kisstoyQuick;
+      window.kisstoyStopUI = kisstoyStopUI;
+
       async function renderToyLab() {
         const box = document.getElementById('toyContent');
         if (!box) return;
@@ -3173,6 +3248,38 @@
               <button onclick="toyConnectCustom()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 12px;font-size:12px;cursor:pointer;">加入并重连</button>
             </div>
             <div style="font-size:12px;color:#8a83a8;line-height:1.7;">步骤：① 先关掉司沃康 App、断开手机蓝牙；② 点「连接玩具」，在弹窗里选 ST420A；③ 下方选写入口发指令试反应。连上蓝牙后物理按键会失灵，属正常现象。</div>
+          </div>
+          <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:14px;font-weight:600;color:#333;">突突二代（kisstoy 云端）</span>
+              <span style="font-size:11px;color:#8a83a8;">手机 App 必须在前台 · 走云端中转</span>
+              <button onclick="kisstoyRefresh()" style="margin-left:auto;border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:6px 12px;font-size:12px;cursor:pointer;">刷新状态</button>
+            </div>
+            <div id="kisstoyStatus" style="font-size:12px;color:#8a83a8;">（点「刷新状态」查看）</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+              <input id="kstShare" placeholder="分享链接里的 id（每次重新分享都会变）" style="flex:1;min-width:160px;border:1px solid #eee;border-radius:10px;padding:7px 10px;font-size:12px;outline:none;">
+              <button onclick="kisstoyBindUI()" style="border:none;border-radius:12px;background:#ffd3de;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">绑定</button>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+              <input id="kstToken" placeholder="访问 token（线上必填＝Render 的 TOY_TOKEN；本机不用）" style="flex:1;min-width:200px;border:1px solid #eee;border-radius:10px;padding:7px 10px;font-size:12px;outline:none;">
+              <button onclick="kisstoySaveToken()" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:7px 12px;font-size:12px;cursor:pointer;">保存 token</button>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:200px;">
+                <div style="font-size:12px;color:#555;">头部伸缩 <span id="kstHeadVal" style="font-weight:600;color:#e1789a;">0</span></div>
+                <input id="kstHead" type="range" min="0" max="100" step="5" value="0" oninput="document.getElementById('kstHeadVal').textContent=this.value" onchange="kisstoySetFromUI()" style="width:100%;accent-color:#ffb3c6;">
+              </div>
+              <div style="flex:1;min-width:200px;">
+                <div style="font-size:12px;color:#555;">底部伸缩 <span id="kstBottomVal" style="font-weight:600;color:#e1789a;">0</span></div>
+                <input id="kstBottom" type="range" min="0" max="100" step="5" value="0" oninput="document.getElementById('kstBottomVal').textContent=this.value" onchange="kisstoySetFromUI()" style="width:100%;accent-color:#ffb3c6;">
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+              <span style="font-size:12px;color:#555;font-weight:600;">快捷档</span>
+              ${[1,2,3,4,5,6,7,8].map(n => `<button onclick="kisstoyQuick(${n})" style="border:1px solid #ffd3de;border-radius:12px;background:#fff;color:#e1789a;padding:6px 10px;font-size:12px;cursor:pointer;">${n}</button>`).join('')}
+              <button onclick="kisstoyStopUI()" style="border:none;border-radius:12px;background:#e1789a;color:#fff;padding:8px 16px;font-size:13px;cursor:pointer;">⏹ 停止</button>
+            </div>
+            <div style="font-size:11px;color:#8a83a8;">档位 1-8 对应强度 20/30/40/55/70/80/90/100（按 5 步长量化）。App 切后台会断连，断线后重新在 App 里发起分享、把新 id 填到上面再点绑定。</div>
           </div>
           <div class="feature-card" style="align-items:stretch;gap:8px;text-align:left;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -3231,6 +3338,11 @@
           </div>`;
         const logBox = document.getElementById('toyLog');
         if (logBox && window.__toyLogs.length) logBox.innerHTML = window.__toyLogs.join('');
+        // 回填已保存的 kisstoy token
+        const kstTokEl = document.getElementById('kstToken');
+        if (kstTokEl) kstTokEl.value = kisstoyToken();
+        // 顺便拉一次 kisstoy 状态（失败不打扰）
+        kisstoyRefresh().catch(() => {});
       }
       window.renderToyLab = renderToyLab;
 
